@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:model-reply",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "reasoning",
+    "evidence_ids",
+    "working_memory",
+    "tool_calls"
+  ],
+  "properties": {
+    "action": {
+      "enum": [
+        "enter",
+        "add",
+        "exit",
+        "hold"
+      ]
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "instrument": {
+      "type": "string",
+      "minLength": 1
+    },
+    "side": {
+      "enum": [
+        "buy",
+        "sell"
+      ]
+    },
+    "size": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "working_memory": {
+      "$ref": "urn:pipmind:schema:v1:working-memory"
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "arguments"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "arguments": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

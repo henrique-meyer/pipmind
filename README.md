@@ -2,7 +2,7 @@
 
 An autonomous AI forex trader that reads economic data, news and social posts 24/5, writes and evolves its own trading rules, and publishes every trade, its P&L and its reasoning live.
 
-**Status: trader in design; landing-page bootstrap.** Nothing here is trading yet. There is no track record to show. The initial container serves the project landing page only.
+**Status: M1 offline replay foundation.** The command-line harness, initial evaluation dataset, graders and CI checks are implemented. Model responses are scripted and nothing here is trading. There is no track record; the deployed container still serves the landing page only.
 
 PipMind is a public portfolio project by [Henrique Meyer](https://github.com/henrique-meyer), a senior software engineer and architect at Nitrosoft Technology Inc. It will run on one Forex.com account (StoneX / GAIN Capital, via CIAPI) and keep a public page of what it did and why.
 
@@ -12,7 +12,7 @@ The model is the trader. Deterministic code does not encode a strategy. The mode
 
 It is also one continuous trader, not a fresh prompt on every tick. A persistent mind holds its identity, a playbook of rules it wrote itself, its current views, and a journal. A nightly review adds, sharpens or retires those rules, and the diff is public.
 
-The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. Export/import is planned, not implemented.
+The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. M1 includes the bundle contracts and synthetic validator/round-trip fixtures; SQL-backed export/import and operational recovery remain planned.
 
 Losses stay on the page next to the reasoning that produced them. The project makes no claim about returns.
 
@@ -71,6 +71,19 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 | [Roadmap](docs/roadmap.md) | Milestones M0–M8, from this design to a public launch |
 | [Landing deployment](infra/README.md) | Local container, CI, GHCR, Azure delivery and custom-domain handoff |
 | [ADRs](docs/adr/0001-ai-makes-the-decisions.md) | Why the model decides, why the services are swappable, where macro data comes from, why the mind persists, and how suggestions differ from overrides |
+
+## Run the offline replay
+
+From the repository root with Python 3.12 and `uv`:
+
+```sh
+uv sync --locked
+uv run python -m pipmind.replay validate
+uv run python -m pytest -q
+uv run python -m pipmind.replay run --ci
+```
+
+The 30-case dataset currently has 13 passing M1 cases and 17 explicit later-capability deferrals. The fixture week emits 15 scripted decisions, five unsent proposals and zero dispatches. Generated decisions, full traces and reports go to ignored `evals/reports/latest/`; only the sanitized baseline is tracked. No provider credentials or network calls are needed after dependency installation. See [the replay/evaluation guide](docs/replay.md) for candidate comparisons, output, baseline review and deferred coverage.
 
 ## Stack
 

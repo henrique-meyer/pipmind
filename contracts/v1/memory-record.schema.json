@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:memory-record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_id",
+    "kind",
+    "ts",
+    "body",
+    "evidence_ids",
+    "override",
+    "source_trader"
+  ],
+  "properties": {
+    "record_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "event",
+        "decision",
+        "refusal",
+        "fill",
+        "review",
+        "suggestion",
+        "memory"
+      ]
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "body": {
+      "type": "string"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "override": {
+      "type": "boolean"
+    },
+    "source_trader": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

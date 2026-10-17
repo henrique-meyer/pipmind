@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:decision-record",
+  "title": "DecisionRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "decision_id",
+    "action",
+    "reasoning",
+    "ts",
+    "evidence_ids",
+    "playbook_version",
+    "override",
+    "causation_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "decision_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "enter",
+        "add",
+        "exit",
+        "hold"
+      ]
+    },
+    "instrument": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "buy",
+        "sell"
+      ]
+    },
+    "size": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1
+    },
+    "playbook_version": {
+      "type": "string"
+    },
+    "evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "override": {
+      "type": "boolean"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "causation_id": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

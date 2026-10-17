@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:fill-event",
+  "title": "FillEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fill_id",
+    "client_order_id",
+    "instrument",
+    "side",
+    "size",
+    "price",
+    "ts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "fill_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "client_order_id": {
+      "type": "string"
+    },
+    "broker_order_id": {
+      "type": "string"
+    },
+    "instrument": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "buy",
+        "sell"
+      ]
+    },
+    "size": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "price": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    }
+  }
+}

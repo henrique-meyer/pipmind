@@ -1,0 +1,109 @@
+{
+  "release-event": {
+    "schema_version": 1,
+    "event_id": "t01-release",
+    "currency": "USD",
+    "indicator": "Synthetic CPI",
+    "actual": 1.1,
+    "forecast": 1.0,
+    "previous": 0.9,
+    "scheduled_at": "2026-10-05T09:00:00Z",
+    "released_at": "2026-10-05T09:00:00Z",
+    "received_at": "2026-10-05T09:00:00Z",
+    "source": "synthetic",
+    "impact": "high"
+  },
+  "news-event": {
+    "schema_version": 1,
+    "event_id": "t02-analysis",
+    "source": "synthetic",
+    "url": "https://example.invalid/news",
+    "headline": "Synthetic educational recap",
+    "kind": "analysis",
+    "published_at": "2026-10-05T09:00:00Z",
+    "received_at": "2026-10-05T09:00:00Z"
+  },
+  "post-event": {
+    "schema_version": 1,
+    "event_id": "t04-post",
+    "author": "Synthetic official",
+    "role": "synthetic-role",
+    "text": "Synthetic official statement",
+    "ts": "2026-10-05T09:00:00Z",
+    "received_at": "2026-10-05T09:00:00Z",
+    "url": "https://example.invalid/post"
+  },
+  "price-event": {
+    "schema_version": 1,
+    "event_id": "d06-price",
+    "instrument": "EUR/USD",
+    "bid": 1.1,
+    "ask": 1.1002,
+    "venue_ts": "2026-10-12T09:00:00Z",
+    "received_at": "2026-10-12T09:00:00Z",
+    "source": "stream",
+    "stale": false
+  },
+  "headline-relay": {
+    "schema_version": 1,
+    "relay_id": "synthetic-relay",
+    "headline": "Synthetic relay",
+    "observed_at": "2026-10-05T00:00:00Z"
+  },
+  "order-request": {
+    "schema_version": 1,
+    "client_order_id": "synthetic-command",
+    "action": "open",
+    "instrument": "EUR/USD",
+    "side": "buy",
+    "size": 1,
+    "order_type": "limit",
+    "limit": 1.1
+  },
+  "order-update": {
+    "schema_version": 1,
+    "client_order_id": "synthetic-command",
+    "status": "accepted",
+    "instrument": "EUR/USD",
+    "ts": "2026-10-05T00:00:00Z"
+  },
+  "fill-event": {
+    "schema_version": 1,
+    "fill_id": "synthetic-fill",
+    "client_order_id": "synthetic-command",
+    "instrument": "EUR/USD",
+    "side": "buy",
+    "size": 1,
+    "price": 1.1,
+    "ts": "2026-10-05T00:00:00Z"
+  },
+  "position-snapshot": {
+    "schema_version": 1,
+    "as_of": "2026-10-05T00:00:00Z",
+    "positions": []
+  },
+  "account-snapshot": {
+    "schema_version": 1,
+    "as_of": "2026-10-05T00:00:00Z",
+    "balance": 10000,
+    "currency": "USD"
+  },
+  "decision-record": {
+    "schema_version": 1,
+    "decision_id": "synthetic-decision",
+    "action": "hold",
+    "reasoning": "Synthetic reasoning",
+    "ts": "2026-10-05T00:00:00Z",
+    "evidence_ids": [],
+    "playbook_version": "fixture-v1",
+    "override": false,
+    "causation_id": "synthetic-event"
+  },
+  "public-snapshot": {
+    "schema_version": 1,
+    "as_of": "2026-10-05T00:00:00Z",
+    "disclaimer": "Not investment advice. Synthetic fixture only.",
+    "fills": [],
+    "decisions": []
+  }
+}

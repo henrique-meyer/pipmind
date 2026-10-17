@@ -46,7 +46,7 @@ flowchart TB
   venue <--> gateway
 ```
 
-Messages are JSON. Timestamps are ISO-8601 in UTC. Schemas below are design sketches (`draft 2020-12`), not a shipped validator. Each message carries `schema_version`.
+Messages are JSON with UTC timestamps and `schema_version`. The checked-in [v1 JSON Schemas](../contracts/README.md) are the source of truth; Python validation also checks cross-field chronology and evidence relationships. The links below reference those contracts rather than maintaining duplicate sketches.
 
 The core is a single Python 3.12 process built on the Microsoft Agent Framework. Model calls go to Microsoft Foundry. The hosted demo stores durable state in Azure SQL Database Standard S0. Local development uses a SQL Server container for database integration checks; a SQLite adapter may support isolated replay fixtures, but is not the hosted state or lease store.
 
@@ -64,44 +64,7 @@ Details, license and the hourly ForexFactory limit are in [Data sources](data-so
 
 ### ReleaseEvent
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:release-event",
-  "title": "ReleaseEvent",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "event_id", "currency", "indicator",
-    "actual", "forecast", "previous", "scheduled_at",
-    "released_at", "source", "received_at"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "event_id": { "type": "string", "minLength": 1 },
-    "currency": { "type": "string", "description": "ISO 4217 code." },
-    "indicator": { "type": "string", "description": "Stable name, for example US CPI m/m." },
-    "actual": { "type": ["number", "null"] },
-    "forecast": {
-      "type": ["number", "null"],
-      "description": "Consensus. ForexFactory first, FXMacroData captured forecast only as a fallback."
-    },
-    "previous": { "type": ["number", "null"] },
-    "revised_previous": { "type": ["number", "null"] },
-    "unit": { "type": "string" },
-    "impact": { "type": "string", "enum": ["low", "medium", "high"] },
-    "period": { "type": "string", "description": "The period the print covers, when known." },
-    "scheduled_at": { "type": "string", "format": "date-time" },
-    "released_at": { "type": "string", "format": "date-time" },
-    "source": {
-      "type": "string",
-      "description": "Which upstream supplied the actual. Consensus source is implied by the forecast rule unless forecast_source is set."
-    },
-    "forecast_source": { "type": "string", "enum": ["forexfactory", "fxmacrodata"] },
-    "received_at": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [ReleaseEvent](../contracts/v1/release-event.schema.json).
 
 ## news-feed
 
@@ -120,60 +83,13 @@ Wire text is an input to the model. The public page publishes the model's reason
 
 ### NewsEvent
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:news-event",
-  "title": "NewsEvent",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "event_id", "source", "url", "headline",
-    "kind", "published_at", "received_at"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "event_id": { "type": "string", "minLength": 1 },
-    "source": { "type": "string" },
-    "url": { "type": "string" },
-    "headline": { "type": "string" },
-    "summary": {
-      "type": "string",
-      "description": "Text the feed itself supplied. Empty when the feed did not."
-    },
-    "kind": { "type": "string", "enum": ["breaking", "analysis"] },
-    "currencies": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "paywalled": { "type": "boolean" },
-    "published_at": { "type": "string", "format": "date-time" },
-    "received_at": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [NewsEvent](../contracts/v1/news-event.schema.json).
 
 ### HeadlineRelay
 
 Internal message from the gateway to `news-feed`. It is broker text in transit, not a trading signal and not a public document.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:headline-relay",
-  "title": "HeadlineRelay",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "relay_id", "headline", "observed_at"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "relay_id": { "type": "string", "minLength": 1 },
-    "headline": { "type": "string" },
-    "url": { "type": "string" },
-    "observed_at": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [HeadlineRelay](../contracts/v1/headline-relay.schema.json).
 
 ## social-feed
 
@@ -185,32 +101,7 @@ X is pay-per-use. The account list is trimmed so the expected bill stays in the 
 
 ### PostEvent
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:post-event",
-  "title": "PostEvent",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "event_id", "author", "role", "text", "ts", "url"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "event_id": { "type": "string", "minLength": 1 },
-    "author": { "type": "string", "description": "Display name or handle." },
-    "handle": { "type": "string" },
-    "role": {
-      "type": "string",
-      "description": "Role id from the follow list, or 'news' for a wire account."
-    },
-    "text": { "type": "string" },
-    "ts": { "type": "string", "format": "date-time" },
-    "url": { "type": "string" },
-    "received_at": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [PostEvent](../contracts/v1/post-event.schema.json).
 
 ## broker-gateway
 
@@ -252,110 +143,17 @@ sequenceDiagram
 
 Internal. Never copied to the public site.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:price-event",
-  "title": "PriceEvent",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "event_id", "instrument", "bid", "ask",
-    "venue_ts", "received_at", "source", "stale"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "event_id": { "type": "string", "minLength": 1 },
-    "instrument": { "type": "string", "description": "Core instrument id, for example EUR/USD." },
-    "bid": { "type": "number" },
-    "ask": { "type": "number" },
-    "venue_ts": { "type": "string", "format": "date-time" },
-    "received_at": { "type": "string", "format": "date-time" },
-    "source": { "type": "string", "enum": ["stream", "rest"] },
-    "stale": { "type": "boolean" }
-  }
-}
-```
+Versioned contract: [PriceEvent](../contracts/v1/price-event.schema.json).
 
 ### OrderRequest
 
 Core to gateway. `client_order_id` is unique per command and is the idempotency key. A retry of the same command reuses it. A modify or a close is a new command with its own id, and points at the earlier command with `related_client_order_id` when it is targeting a working order.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:order-request",
-  "title": "OrderRequest",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "client_order_id", "action", "instrument"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "client_order_id": { "type": "string", "minLength": 1 },
-    "action": { "type": "string", "enum": ["open", "close", "modify"] },
-    "instrument": { "type": "string" },
-    "side": { "type": "string", "enum": ["buy", "sell"] },
-    "size": {
-      "type": ["number", "null"],
-      "exclusiveMinimum": 0,
-      "description": "Positive size in mapped units. On close, null closes the whole position in the instrument."
-    },
-    "order_type": { "type": "string", "enum": ["market", "limit"] },
-    "stop": {
-      "type": ["number", "null"],
-      "description": "Protective stop price. On modify, omit the property to leave it unchanged."
-    },
-    "limit": {
-      "type": ["number", "null"],
-      "description": "Limit price. Required when order_type is limit."
-    },
-    "related_client_order_id": {
-      "type": "string",
-      "description": "The working order a modify or cancel-like close refers to."
-    },
-    "time_in_force": { "type": "string", "enum": ["gtc", "day", "ioc"] }
-  },
-  "allOf": [
-    {
-      "if": { "properties": { "action": { "const": "open" } }, "required": ["action"] },
-      "then": { "required": ["side", "size", "order_type"] }
-    }
-  ]
-}
-```
+Versioned contract: [OrderRequest](../contracts/v1/order-request.schema.json).
 
 ### OrderUpdate
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:order-update",
-  "title": "OrderUpdate",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "client_order_id", "status", "instrument", "ts"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "client_order_id": { "type": "string" },
-    "broker_order_id": {
-      "type": "string",
-      "description": "Present once the broker has accepted the command. Opaque to the core."
-    },
-    "status": {
-      "type": "string",
-      "enum": ["accepted", "working", "partial", "filled", "cancelled", "rejected"]
-    },
-    "instrument": { "type": "string" },
-    "side": { "type": "string", "enum": ["buy", "sell"] },
-    "size": { "type": ["number", "null"] },
-    "filled_size": { "type": "number" },
-    "reason": { "type": "string", "description": "Set on rejection or cancellation." },
-    "ts": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [OrderUpdate](../contracts/v1/order-update.schema.json).
 
 A full fill emits an `OrderUpdate` with `status: filled` and one or more `FillEvent`s. A partial fill emits `status: partial` and a `FillEvent` per execution.
 
@@ -363,86 +161,17 @@ A full fill emits an `OrderUpdate` with `status: filled` and one or more `FillEv
 
 The fill price is this account's execution. It may appear on the public page as a fill. It is not a quote.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:fill-event",
-  "title": "FillEvent",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version", "fill_id", "client_order_id", "instrument",
-    "side", "size", "price", "ts"
-  ],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "fill_id": { "type": "string", "minLength": 1 },
-    "client_order_id": { "type": "string" },
-    "broker_order_id": { "type": "string" },
-    "instrument": { "type": "string" },
-    "side": { "type": "string", "enum": ["buy", "sell"] },
-    "size": { "type": "number", "exclusiveMinimum": 0 },
-    "price": { "type": "number", "exclusiveMinimum": 0 },
-    "ts": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [FillEvent](../contracts/v1/fill-event.schema.json).
 
 ### PositionSnapshot
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:position-snapshot",
-  "title": "PositionSnapshot",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "as_of", "positions"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "as_of": { "type": "string", "format": "date-time" },
-    "positions": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["instrument", "side", "size"],
-        "properties": {
-          "instrument": { "type": "string" },
-          "side": { "type": "string", "enum": ["buy", "sell", "flat"] },
-          "size": { "type": "number", "minimum": 0 },
-          "average_price": { "type": ["number", "null"] },
-          "unrealized_pnl": { "type": ["number", "null"] }
-        }
-      }
-    }
-  }
-}
-```
+Versioned contract: [PositionSnapshot](../contracts/v1/position-snapshot.schema.json).
 
 ### AccountSnapshot
 
 Internal. Used for reconciliation and the daily-loss stop. The public page does not dump this object.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:account-snapshot",
-  "title": "AccountSnapshot",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "as_of", "balance", "currency"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "as_of": { "type": "string", "format": "date-time" },
-    "currency": { "type": "string" },
-    "balance": { "type": "number" },
-    "equity": { "type": "number" },
-    "margin_used": { "type": "number" },
-    "margin_available": { "type": "number" }
-  }
-}
-```
+Versioned contract: [AccountSnapshot](../contracts/v1/account-snapshot.schema.json).
 
 ## Core loop
 
@@ -473,29 +202,7 @@ Implementation references: [Microsoft Foundry model provider](https://learn.micr
 
 Stored in the journal and, when it is a real action or a material hold, reflected on the public page.
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:decision-record",
-  "title": "DecisionRecord",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "decision_id", "action", "reasoning", "ts"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "decision_id": { "type": "string" },
-    "action": { "type": "string", "enum": ["enter", "add", "exit", "hold"] },
-    "instrument": { "type": "string" },
-    "side": { "type": "string", "enum": ["buy", "sell"] },
-    "size": { "type": ["number", "null"] },
-    "reasoning": { "type": "string" },
-    "playbook_version": { "type": "string" },
-    "evidence_ids": { "type": "array", "items": { "type": "string" } },
-    "override": { "type": "boolean" },
-    "ts": { "type": "string", "format": "date-time" }
-  }
-}
-```
+Versioned contract: [DecisionRecord](../contracts/v1/decision-record.schema.json).
 
 ## Persistent mind
 
@@ -517,7 +224,7 @@ The mind is operational data. It is not committed into this source repository.
 
 ### Markdown mind export and import
 
-PipMind supports a portable saved mind: another environment can import the same identity, playbook and retained experience at an identified checkpoint. This preserves saved state, not the underlying model weights or identical future decisions. Model availability, application behavior, retrieved context, new events and account conditions can change subsequent decisions. Learning here updates durable experience and playbook data; it does not fine-tune the model. This is a design requirement, not an implemented feature.
+PipMind supports a portable saved mind: another environment can import the same identity, playbook and retained experience at an identified checkpoint. This preserves saved state, not the underlying model weights or identical future decisions. Model availability, application behavior, retrieved context, new events and account conditions can change subsequent decisions. Learning here updates durable experience and playbook data; it does not fine-tune the model. M1 supplies the versioned bundle contracts and synthetic archive validation/round-trip fixtures. SQL-backed export/import, experience cloning and operational recovery remain planned for M4/M5; contract validation does not activate an imported mind.
 
 SQL remains the transactional runtime store. Export/import is an explicit owner operation over that store, rather than live editing a directory of Markdown files. All durable context used by the agent must be exportable; provider-side conversation/session IDs cannot be the sole copy of memory.
 
@@ -585,7 +292,7 @@ Playbook versions are monotonic. The publisher writes the diff into the public s
 
 ## Evaluations and replay
 
-M1 delivers the evaluation foundation with the replay harness: versioned scenarios, deterministic graders, deliberately invalid traces that test the graders, a baseline report, and credential-free GitHub Actions checks. This is a delivery requirement, not an existing evaluation suite. The same contracts and application paths used by the runtime must be exercised through injected clocks, model clients, stores and simulated gateway adapters.
+M1 delivers the evaluation foundation with the replay harness: versioned scenarios, deterministic graders, deliberately invalid traces that test the graders, a baseline report, and credential-free GitHub Actions checks. The [offline evaluation suite](replay.md) implements this foundation: 13 applicable starter cases pass and 17 later-path cases remain explicitly deferred. The fixture week produces 15 scripted decisions and five unsent proposals from 20 events. This tests replay mechanics and graders, not real-model quality or production safety controls. M1 exercises the core through injected clocks, model clients, stores and a simulated snapshot adapter. The model is scripted; Agent Framework/Foundry inference remains M4 work. No dispatch-capable adapter is registered. Later milestones must activate cases against their real gateway, SQL, review and publication paths.
 
 ### Initial dataset
 
@@ -682,71 +389,7 @@ Broker quotes, `PriceEvent`, raw `AccountSnapshot`, and vendor feeds are not in 
 
 ### PublicSnapshot
 
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pipmind:schema:public-snapshot",
-  "title": "PublicSnapshot",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "as_of", "disclaimer", "fills", "decisions"],
-  "properties": {
-    "schema_version": { "const": 1 },
-    "as_of": { "type": "string", "format": "date-time" },
-    "disclaimer": { "type": "string" },
-    "playbook": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["version"],
-      "properties": {
-        "version": { "type": "string" },
-        "diff": { "type": "string" }
-      }
-    },
-    "pnl": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "realized_r": { "type": "number" },
-        "realized_pct": { "type": "number" },
-        "unrealized_r": { "type": "number" }
-      }
-    },
-    "fills": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["instrument", "side", "size", "price", "ts"],
-        "properties": {
-          "instrument": { "type": "string" },
-          "side": { "type": "string", "enum": ["buy", "sell"] },
-          "size": { "type": "number" },
-          "price": { "type": "number" },
-          "ts": { "type": "string", "format": "date-time" },
-          "decision_id": { "type": "string" }
-        }
-      }
-    },
-    "decisions": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["decision_id", "action", "reasoning", "override"],
-        "properties": {
-          "decision_id": { "type": "string" },
-          "action": { "type": "string" },
-          "instrument": { "type": "string" },
-          "reasoning": { "type": "string" },
-          "override": { "type": "boolean" },
-          "ts": { "type": "string", "format": "date-time" }
-        }
-      }
-    }
-  }
-}
-```
+Versioned contract: [PublicSnapshot](../contracts/v1/public-snapshot.schema.json).
 
 The disclaimer states that the page is a public experiment, that it is not investment advice, and that there are no signals, no copy-trading and no affiliate links.
 

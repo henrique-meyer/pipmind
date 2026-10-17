@@ -76,6 +76,8 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 
 ### M1 evaluation delivery checklist
 
+The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-evaluations); [the replay guide](replay.md) records active coverage and explicit later-path deferrals.
+
 - Versioned JSONL scenarios: six triage, six decision/memory, ten safety/recovery, six review and two public/read-only cases. Include positive controls, adversarial feed content, duplicate/uncertain outcomes, stale state, SQL/lease failures, override evidence exclusion and refusal records.
 - Each case identifies required milestone/capabilities, input events and availability times, simulated clock, starting mind/playbook and broker state, tool results, allowed behavior, expected evidence and rubric version. Use licensed sanitized recordings or synthetic data; reserve chronological held-out episodes.
 - Deterministic graders check schemas, evidence references, permitted dispatch, idempotency, state consistency, review evidence and public redaction. Test graders using intentionally invalid traces so they cannot pass by construction. Add model/human rubrics for reasoning and summary fidelity; model judgments never overrule hard checks.
@@ -100,3 +102,12 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 - Scope: match the DocPilot/QuillSign footer wording and links to the personal site and this repository; put the forex loss disclaimer in its own paragraph; remove the public-experiment credit and separate license link.
 - Acceptance: requested content and links, existing license preserved, adjacent disclaimer lines at the same text size as the credit; desktop credit right-aligned and top-aligned with the first disclaimer line, with responsive stacking when needed; green periods in every wordmark including hover/focus; checked container and actual HTTPS deployment.
 - Validation: local container HTTP checks, adjacent disclaimer paragraphs, matching text sizes and exact desktop top/right alignment verified in the browser; both outbound link destinations and green periods in both wordmarks verified; lint/format, image, Bicep and secret checks run in CI. Release verification checks the published image, ready revision, health/build and custom-domain HTTPS footer while preserving its certificate binding.
+
+## PIP-7 — M1 contracts and replay evaluations
+
+- Story: [PIP-7](https://nitro.atlassian.net/browse/PIP-7)
+- Status: Complete
+- Scope: versioned JSON contracts, injectable offline replay core/clock/model/store, synthetic fixture week, 30-case evaluation dataset, deterministic graders with seeded-failure checks, reproducible baseline comparison and credential-free CI. Include the M1 portability manifest/front-matter/sidecar contracts and synthetic invalid-bundle checks from PIP-6.
+- Acceptance: command-line replay writes decisions and reports to ignored output; independent cases/variants/repetitions are isolated, evidence respects availability, positive controls pass, graders reject known-bad traces, and mandatory failures or missing delivered coverage fail CI. Gateway/SQL ownership, real self-review/publication and SQL clone/recovery remain explicitly deferred to their milestones.
+- Excludes: live inference/vendor/broker calls, Azure provisioning, actual trading, SQL-backed clone/recovery and production safety certification.
+- Validation: 118 tests pass with networking disabled, covering contracts, actual replay paths, grader mutations, isolation, baseline gates and archive rejection. The saved baseline has 13 passing cases and 17 explicit deferrals; the fixture week has 20 events, 15 decisions, five unsent proposals and zero dispatches; all 28 portability fixtures pass. Checked locked dependencies, lint/format, Markdown links/JSON examples and secret handling. CI runs the same offline checks and uploads only a bounded seven-day sanitized summary, alongside existing landing-image, Bicep and secret checks.

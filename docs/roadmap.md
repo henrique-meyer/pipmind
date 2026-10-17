@@ -1,6 +1,6 @@
 # Roadmap
 
-Status of the repo today: **M0, trader in design; landing-page bootstrap.** No trading engine, orders or public track record. The landing container does not change the trading rollout.
+Status of the repo today: **M1 offline replay foundation delivered.** The core runs only with scripted models and no broker dispatch. The deployed container remains the landing page; there are no orders or public track record.
 
 The rollout order is fixed even where the milestone numbers have groundwork in between:
 
@@ -10,7 +10,7 @@ Live trading is not one of these milestones. A Forex.com account is bound to a s
 
 Numeric risk limits are chosen before M6, as configuration, not inside a model prompt. They are unset on purpose in the design docs.
 
-The hosted demo profile is one Azure Container App with two containers, default managed networking, Azure SQL S0, Blob snapshots, a free static frontend, built-in secrets, and essential monitoring. X is read-only throughout. The application keeps independently runnable components and configurable infrastructure for stronger, more expensive production deployments. The [implementation plan](plan.md#demo-delivery-requirements) maps these requirements to the milestones below; the [cost model](cost-model.md) uses an $180 monthly demo planning budget. No infrastructure is deployed yet, and resource creation still requires approval.
+The hosted demo profile is one Azure Container App with two containers, default managed networking, Azure SQL S0, Blob snapshots, a free static frontend, built-in secrets, and essential monitoring. X is read-only throughout. The application keeps independently runnable components and configurable infrastructure for stronger, more expensive production deployments. The [implementation plan](plan.md#demo-delivery-requirements) maps these requirements to the milestones below; the [cost model](cost-model.md) uses an $180 monthly demo planning budget. The landing-only environment is deployed; the full trading profile is not provisioned, and additional resource creation still requires approval.
 
 ## M0 — Design baseline
 
@@ -19,6 +19,8 @@ Public repo, AGPL-3.0, this documentation, the ADRs, and the example social-role
 Done when the docs are on `main` and the architecture diagram renders.
 
 ## M1 — Contracts and replay harness
+
+**Delivered by [PIP-7](plan.md#pip-7--m1-contracts-and-replay-evaluations).** See [the replay guide](replay.md): 30 starter cases, 13 passing applicable cases, 17 explicit deferrals, mutation-tested graders, bounded synthetic bundle validation and a reproducible baseline. The fixture week has 20 events, 15 scripted decisions, five unsent proposals and zero dispatches. Gateway/SQL/review/publication controls and real model quality are not certified by M1.
 
 Check the JSON schemas in as the source of truth. GitHub Actions runs lint and schema checks on fakes, with no Azure calls and no broker calls.
 

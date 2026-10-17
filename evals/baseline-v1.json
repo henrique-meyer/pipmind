@@ -1,0 +1,558 @@
+{
+  "schema_version": 1,
+  "dataset_version": "starter-v1",
+  "grader_version": "deterministic-v1",
+  "context_version": "replay-context-v1",
+  "instructions_sha256": "b439859188e69d7649729db2bda70e760ceb1920b1389e9ae7ca4b54f2e1a4a0",
+  "model_version": "scripted-v1",
+  "deployment_version": null,
+  "inference_settings": {
+    "mode": "scripted",
+    "network": "none",
+    "sampling": false
+  },
+  "portability_version": "portability-synthetic-v1",
+  "source": {
+    "implementation_sha256": "97ce2b4e709f36f9f68406020412351afc5fbce3e55024a8f0555ddd9b6d8e89"
+  },
+  "split": "all",
+  "variant": "baseline",
+  "repetitions": 2,
+  "implemented_capabilities": [
+    "replay_core"
+  ],
+  "counts": {
+    "passed": 13,
+    "failed": 0,
+    "deferred": 17
+  },
+  "areas": {
+    "triage": {
+      "passed": 6,
+      "failed": 0,
+      "deferred": 0
+    },
+    "decision_memory": {
+      "passed": 5,
+      "failed": 0,
+      "deferred": 1
+    },
+    "safety_recovery": {
+      "passed": 1,
+      "failed": 0,
+      "deferred": 9
+    },
+    "self_review": {
+      "passed": 0,
+      "failed": 0,
+      "deferred": 6
+    },
+    "public_read_only": {
+      "passed": 1,
+      "failed": 0,
+      "deferred": 1
+    }
+  },
+  "fixture_week": {
+    "passed": true,
+    "runs": [
+      {
+        "repetition": 0,
+        "failures": [],
+        "events": 20,
+        "decisions": 15,
+        "proposals": 5,
+        "dispatches": 0
+      },
+      {
+        "repetition": 1,
+        "failures": [],
+        "events": 20,
+        "decisions": 15,
+        "proposals": 5,
+        "dispatches": 0
+      }
+    ]
+  },
+  "portability": [
+    {
+      "case_id": "valid-experience",
+      "passed": true,
+      "result": "valid"
+    },
+    {
+      "case_id": "valid-recovery",
+      "passed": true,
+      "result": "valid"
+    },
+    {
+      "case_id": "corrupt",
+      "passed": true,
+      "result": "checksum_mismatch"
+    },
+    {
+      "case_id": "missing-manifest",
+      "passed": true,
+      "result": "missing_manifest"
+    },
+    {
+      "case_id": "missing-file",
+      "passed": true,
+      "result": "inventory_mismatch"
+    },
+    {
+      "case_id": "unlisted",
+      "passed": true,
+      "result": "inventory_mismatch"
+    },
+    {
+      "case_id": "duplicate-entry",
+      "passed": true,
+      "result": "duplicate_entry"
+    },
+    {
+      "case_id": "traversal",
+      "passed": true,
+      "result": "unsafe_path"
+    },
+    {
+      "case_id": "absolute-path",
+      "passed": true,
+      "result": "unsafe_path"
+    },
+    {
+      "case_id": "windows-path",
+      "passed": true,
+      "result": "unsafe_path"
+    },
+    {
+      "case_id": "symlink",
+      "passed": true,
+      "result": "unsafe_entry_type"
+    },
+    {
+      "case_id": "large-file",
+      "passed": true,
+      "result": "file_size"
+    },
+    {
+      "case_id": "expansion",
+      "passed": true,
+      "result": "compression_ratio"
+    },
+    {
+      "case_id": "entry-limit",
+      "passed": true,
+      "result": "entry_count"
+    },
+    {
+      "case_id": "incompatible",
+      "passed": true,
+      "result": "schema:bundle-manifest"
+    },
+    {
+      "case_id": "incomplete",
+      "passed": true,
+      "result": "incomplete_coverage"
+    },
+    {
+      "case_id": "broken-evidence",
+      "passed": true,
+      "result": "broken_evidence"
+    },
+    {
+      "case_id": "duplicate-record",
+      "passed": true,
+      "result": "duplicate_record"
+    },
+    {
+      "case_id": "bad-front-matter",
+      "passed": true,
+      "result": "invalid_json"
+    },
+    {
+      "case_id": "checkpoint",
+      "passed": true,
+      "result": "recovery_checkpoint"
+    },
+    {
+      "case_id": "lease-authority",
+      "passed": true,
+      "result": "schema:recovery-state"
+    },
+    {
+      "case_id": "pending-ledger",
+      "passed": true,
+      "result": "pending_coverage"
+    },
+    {
+      "case_id": "missing-mind",
+      "passed": true,
+      "result": "missing_mind_part"
+    },
+    {
+      "case_id": "duplicate-json",
+      "passed": true,
+      "result": "invalid_json"
+    },
+    {
+      "case_id": "total-expansion",
+      "passed": true,
+      "result": "expanded_size"
+    },
+    {
+      "case_id": "missing-recovery-sidecar",
+      "passed": true,
+      "result": "missing_recovery_state"
+    },
+    {
+      "case_id": "experience-with-authority",
+      "passed": true,
+      "result": "experience_has_authority"
+    },
+    {
+      "case_id": "inherited-provenance",
+      "passed": true,
+      "result": "valid"
+    }
+  ],
+  "dataset_sha256": "b1d7eae9e6705a64840e9f4d4705b39c6b2025f987d28415933866afdbd55a45",
+  "fixture_week_sha256": "d18147d9c222741e434d425a79f15fc30ab53f1000120493a5902dc6132ecb71",
+  "portability_fixture_sha256": "ea7520b94f60fb57613589ea93dd54ac64aff3b05acef92e46c58457f299d185",
+  "cases": [
+    {
+      "case_id": "T01",
+      "family": "triage",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "T02",
+      "family": "triage",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "T03",
+      "family": "triage",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "T04",
+      "family": "triage",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "T05",
+      "family": "triage",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "T06",
+      "family": "triage",
+      "split": "holdout",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "D01",
+      "family": "decision_memory",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "D02",
+      "family": "decision_memory",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "D03",
+      "family": "decision_memory",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "D04",
+      "family": "decision_memory",
+      "split": "development",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "D05",
+      "family": "decision_memory",
+      "split": "holdout",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "D06",
+      "family": "decision_memory",
+      "split": "holdout",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "reconciliation"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S01",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "boundary"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S02",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "boundary"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S03",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "boundary"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S04",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "boundary"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S05",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "boundary"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S06",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "boundary"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S07",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "sql_ownership"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S08",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "sql_ownership"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S09",
+      "family": "safety_recovery",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 5,
+      "missing_capabilities": [
+        "broker_recovery"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "S10",
+      "family": "safety_recovery",
+      "split": "holdout",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    },
+    {
+      "case_id": "R01",
+      "family": "self_review",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 7,
+      "missing_capabilities": [
+        "self_review"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "R02",
+      "family": "self_review",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 7,
+      "missing_capabilities": [
+        "self_review"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "R03",
+      "family": "self_review",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 7,
+      "missing_capabilities": [
+        "self_review"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "R04",
+      "family": "self_review",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 7,
+      "missing_capabilities": [
+        "self_review"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "R05",
+      "family": "self_review",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 7,
+      "missing_capabilities": [
+        "self_review"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "R06",
+      "family": "self_review",
+      "split": "holdout",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 7,
+      "missing_capabilities": [
+        "self_review"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "P01",
+      "family": "public_read_only",
+      "split": "development",
+      "status": "deferred",
+      "mandatory": true,
+      "required_milestone": 8,
+      "missing_capabilities": [
+        "public_publisher"
+      ],
+      "failures": []
+    },
+    {
+      "case_id": "P02",
+      "family": "public_read_only",
+      "split": "holdout",
+      "status": "passed",
+      "mandatory": true,
+      "required_milestone": 1,
+      "missing_capabilities": [],
+      "failures": []
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:order-update",
+  "title": "OrderUpdate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "client_order_id",
+    "status",
+    "instrument",
+    "ts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "client_order_id": {
+      "type": "string"
+    },
+    "broker_order_id": {
+      "type": "string",
+      "description": "Present once the broker has accepted the command. Opaque to the core."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "working",
+        "partial",
+        "filled",
+        "cancelled",
+        "rejected"
+      ]
+    },
+    "instrument": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "buy",
+        "sell"
+      ]
+    },
+    "size": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "filled_size": {
+      "type": "number"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Set on rejection or cancellation."
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    }
+  }
+}

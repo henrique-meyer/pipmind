@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:account-snapshot",
+  "title": "AccountSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "as_of",
+    "balance",
+    "currency"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "currency": {
+      "type": "string"
+    },
+    "balance": {
+      "type": "number"
+    },
+    "equity": {
+      "type": "number"
+    },
+    "margin_used": {
+      "type": "number"
+    },
+    "margin_available": {
+      "type": "number"
+    }
+  }
+}
