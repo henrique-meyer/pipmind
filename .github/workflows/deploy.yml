@@ -38,7 +38,7 @@ jobs:
             test -n "$value" || exit 1
           done
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SOURCE_SHA" --format '{{.Manifest.Digest}}')
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SOURCE_SHA" --format '{{json .}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["digest"])')
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
           echo "CONTAINER_IMAGE=$IMAGE@$DIGEST" >> "$GITHUB_ENV"
       - uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
@@ -64,3 +64,7 @@ jobs:
           FQDN=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.configuration.ingress.fqdn' -o tsv)
           echo "::add-mask::$FQDN"
           python3 scripts/smoke.py --url "https://$FQDN" --build "$SOURCE_SHA"
+          READY_REVISION=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.latestReadyRevisionName' -o tsv)
+          test -n "$READY_REVISION"
+          REVISION_IMAGE=$(az containerapp revision show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --revision "$READY_REVISION" --query 'properties.template.containers[0].image' -o tsv)
+          test "$REVISION_IMAGE" = "$CONTAINER_IMAGE"
