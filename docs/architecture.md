@@ -105,6 +105,8 @@ Versioned contract: [PostEvent](../contracts/v1/post-event.schema.json).
 
 ## broker-gateway
 
+M2 now implements the [dry gateway](gateway.md): an authenticated internal service/container, opt-in read-only CIAPI/Lightstreamer adapters and a local dry command ledger. The synthetic recorded session runs offline in CI. No order-submission method exists, no real broker session is verified, and the deployed landing is unchanged. SQLite is isolated dry development/replay storage; Azure SQL ledger/ownership integration remains M5. See the guide for the mandatory dry acknowledgement envelope, fallback limits and broker verification prerequisites.
+
 One process, one broker, one account. The Forex.com implementation speaks CIAPI Trading API v2 (v1 session and market calls are on the way out), streams prices over Lightstreamer, and falls back to REST. It is the only place that holds broker credentials, and those credentials come from the environment, never from the repo.
 
 The gateway does not decide to trade, size a position, or interpret news. It does:
@@ -404,7 +406,7 @@ The disclaimer states that the page is a public experiment, that it is not inves
 | Social lookup parse fails | Alert. Leave the current holder in place. |
 | X errors or a hot bill | Back off on transport errors. Alert on spend. Keep reading the selected accounts. |
 | Price stream goes quiet | Watchdog marks `stale`, resubscribes, REST supplies `PriceEvent` until the stream is fresh. |
-| HTTP 401 from the broker | Re-login, then retry the same `client_order_id`. |
+| HTTP 401 from the broker | Re-login and retry bounded read calls. An order outcome must follow ledger/reconciliation rules before any resend with the same `client_order_id`; M2 has no order submission path. |
 | HTTP 429 from the broker | Gateway backs off. Rate limits are per account and are not published as a fixed table. |
 | Unmapped instrument or unrepresentable size | `OrderUpdate` rejected. Core does not send a "close enough" order. |
 | Strong model or triage errors | No new risk. Alert. Leave existing protective orders with the broker. |

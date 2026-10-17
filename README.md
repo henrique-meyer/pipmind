@@ -2,7 +2,7 @@
 
 An autonomous AI forex trader that reads economic data, news and social posts 24/5, writes and evolves its own trading rules, and publishes every trade, its P&L and its reasoning live.
 
-**Status: M1 offline replay foundation.** The command-line harness, initial evaluation dataset, graders and CI checks are implemented. Model responses are scripted and nothing here is trading. There is no track record; the deployed container still serves the landing page only.
+**Status: M2 dry broker gateway.** The offline replay/evaluation foundation and independently runnable dry gateway are implemented. Models are scripted, broker connectivity is opt-in and unverified against a real account, and no order submission exists. There is no track record; the deployed container still serves the landing page only.
 
 PipMind is a public portfolio project by [Henrique Meyer](https://github.com/henrique-meyer), a senior software engineer and architect at Nitrosoft Technology Inc. It will run on one Forex.com account (StoneX / GAIN Capital, via CIAPI) and keep a public page of what it did and why.
 
@@ -70,6 +70,7 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 | [Data sources](docs/data-sources.md) | Feeds, why each one is there, and the role-based social list |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M8, from this design to a public launch |
 | [Landing deployment](infra/README.md) | Local container, CI, GHCR, Azure delivery and custom-domain handoff |
+| [Dry broker gateway](docs/gateway.md) | M2 sessions, streaming/fallback, durable dry commands, internal service and offline validation |
 | [ADRs](docs/adr/0001-ai-makes-the-decisions.md) | Why the model decides, why the services are swappable, where macro data comes from, why the mind persists, and how suggestions differ from overrides |
 
 ## Run the offline replay
@@ -77,13 +78,13 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 From the repository root with Python 3.12 and `uv`:
 
 ```sh
-uv sync --locked
+uv sync --locked --extra gateway
 uv run python -m pipmind.replay validate
-uv run python -m pytest -q
+uv run --extra gateway python -m pytest -q
 uv run python -m pipmind.replay run --ci
 ```
 
-The 30-case dataset currently has 13 passing M1 cases and 17 explicit later-capability deferrals. The fixture week emits 15 scripted decisions, five unsent proposals and zero dispatches. Generated decisions, full traces and reports go to ignored `evals/reports/latest/`; only the sanitized baseline is tracked. No provider credentials or network calls are needed after dependency installation. See [the replay/evaluation guide](docs/replay.md) for candidate comparisons, output, baseline review and deferred coverage.
+The 30-case dataset currently has 14 passing cases and 16 explicit later-capability deferrals. The fixture week emits 15 scripted decisions, five unsent proposals and zero dispatches. M2 adds a synthetic gateway session with 15 mandatory checks, including stream/REST recovery and durable dry acknowledgements. Generated decisions, full traces and reports go to ignored `evals/reports/latest/`; only the sanitized baseline is tracked. No provider credentials or network calls are needed after dependency installation. See [the replay/evaluation guide](docs/replay.md) for candidate comparisons, output, baseline review and deferred coverage.
 
 ## Stack
 

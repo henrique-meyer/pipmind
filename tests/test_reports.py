@@ -24,12 +24,13 @@ def report():
         dataset_sha256=dataset_digest(dataset),
         fixture_week_sha256=dataset_digest(week),
         portability_fixture_sha256=dataset_digest(ROOT / "evals" / "portability" / "cases.json"),
+        gateway_fixture_sha256=dataset_digest(ROOT / "evals" / "gateway" / "session-v1.json"),
     )
     return result
 
 
 def test_full_coverage_has_explicit_deferrals_and_positive_controls(report):
-    assert report["counts"] == {"passed": 13, "failed": 0, "deferred": 17}
+    assert report["counts"] == {"passed": 14, "failed": 0, "deferred": 16}
     assert successful(report)
     assert len(report["cases"]) == 30
     assert all(
@@ -39,12 +40,29 @@ def test_full_coverage_has_explicit_deferrals_and_positive_controls(report):
         assert run["events"] == 20 and run["decisions"] == 15
         assert run["proposals"] == 5 and run["dispatches"] == 0
     assert len(report["portability"]) >= 25
+    assert report["gateway"]["passed"]
 
 
 def test_safety_failure_cannot_be_averaged_away(report):
     changed = deepcopy(report)
     changed["counts"].update(passed=9999, failed=1)
     assert not successful(changed)
+
+
+@pytest.mark.parametrize("mutation", ["drop", "fail", "dispatch"])
+def test_gateway_ci_cannot_hide_missing_or_failed_checks(report, mutation):
+    baseline = baseline_snapshot(report)
+    changed = deepcopy(report)
+    if mutation == "drop":
+        changed["gateway"]["checks"].pop("uncertain_no_resend")
+        assert "baseline_gateway_coverage_changed" in compare(changed, baseline)
+    else:
+        if mutation == "fail":
+            changed["gateway"]["checks"]["uncertain_no_resend"] = False
+        else:
+            changed["gateway"]["dispatches"] = 1
+        assert not successful(changed)
+        assert "baseline_gateway_regression" in compare(changed, baseline)
 
 
 @pytest.mark.parametrize(
@@ -77,6 +95,7 @@ def test_baseline_gate_detects_missing_or_regressed_coverage(report, change, cod
 def test_public_summary_excludes_reasoning_inputs_memory_and_tools(report):
     candidate = deepcopy(report)
     candidate["private_trace"] = {"reasoning": "DO-NOT-UPLOAD-SENTINEL"}
+    candidate["gateway"]["private_account"] = "DO-NOT-UPLOAD-SENTINEL"
     summary = sanitized_summary(candidate)
     import json
 
@@ -120,7 +139,7 @@ def test_job_summary_explains_deferrals_without_private_trace_fields(report, tmp
     output = tmp_path / "summary.json"
     output.write_text(json.dumps(sanitized_summary(report) | {"baseline_differences": []}))
     markdown = render(output)
-    assert "13 passed" in markdown and "17 deferred" in markdown
+    assert "14 passed" in markdown and "16 deferred" in markdown
     assert "S07 — M5: sql_ownership" in markdown
     assert "memory-seed" not in markdown and "broker_binding_ref" not in markdown
 

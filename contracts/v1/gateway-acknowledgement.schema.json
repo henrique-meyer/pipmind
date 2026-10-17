@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:gateway-acknowledgement",
+  "title": "Durable dry gateway acknowledgement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "mode", "acknowledgement_id", "dispatch_state", "update"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "mode": {"const": "dry"},
+    "acknowledgement_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "dispatch_state": {"enum": ["not_sent", "refused", "uncertain"]},
+    "update": {"$ref": "urn:pipmind:schema:v1:order-update"}
+  }
+}

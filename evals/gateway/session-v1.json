@@ -1,0 +1,23 @@
+{
+  "format": "synthetic-ciapi-v1",
+  "provenance": "Original synthetic messages, not a recording from a broker account. IDs and endpoints are fictitious.",
+  "clock_start": "2026-10-05T09:00:00Z",
+  "exchanges": [
+    {"method": "POST", "path": "/v2/Session", "status": 200, "body": {"Session": "synthetic-session-token-00000000000001"}},
+    {"method": "GET", "path": "/v2/userAccount/ClientAndTradingAccount", "status": 200, "body": {"AccountResult": {"TradingAccounts": [{"ClientAccountId": 11, "TradingAccountId": 12, "TradingAccountStatus": "Open"}]}}},
+    {"method": "GET", "path": "/v2/market/42/information", "status": 200, "query": {"clientAccountId": 11}, "body": {"MarketInformation": {"MarketId": 42, "Name": "EUR/USD", "IncrementSize": 1000, "WebMinSize": 1000}}},
+    {"method": "GET", "path": "/v2/margin/clientAccountMargin", "status": 401},
+    {"method": "POST", "path": "/v2/Session", "status": 200, "body": {"Session": "synthetic-session-token-00000000000002"}},
+    {"method": "GET", "path": "/v2/margin/clientAccountMargin", "status": 429, "retry_after": 2},
+    {"method": "GET", "path": "/v2/margin/clientAccountMargin", "status": 200, "body": {"CurrencyIsoCode": "USD", "Cash": 10000, "NetEquity": 10002, "Margin": 25, "TradableFunds": 9977}},
+    {"method": "GET", "path": "/TradingAPI/order/openpositions", "status": 200, "query": {"TradingAccountId": 12}, "body": {"OpenPositions": [{"OrderId": 77, "TradingAccountId": 12, "MarketId": 42, "Direction": "Buy", "Quantity": 1000, "Price": 1.1}]}},
+    {"method": "GET", "path": "/TradingAPI/market/42/tickhistory", "status": 200, "query": {"PriceTicks": 1, "priceType": "BID"}, "body": {"PriceTicks": [{"Price": 1.1001, "TickDate": "2026-10-05T09:00:15Z"}]}},
+    {"method": "GET", "path": "/TradingAPI/market/42/tickhistory", "status": 200, "query": {"PriceTicks": 1, "priceType": "ASK"}, "body": {"PriceTicks": [{"Price": 1.1003, "TickDate": "2026-10-05T09:00:15Z"}]}}
+  ],
+  "timeline": [
+    {"at": "2026-10-05T09:00:00Z", "kind": "stream", "payload": {"MarketId": "42", "Bid": "1.1", "Offer": "1.1002", "TickDate": "/Date(1791190800000)/", "StatusSummary": "0"}},
+    {"at": "2026-10-05T09:00:16Z", "kind": "poll"},
+    {"at": "2026-10-05T09:00:17Z", "kind": "stream", "payload": {"MarketId": "42", "Bid": "1.1", "Offer": "1.1002", "TickDate": "2026-10-05T09:00:00Z", "StatusSummary": "0"}},
+    {"at": "2026-10-05T09:00:18Z", "kind": "stream", "payload": {"MarketId": "42", "Bid": "1.1002", "Offer": "1.1004", "TickDate": "2026-10-05T09:00:18Z", "StatusSummary": "0"}}
+  ]
+}

@@ -22,7 +22,7 @@ def test_real_loop_passes_all_implemented_scenarios(cases, contracts):
     applicable = [
         case for case in cases.values() if set(case["required_capabilities"]) <= IMPLEMENTED
     ]
-    assert len(applicable) == 13
+    assert len(applicable) == 14
     for case in applicable:
         trace, failures = replay_episode(case, contracts=contracts)
         assert not failures, (case["case_id"], failures)
