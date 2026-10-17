@@ -17,6 +17,8 @@ The SVGs are the editable sources. Both contain the same `pipmind-mark` group. K
 
 The transparent mark includes a warm outline so its cream silhouette remains visible on light surfaces. Use the square tile when a surface is too busy for the mark.
 
+In the text wordmark `PipMind.`, the period always uses the brand green (`#199D83`), including header/footer and hover/focus states. Wrap it in the shared `brand-dot` class so it keeps its own color rather than inheriting the link color.
+
 | Color | Hex |
 | --- | --- |
 | Navy tile and details | `#0C2340` |
