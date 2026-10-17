@@ -1,0 +1,15 @@
+# Allowlist: ignored private files never enter the build context.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!app/
+!app/**
+!web/
+!web/**
+!assets/
+!assets/logo.svg
+!assets/logo-mark.svg
+!LICENSE
+**/__pycache__/
+**/*.pyc

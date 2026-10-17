@@ -118,6 +118,7 @@ coverage.xml
 playwright-report/
 test-results/
 docs/_build/
+/evals/reports/
 
 # Editor/OS temporary files; shared editor configuration stays trackable
 .idea/

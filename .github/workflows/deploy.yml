@@ -1,0 +1,66 @@
+name: Deploy demo landing
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full main-branch commit SHA whose published image should be deployed
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      AZURE_LOCATION: ${{ secrets.AZURE_LOCATION }}
+      AZURE_CONTAINER_APP: ${{ secrets.AZURE_CONTAINER_APP }}
+      AZURE_CONTAINER_ENVIRONMENT: ${{ secrets.AZURE_CONTAINER_ENVIRONMENT }}
+      AZURE_LOG_WORKSPACE: ${{ secrets.AZURE_LOG_WORKSPACE }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate release source
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          for value in "$AZURE_RESOURCE_GROUP" "$AZURE_LOCATION" "$AZURE_CONTAINER_APP" "$AZURE_CONTAINER_ENVIRONMENT" "$AZURE_LOG_WORKSPACE"; do
+            test -n "$value" || exit 1
+          done
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SOURCE_SHA" --format '{{.Manifest.Digest}}')
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
+          echo "CONTAINER_IMAGE=$IMAGE@$DIGEST" >> "$GITHUB_ENV"
+      - uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy Bicep and verify running revision
+        run: |
+          # Retain any custom-domain binding created after DNS verification.
+          az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.configuration.ingress.customDomains' -o json > "$RUNNER_TEMP/domains.json"
+          python3 - "$RUNNER_TEMP/domains.json" "$RUNNER_TEMP/parameters.json" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1]) as f:
+              domains = json.load(f) or []
+          values = {"location": os.environ["AZURE_LOCATION"], "appName": os.environ["AZURE_CONTAINER_APP"], "environmentName": os.environ["AZURE_CONTAINER_ENVIRONMENT"], "workspaceName": os.environ["AZURE_LOG_WORKSPACE"], "containerImage": os.environ["CONTAINER_IMAGE"], "customDomains": domains}
+          with open(sys.argv[2], "w") as f:
+              json.dump({"parameters": {k: {"value": v} for k, v in values.items()}}, f)
+          PY
+          az deployment group create -g "$AZURE_RESOURCE_GROUP" -n "landing-${GITHUB_RUN_ID}" --template-file infra/main.bicep --parameters @"$RUNNER_TEMP/parameters.json" --only-show-errors -o none
+          ACTUAL_IMAGE=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.template.containers[0].image' -o tsv)
+          test "$ACTUAL_IMAGE" = "$CONTAINER_IMAGE"
+          FQDN=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.configuration.ingress.fqdn' -o tsv)
+          echo "::add-mask::$FQDN"
+          python3 scripts/smoke.py --url "https://$FQDN" --build "$SOURCE_SHA"

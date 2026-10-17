@@ -1,0 +1,9 @@
+using './main.bicep'
+
+// Copy to main.bicepparam (ignored) and fill in deployment-specific values.
+param location = ''
+param appName = ''
+param environmentName = ''
+param workspaceName = ''
+param containerImage = ''
+param minimumReplicas = 0

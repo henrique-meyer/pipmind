@@ -109,6 +109,12 @@ The demo uses default managed networking, built-in app secrets, and a Consumptio
 
 News RSS, central-bank feeds, and the ForexFactory calendar have no subscription line in this plan; their operational limits still apply. Local development runs on an existing machine with Docker Compose and has no continuously hosted duplicate Azure environment. See [Data sources](data-sources.md).
 
+## Landing-only bootstrap
+
+The initial [landing container](architecture.md#landing-only-bootstrap) provisions only a dedicated Container Apps environment/app and small log workspace. One container uses 0.25 vCPU / 0.5 GiB with zero to one replicas. At the same rates, 730 hours of continuously active compute would be $19.71; scale-to-zero and idle behavior reduce actual usage, while requests, transfer and logs remain usage-based. This is not a fixed total or a spending cap. No subscription free grant is assumed, and the log workspace has a 0.1-GB/day ingestion cap and 30-day retention.
+
+SQL, Blob, Static Web Apps, model calls and paid feeds are absent from this first deployment. The full demo estimate above applies when those components arrive, not to the landing page alone. Do not reuse landing scale-to-zero settings for the trading process. Explicitly triggered paid eval runs are additional model usage, tracked separately from the $35 runtime allowance; deterministic PR checks add no model charges.
+
 ## Production deployment costs
 
 Production is a separately priced deployment profile, not a different application or permission to use a live broker account. Larger or separate engine/gateway/feed apps, independent identities, private networking, stable egress, higher SQL capacity/redundancy, longer retention, and richer monitoring can all increase monthly spend. Select them from measured load and agreed security, availability, and recovery requirements; do not present the demo estimate as a production quote. The [architecture](architecture.md#production-deployment-options) lists the options.

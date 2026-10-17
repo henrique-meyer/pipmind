@@ -17,7 +17,7 @@ These are requirements for future implementation stories, not claims that the sy
 
 | Milestone | Revised deployment work and acceptance |
 | --- | --- |
-| M1 — Contracts/replay | Define versioned service and ownership envelopes plus store interfaces. Replay uses fakes or an isolated local store; CI makes no Azure or broker calls. Database integration checks exercise the SQL Server adapter and migrations. |
+| M1 — Contracts/replay | Define versioned service and ownership envelopes plus store interfaces. Deliver the initial 30-case evaluation dataset, deterministic graders with seeded-failure tests, baseline report and credential-free PR checks described below. Replay uses fakes or an isolated local store; CI makes no Azure or broker calls. Database integration checks exercise the SQL Server adapter and migrations when available. |
 | M2 — Gateway | Keep the gateway independently runnable with broker credentials only in its environment. Test durable command IDs, broker-identifier mapping, and recovery from uncertain outcomes in dry mode. |
 | M3 — Feeds | Run macro/news/social as independently supervised engine workers. X reads posts and necessary account/role data only; request no write permissions. Test feed isolation and signed webhook durable acceptance/replay protection. |
 | M4 — Shadow | After resource approval, use one Container App with engine and gateway containers at 0.25 vCPU / 0.5 GiB each, one replica, default networking, and SQL S0. Measure CPU/memory, SQL latency/search, model tokens, and API charges; demonstrate zero orders. |
@@ -40,3 +40,21 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 - Acceptance: editable SVG sources, matching PNG exports, and visual checks on light/dark backgrounds and at small icon sizes.
 - Excludes: application code, trading integrations, and cloud provisioning.
 - Validation: inspected alongside all three reference logos, on white/navy surfaces, and at 16/24/32/48/64 pixels; checked identical SVG mark geometry, valid SVG XML, PNG dimensions, and transparency.
+
+## PIP-3 — Replay evaluation design and initial landing deployment
+
+- Story: [PIP-3](https://nitro.atlassian.net/browse/PIP-3)
+- Status: In progress
+- Scope: specify versioned evaluation scenarios, graders, baseline reports and credential-free CI in M1; build and deploy a branded landing-only container using dedicated Azure Container Apps resources, GHCR and private deployment configuration.
+- Acceptance: replay evaluation requirements are explicit; local container and deployed revision serve the page and health/version response; CI validates code, image, infrastructure and secrets; return concrete DNS records for the owner to configure, then bind managed TLS once DNS resolves.
+- Excludes: implementing the trading/replay engine, SQL/model/feed provisioning, paid model evaluation runs, broker credentials and live trading. The initial scenario dataset and graders are M1 delivery requirements.
+
+### M1 evaluation delivery checklist
+
+- Versioned JSONL scenarios: six triage, six decision/memory, ten safety/recovery, six review and two public/read-only cases. Include positive controls, adversarial feed content, duplicate/uncertain outcomes, stale state, SQL/lease failures, override evidence exclusion and refusal records.
+- Each case identifies required milestone/capabilities, input events and availability times, simulated clock, starting mind/playbook and broker state, tool results, allowed behavior, expected evidence and rubric version. Use licensed sanitized recordings or synthetic data; reserve chronological held-out episodes.
+- Deterministic graders check schemas, evidence references, permitted dispatch, idempotency, state consistency, review evidence and public redaction. Test graders using intentionally invalid traces so they cannot pass by construction. Add model/human rubrics for reasoning and summary fidelity; model judgments never overrule hard checks.
+- Replay the fixture week with injected fake models, clock, isolated state and simulated gateway; reset independent cases, baseline/candidate variants and repetitions. Store reports under ignored generated output. Record dataset/source/prompt/playbook/grader/model versions, per-case failures, deferred coverage, latency and tokens/cost.
+- GitHub Actions validates scenarios and graders, runs the replay and applicable mandatory cases, and reports baseline differences with bounded sanitized artifacts. No secrets, vendor/model APIs or broker connections in PR checks. Fail on mandatory failures or silent skips of implemented capabilities.
+- Activate deferred gateway, SQL ownership, review and public-output cases at M2/M5/M7/M8 against real application paths. M1 fake traces demonstrate grader behavior only. Run optional real-model/judge comparisons explicitly with repetitions and human calibration; track their usage outside the runtime allowance.
+- Keep evaluation quality, safety and profitability separate. Promotion requires mandatory safety cases to pass plus review of quality/cost regressions; continue through shadow mode and demo trading regardless of replay scores.

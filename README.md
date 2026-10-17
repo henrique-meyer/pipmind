@@ -2,7 +2,7 @@
 
 An autonomous AI forex trader that reads economic data, news and social posts 24/5, writes and evolves its own trading rules, and publishes every trade, its P&L and its reasoning live.
 
-**Status: in design.** Nothing here is trading yet. There is no track record to show.
+**Status: trader in design; landing-page bootstrap.** Nothing here is trading yet. There is no track record to show. The initial container serves the project landing page only.
 
 PipMind is a public portfolio project by [Henrique Meyer](https://github.com/henrique-meyer), a senior software engineer and architect at Nitrosoft Technology Inc. It will run on one Forex.com account (StoneX / GAIN Capital, via CIAPI) and keep a public page of what it did and why.
 
@@ -67,6 +67,7 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 | [Cost model](docs/cost-model.md) | Demo estimate of $151–160/month, $180 planning budget, assumptions, and production cost options |
 | [Data sources](docs/data-sources.md) | Feeds, why each one is there, and the role-based social list |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M8, from this design to a public launch |
+| [Landing deployment](infra/README.md) | Local container, CI, GHCR, Azure delivery and custom-domain handoff |
 | [ADRs](docs/adr/0001-ai-makes-the-decisions.md) | Why the model decides, why the services are swappable, where macro data comes from, why the mind persists, and how suggestions differ from overrides |
 
 ## Stack

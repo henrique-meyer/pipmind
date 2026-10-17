@@ -519,6 +519,40 @@ Override-tagged journal rows are excluded from that evidence. The review can say
 
 Playbook versions are monotonic. The publisher writes the diff into the public snapshot. A rule that came from a suggestion says so.
 
+## Evaluations and replay
+
+M1 delivers the evaluation foundation with the replay harness: versioned scenarios, deterministic graders, deliberately invalid traces that test the graders, a baseline report, and credential-free GitHub Actions checks. This is a delivery requirement, not an existing evaluation suite. The same contracts and application paths used by the runtime must be exercised through injected clocks, model clients, stores and simulated gateway adapters.
+
+### Initial dataset
+
+Start with 30 scenarios: six triage cases, six decision/memory cases, ten safety/recovery cases, six self-review cases and two public-output/read-only cases. Use synthetic inputs or sanitized recordings whose retention and redistribution are permitted. Cover ordinary releases, analysis that should not wake a decision, conflicting reports, duplicate delivery, missing PMI actuals, unsupported instruments, stale quotes/snapshots, excess size, daily-loss stop, pause/kill, lost ownership, SQL outage, ambiguous broker responses, prompt injection, mind reconciliation, evidence-free review, one-outcome retirement, override exclusion, public redaction and forbidden X writes. Include positive controls so that refusing every action cannot pass the suite.
+
+Each case records a schema version, stable case ID, required milestone/capabilities, tags, simulated clock, ordered events and their availability times, initial five-part mind/playbook, account/position snapshots, simulated tool results, expected constraints/evidence, and the rubric version. Grade acceptable behavior rather than asserting a single correct trade or exact reasoning text. A stale quote case, for example, permits a model to propose an entry but requires the boundary to refuse dispatch and journal the reason; proposal quality and enforcement are separate results.
+
+Multi-event episodes preserve state within the episode. Reset the store, memory, playbook and simulated broker between independent cases, repetitions and baseline/candidate variants. Replay only information available at that simulated instant, including receipt times and economic-data revisions. Keep chronological held-out episodes separate from cases used to tune prompts or rules; evaluate learning over time in an explicitly stateful, walk-forward run.
+
+### Graders and reports
+
+| Area | Deterministic checks | Optional model/human rubric |
+| --- | --- | --- |
+| Triage | Labeled wake decisions, missed important items, unnecessary wakes, retained events | Summary fidelity and uncertainty |
+| Decision and mind | Schema, valid evidence IDs available at decision time, valid tool arguments, position/memory consistency | Grounded reasoning, handling of conflicting evidence, justified action/hold |
+| Safety and recovery | Forbidden dispatch, duplicate commands, stale-owner rejection, outage refusal, reconciliation and durable refusal records | No model judge can override a failed safety check |
+| Self-review | Evidence references, override exclusion, monotonic versions, repeated-evidence retirement | Evidence supports adding, sharpening or retiring the rule |
+| Public and social | No private values/raw quotes in snapshots; zero X mutation attempts | Clear, faithful public explanation |
+| Operations | Tokens, estimated cost, latency, tool failures and repetition variance | Human review of unexpected regressions |
+
+Use Agent Framework local/custom evaluators where appropriate, with direct code assertions over structured traces for application invariants. Calibrate any model judge against human-labeled examples; version its prompt, deployment/model and rubric. Preserve per-case outcomes and failure reasons alongside aggregate scores. Record source commit, dataset hash/version, model/deployment versions, prompts, starting playbook, grader versions, repetitions, token counts, latency and estimated cost. Keep generated reports and operational traces ignored; publish only sanitized CI summaries/artifacts with bounded retention.
+
+### Execution and release gates
+
+- **Every PR:** validate dataset/schema integrity, chronological evidence references and deterministic graders, including known-bad traces; run the fixture-week replay and applicable mandatory cases with fake model responses, an isolated store and simulated gateway. No Azure/model/vendor/broker credentials or external service calls. Require zero failed mandatory checks and show per-area scores, baseline differences and the number of deferred cases.
+- **Explicit model-quality run:** use the configured Azure OpenAI triage/decision deployments against the same scenarios, optionally with a model judge. Compare the candidate with a saved baseline from identical starting state and repeat cases to measure variability. Record paid usage separately from runtime model spend. This is opt-in, not a paid PR workflow or an additional always-on service.
+- **Capability gates:** M1 must exercise delivered core/replay paths and prove graders detect seeded failures. Cases requiring gateway, SQL ownership, self-review or publication remain visibly deferred until their implementation milestones; mocked refusals are not proof that production enforcement works. Activate those real-path checks at M2/M5/M7/M8, with SQL Server integration tests for database behavior. Mandatory cases for delivered capabilities cannot be skipped silently.
+- **Before promotion:** review regressions in triage, grounded reasoning, memory, self-review and cost; require every applicable safety fixture to pass. A high average quality score cannot compensate for a forbidden action. Replay/model scores do not establish profitability: retain the rollout through live-event shadow mode and broker demo trading, with execution costs and uncertainty included in later performance analysis.
+
+References: [Agent Framework evaluation](https://learn.microsoft.com/en-us/agent-framework/agents/evaluation?pivots=programming-language-csharp) and [OpenAI evaluation datasets](https://developers.openai.com/api/docs/guides/evaluation-getting-started).
+
 ## Limits
 
 The model sets three limits for the regime it thinks it is in, and writes the public reason:
@@ -709,7 +743,7 @@ Logs omit credentials. Public snapshots omit credentials, raw quotes and the acc
 | Hosted state | Azure SQL Database Standard S0; mind, journal, durable events, command ledger, and lease |
 | Local state | SQL Server in Docker Compose for integration checks; optional isolated SQLite replay adapter |
 | Packaging | Docker |
-| CI | GitHub Actions, from the first code milestone. Tests use fakes; CI does not call Azure or the broker |
+| CI | GitHub Actions from the landing bootstrap; M1 adds replay scenarios, graders and baseline checks. Test jobs use fakes and do not call Azure or the broker; delivery jobs are separate |
 | Infrastructure and delivery | Bicep, GHCR images pinned to a release digest, GitHub Actions OIDC deployment |
 | Demo host | One Azure Container App on the Consumption profile, two containers, one replica, default managed networking |
 | Public site | Azure Static Web Apps Free, reading sanitized Blob snapshots |
@@ -717,6 +751,14 @@ Logs omit credentials. Public snapshots omit credentials, raw quotes and the acc
 | Monitoring | Essential Azure Monitor logs/alerts plus an external heartbeat |
 
 The application must remain suitable for production deployment; this hosted instance is a demo. Its small allocations and shared lifecycle do not relax application-level authentication, validation, secret handling, order correctness, or data-integrity requirements. This is a documented deployment profile, not an existing deployment or approval to provision resources.
+
+### Landing-only bootstrap
+
+Before M1, a branded static landing page is served by a small Python 3.12 ASGI container in the dedicated demo Container Apps environment. This first deployment uses one 0.25-vCPU / 0.5-GiB container, zero minimum replicas and one maximum replica, public HTTPS ingress, application-specific health/version responses and default networking. It has no trading loop, broker/model credentials, feeds, database, Blob archive or owner-control routes. The page clearly states that the trader is in development and has no track record. Its routes never invoke a model or broker.
+
+This temporary HTTP-only workload may scale to zero. Before any trading component is deployed, replace it with the always-on two-container profile below; do not carry the landing scaling rule into the trader. The future public record still belongs on Static Web Apps Free with sanitized Blob snapshots. The landing deployment is not M8 public launch.
+
+Keep real resource names, subscription/identity values and the custom hostname in ignored local configuration or GitHub secrets. Bicep represents the dedicated environment, minimal logs and app; images are built from an allowlisted Docker context, published to GHCR and deployed by immutable digest. Validate the actual image/revision, page, assets and health response after deployment. For the custom subdomain, return the generated CNAME target and ownership TXT value to the owner; issue/bind the free managed certificate after DNS resolves directly to the app. Do not claim custom-domain HTTPS is ready before verifying it.
 
 ### Demo instance
 
