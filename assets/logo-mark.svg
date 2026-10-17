@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 11 45 42" role="img" aria-label="PipMind">
+  <g id="pipmind-mark">
+    <path fill="#F4F0E6" stroke="#CDBFA8" stroke-width="1.25" stroke-linejoin="round" d="M32 18c-2.5-5-8.5-6-12-2.5-1.8 1.8-2.5 3.5-2.5 5.5-5.5-.5-8 6.5-4 10.5-4 4.5-1.5 11.5 4 12.5-.5 5.5 6.5 9 11 5l3.5-3 3.5 3c4.5 4 11.5.5 11-5 5.5-1 8-8 4-12.5 4-4 1.5-11-4-10.5 0-2-.7-3.7-2.5-5.5C40.5 12 34.5 13 32 18z"/>
+    <path fill="#E4D8C4" d="m32 46 3.5 3c4.5 4 11.5.5 11-5 4.5-.8 7-5.7 5.6-9.9-1.1 4.1-4.2 6.5-8.1 6.4.4 5-6 7.9-10 4.5l-2-1.7z"/>
+    <path fill="none" stroke="#0C2340" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M32 18v28M23 21c-1.5 3 .5 6 4 6M18 32c4-1 7 1 7 4M41 21c1.5 3-.5 6-4 6"/>
+    <path fill="#52D6AE" d="m16.5 41.5 10-11 7 6 10-12-4-3 14-4-1.5 14-4-3-13.5 16-7-6-7 7.5z"/>
+    <path fill="#199D83" d="m20.5 45.5 7-7.5 7 6L48 28l4 3 1.5-14-9 9-10 14-7-6z"/>
+  </g>
+</svg>
