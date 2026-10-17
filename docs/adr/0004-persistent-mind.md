@@ -23,7 +23,7 @@ The mind has five parts:
 
 Identity and the current playbook are the leading prompt prefix, so provider prompt caching can reuse them across calls. Working memory, the journal tail, retrieved passages and the new events follow the prefix, because they change after each decision.
 
-SQLite is the first store, with full-text search for the long-term part. The shape of the mind does not depend on that engine.
+The hosted demo uses Azure SQL Database Standard S0, with full-text search for the long-term part. Local SQL Server integration checks exercise the same adapter; SQLite may support isolated replay fixtures but is not the hosted mind or lease store. The shape of the mind does not depend on that engine. This storage choice was revised on 2026-10-17 with the [demo deployment profile](../architecture.md#demo-instance); the five-part persistent-mind decision is unchanged.
 
 The nightly self-review is the only writer of playbook versions. Retiring a rule takes repeated evidence. Diffs are published. See the learning loop in [Architecture](../architecture.md).
 

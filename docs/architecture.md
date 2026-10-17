@@ -1,6 +1,6 @@
 # Architecture
 
-PipMind is four services around one core. The core is the trader. The services are replaceable.
+PipMind is four logical services around one core. The core is the trader. The services are replaceable. The hosted demo groups these components into two containers in one Azure Container App; their contracts also support separate production deployments.
 
 | Service | Talks to | Emits | Accepts |
 | --- | --- | --- | --- |
@@ -48,7 +48,7 @@ flowchart TB
 
 Messages are JSON. Timestamps are ISO-8601 in UTC. Schemas below are design sketches (`draft 2020-12`), not a shipped validator. Each message carries `schema_version`.
 
-The core is a single Python 3.12 process built on the Microsoft Agent Framework. Model calls go to Azure OpenAI. State starts in SQLite.
+The core is a single Python 3.12 process built on the Microsoft Agent Framework. Model calls go to Azure OpenAI. The hosted demo stores durable state in Azure SQL Database Standard S0. Local development uses a SQL Server container for database integration checks; a SQLite adapter may support isolated replay fixtures, but is not the hosted state or lease store.
 
 ## macro-feed
 
@@ -179,7 +179,9 @@ Internal message from the gateway to `news-feed`. It is broker text in transit, 
 
 Emits `PostEvent`. The follow list is a set of **roles** (Fed chair, BoJ governor, Japan's finance minister), not a set of people. A weekly job, run while the FX week is closed, re-reads an official page for each role and compares the holder. A changed holder stops polling of the old personal account; institutional accounts stay. A lookup that fails to parse is a failure and alerts the owner. It is never treated as "no change".
 
-X is pay-per-use. The account list is trimmed so the expected bill stays in the budget band. Spend raises an alert. The feed does not drop posts from the selected accounts to enforce a dollar cutoff. The design of the list, the weekly job and a trimmed example are in [Data sources](data-sources.md).
+X access is **read-only**: read selected accounts' posts and perform necessary account/role lookups. PipMind does not publish posts, reply, repost, like, follow, send messages, or request write permissions. The public record is published to PipMind's website, not to X.
+
+X is pay-per-use. The account list is trimmed so the expected bill stays in the budget band. Spend raises an alert. The feed does not drop posts from the selected accounts to enforce a dollar cutoff. Credit exhaustion or provider-side limits can still interrupt access; monitor the balance and alert before that happens. The design of the list, the weekly job and a trimmed example are in [Data sources](data-sources.md).
 
 ### PostEvent
 
@@ -497,9 +499,9 @@ The mind is read on every model call and updated after every decision. [ADR 0004
 | Recent journal | Latest decisions, fills, refusals, surprises | No. A short tail is appended |
 | Long-term memory | Older journal, reviews, suggestion outcomes | No. Retrieved passages only |
 
-The cached prefix is how the cost model stays inside its band. Identity and the playbook are placed first and kept byte-stable between playbook versions. Everything that changed since the last call comes after.
+Identity and the playbook are placed first and kept byte-stable between playbook versions to benefit from prompt caching. Everything that changed since the last call comes after. The demo's base model allowance does not depend on achieving a particular cache hit rate.
 
-Long-term memory starts as SQLite full-text search. Replacing that index later does not change the five-part shape.
+Hosted long-term memory starts with Azure SQL full-text search. Store access and retrieval sit behind adapters so replacing the index or changing deployment capacity does not change the five-part shape. A local replay adapter is not evidence that Azure SQL transactions, search, or concurrency have been validated; database integration checks must exercise the SQL Server adapter.
 
 The mind is operational data. It is not committed into this source repository.
 
@@ -545,7 +547,11 @@ On the public page, override actions are labeled as overrides.
 
 The broker is the source of truth. The core's journal is a narrative; snapshots are the books.
 
-Before the core will emit `OrderRequest` it must hold the single-instance lease. The lease is a row in the same SQLite store, with a TTL the holder renews. A second process does not trade while the lease is held. A crash frees the lease when the TTL passes. On startup the core reconciles from snapshots before it is allowed to send a new order.
+Before the core will emit `OrderRequest` it must hold the single-instance lease. The lease is a row in Azure SQL, with a TTL the holder renews and an ownership generation used to reject stale owners. A second process does not trade while the lease is held. The gateway verifies current ownership before dispatch; a suspended process cannot resume sending after another owner takes over. On startup or takeover, the core reconciles from broker snapshots before it is allowed to send a new order. If SQL is unavailable or ownership cannot be verified, no new order is dispatched.
+
+Persist events and order intent before acknowledging acceptance or sending an order. The command ledger records `client_order_id`, ownership, dispatch state, broker identifiers, and known outcomes; duplicate acceptance must not create another dispatch. An ambiguous broker timeout is reconciled against broker orders/fills before deciding whether a resend is safe. A local command ID alone does not establish broker-side idempotency. The internal ownership envelope and recovery protocol are defined and tested with the contracts and safety milestones.
+
+The one-replica setting is a capacity choice, not a lock: old and new revisions can overlap during deployment. A replacement can become ready in standby, then acquire ownership after the old process drains and releases it or its lease expires. Graceful shutdown stops new dispatches, preserves pending outcomes, and leaves broker-side protective orders intact. Test stale-owner rejection and takeover before demo orders.
 
 Reconciliation:
 
@@ -561,7 +567,9 @@ Demo orders and any later live orders use the same path. A Forex.com account is 
 
 ## Public page
 
-A publisher in the core writes JSON snapshots. A static host (Azure Static Web Apps or Cloudflare Pages) serves them. The site build has no broker credentials and no model key. Visitors do not add variable cost.
+A publisher in the core writes validated, sanitized JSON snapshots to a dedicated public-read Blob container. Azure Static Web Apps Free hosts the demo frontend, which reads those snapshots directly over HTTPS with restricted CORS for the intended site. The app uses managed identity for publishing; browser code contains no broker credentials, model key, storage key, or write token. Private archives use a different container with anonymous access disabled.
+
+Publish immutable snapshot versions before atomically replacing the latest-snapshot pointer. Set cache headers and a browser refresh interval, and show `as_of` so stale output is visible. Website traffic never triggers a model or broker call; storage operations, transfer, and static-host quotas still apply. An authenticated owner interface is a separate control surface from this public read-only page.
 
 The snapshot contains:
 
@@ -572,7 +580,7 @@ The snapshot contains:
 - an override flag where the owner, not the model, acted
 - a standing disclaimer
 
-Broker quotes, `PriceEvent`, raw `AccountSnapshot`, and vendor feeds are not in the snapshot. Execution prices are the account's fills, published because they are part of the trade record. Market data stays in the trading system. That is a product choice: the page is there to show what this account did and why.
+Broker quotes, `PriceEvent`, raw `AccountSnapshot`, and vendor feeds are not in the snapshot. Execution prices are the account's fills, published because they are part of the trade record. Market data stays in the trading system. That is a product choice: the page is there to show what this account did and why. Excluding raw feeds does not itself establish display rights for derived reasoning; confirm applicable provider terms and any display add-on before public launch, as covered in the [cost model](cost-model.md#fxmacrodata).
 
 ### PublicSnapshot
 
@@ -660,6 +668,7 @@ The disclaimer states that the page is a public experiment, that it is not inves
 | Unmapped instrument or unrepresentable size | `OrderUpdate` rejected. Core does not send a "close enough" order. |
 | Strong model or triage errors | No new risk. Alert. Leave existing protective orders with the broker. |
 | Snapshot stale or mismatched | Snapshot wins. Halt new opens. Alert. |
+| SQL unavailable or ownership check fails | No new order dispatch. Preserve uncertain outcomes for reconciliation; do not fall back to an ephemeral local lease. |
 | Lease not held | Do not send `OrderRequest`. |
 | Process crash | Lease expires on TTL. Restart reconciles before trading. |
 | Kill switch or pause | Override path. New orders stop. Flatten only if the override says so. |
@@ -679,12 +688,16 @@ Alert on:
 - a followed high-impact release time arriving with no `ReleaseEvent` and no breaking headline
 - spend thresholds in the [cost model](cost-model.md)
 - a social-role lookup failure
+- low X credit balance, failed replenishment, or a provider-side access cutoff
+- SQL connection failures, backup/restore failures, and container memory/resource pressure
 
 **Daily health**, once a day on trading days: last event time per feed, gateway session up or down, last snapshot age, open positions according to the broker, reconciliation ok or not, playbook version, month-to-date model and X spend, lease holder. Weekend coverage is the Sunday role check and a line that the market is closed.
 
 **Remote kill** files a pause or flatten override. It does not depend on the model. It is authenticated, logged, and visible on the public page as an override.
 
-Logs omit credentials. Public snapshots omit credentials, raw quotes and the account snapshot.
+An external heartbeat check detects loss of the demo instance: the trading process cannot reliably alert on its own death. Keep structured logs small, redact sensitive values, and configure retention. The monitoring allowance is estimated in the cost model and must be checked against actual ingestion and test frequency.
+
+Logs omit credentials. Public snapshots omit credentials, raw quotes and the account snapshot. In every environment, authenticate owner controls, validate model/tool outputs, treat incoming feed text as untrusted data, and preserve the hard boundary and reconciliation rules.
 
 ## Deployment
 
@@ -693,12 +706,55 @@ Logs omit credentials. Public snapshots omit credentials, raw quotes and the acc
 | Language | Python 3.12 |
 | Agent loop | Microsoft Agent Framework |
 | Models | Azure OpenAI: `gpt-6-luna` for triage, `gpt-6.1-sol` for decisions and the nightly review |
-| State | SQLite on a host volume, including the lease and the mind |
+| Hosted state | Azure SQL Database Standard S0; mind, journal, durable events, command ledger, and lease |
+| Local state | SQL Server in Docker Compose for integration checks; optional isolated SQLite replay adapter |
 | Packaging | Docker |
 | CI | GitHub Actions, from the first code milestone. Tests use fakes; CI does not call Azure or the broker |
-| Host | A small always-on Azure option: Container Apps with a minimum of one replica, or a B1s-class VM |
-| Public site | Static host, fed by pushed JSON |
+| Infrastructure and delivery | Bicep, GHCR images pinned to a release digest, GitHub Actions OIDC deployment |
+| Demo host | One Azure Container App on the Consumption profile, two containers, one replica, default managed networking |
+| Public site | Azure Static Web Apps Free, reading sanitized Blob snapshots |
+| Demo secrets | Container Apps secret references, scoped to the consuming container's environment |
+| Monitoring | Essential Azure Monitor logs/alerts plus an external heartbeat |
 
-The trading process runs 24/5, from the Sunday open through Friday's close, and it stays up over the weekend for the role check. It cannot sit on a scale-to-zero platform: a cold start misses the open and misses a dead stream. Early development can run on a machine that is already on; the production shape is the small Azure host. Budget figures are in the [cost model](cost-model.md).
+The application must remain suitable for production deployment; this hosted instance is a demo. Its small allocations and shared lifecycle do not relax application-level authentication, validation, secret handling, order correctness, or data-integrity requirements. This is a documented deployment profile, not an existing deployment or approval to provision resources.
+
+### Demo instance
+
+| Container | Initial resources | Components |
+| --- | --- | --- |
+| Engine | 0.25 vCPU / 0.5 GiB | Core, independently supervised macro/news/social workers, model calls, reviews, publisher, owner controls, webhook receiver |
+| Broker gateway | 0.25 vCPU / 0.5 GiB | Broker credentials/session, prices, order dispatch, fills, snapshots, headline relay |
+| **Total per replica** | **0.5 vCPU / 1 GiB** | One Container App; minimum and maximum replicas both one |
+
+The process runs 24/5 and remains up over the weekend for the role check. Keep minimum replicas at one; do not scale this instance to zero. Both allocations are starting assumptions to measure during shadow mode, not demonstrated capacity. Feed worker failures are supervised independently so one failed adapter does not silence the others.
+
+The containers communicate through configured internal endpoints (loopback in the demo). Preserve versioned JSON contracts, durable acceptance, and order ownership checks; co-location does not make in-memory queues durable. The gateway listens only on its internal endpoint. Route public ingress to the engine for signed macro webhooks and authenticated owner controls; verify HMAC and stale timestamps before durably accepting a webhook, and do not await a model call to acknowledge it.
+
+Use default managed networking. The demo adds no custom VNet, separately billed load balancer/public IP resources, NAT Gateway, private endpoints, dedicated workload profile, or paid network isolation. Connect to SQL over TLS with managed identity and restrictive firewall rules; maintain allowed outbound IPs when the environment's egress addresses change. Do not replace this with a broad allow-all Azure-services rule. Owner-facing controls require authentication and authorization in the demo too.
+
+Use built-in Container Apps secrets for third-party credentials, referenced only in the container that consumes them. Broker credentials go only into the gateway's environment. This is process/configuration separation, not a hard security boundary: containers share the app identity, network, and deployment lifecycle. Do not claim independent identities or independent revision failover for this profile. Do not mount durable database files on container-local storage.
+
+Use SQL transactions and a durable inbox/outbox or command ledger for delivery and recovery; no separate queue broker or cache service is required for the demo. Blob publication uses managed identity with shared-key access disabled. Keep exports and archives private, and apply retention to price/event history so storage growth is measured and controlled without discarding required journal evidence. Database backups use the managed point-in-time recovery capability; verify a restore and reconciliation before treating recovery as operational.
+
+Keep startup/readiness/liveness probes distinct. Standby readiness must not bypass ownership checks. On restart, reacquire ownership and reconcile before dispatch; rollbacks must respect database-schema compatibility. Use an external heartbeat and the essential alerts above. The demo accepts shared restarts and single-instance availability. Its estimate is about $59/month for hosting and $151–160/month including feeds/models, with an $180 planning budget; see the [cost model](cost-model.md) for assumptions and exclusions.
+
+### Production deployment options
+
+Production deployment is a separately sized and priced profile. It can use the same application components and contracts with stronger infrastructure, selected according to availability, recovery, access-control, and load requirements:
+
+| Concern | Demo profile | Production option |
+| --- | --- | --- |
+| Isolation | Two containers in one app | Separate engine/gateway apps and, where useful, separate feed apps, identities, permissions, and release lifecycles |
+| Networking | Default networking, TLS, identity, firewall rules | Custom VNet, private service access, stricter ingress/egress controls, stable egress where required |
+| State | SQL S0 with managed backups | Measured SQL capacity, suitable redundancy/failover, backup retention, independent archives, and tested recovery objectives |
+| Secrets | Built-in app secrets | Key Vault references, least-privilege identities, rotation and access auditing |
+| Availability | One active replica; shared restarts | Standby/failover instances, controlled releases, and independently available owner controls/monitoring |
+| Operations | Essential alerts and modest retention | Longer retention, richer telemetry, on-call/runbooks, recovery exercises, and separately budgeted monitoring |
+
+Replica changes never authorize multiple active traders for one broker account. Scale read-only feeds or add standby capacity only while retaining one core/gateway owner and enforcing stale-owner rejection at dispatch. A production hosting profile does not authorize a live broker account: live trading remains a separate owner decision after the demo rollout.
+
+Database access, service endpoints, identity/secret providers, resource sizes, publication settings, retention, and monitoring are deployment configuration behind stable application interfaces. Some infrastructure changes, such as adding a custom VNet, require a new Container Apps environment rather than an in-place toggle; plan data access, releases, and ownership handover accordingly. Development, demo, and production exercise the same validation and safety rules. Stronger infrastructure has a higher monthly cost and requires its own resource approval; the demo estimate is not a production quote.
 
 One broker account, one gateway, one core holding the lease.
+
+Platform references: [multiple containers and resource allocation](https://learn.microsoft.com/en-us/azure/container-apps/containers), [default networking](https://learn.microsoft.com/en-us/azure/container-apps/networking), [revision overlap](https://learn.microsoft.com/en-us/azure/container-apps/revisions), [app secrets](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets), and [SQL backups](https://learn.microsoft.com/en-us/azure/azure-sql/database/automated-backups-overview).

@@ -10,6 +10,8 @@ Live trading is not one of these milestones. A Forex.com account is bound to a s
 
 Numeric risk limits are chosen before M6, as configuration, not inside a model prompt. They are unset on purpose in the design docs.
 
+The hosted demo profile is one Azure Container App with two containers, default managed networking, Azure SQL S0, Blob snapshots, a free static frontend, built-in secrets, and essential monitoring. X is read-only throughout. The application keeps independently runnable components and configurable infrastructure for stronger, more expensive production deployments. The [implementation plan](plan.md#demo-delivery-requirements) maps these requirements to the milestones below; the [cost model](cost-model.md) uses an $180 monthly demo planning budget. No infrastructure is deployed yet, and resource creation still requires approval.
+
 ## M0 — Design baseline
 
 Public repo, AGPL-3.0, this documentation, the ADRs, and the example social-role config.
@@ -34,7 +36,7 @@ Done when a recorded session shows a quiet stream flipping to REST and back, and
 
 ## M3 — Information feeds
 
-`macro-feed`, `news-feed` and `social-feed` emit only their own event type.
+`macro-feed`, `news-feed` and `social-feed` emit only their own event type and run as independently supervised engine workers in the demo. X supports post reads and necessary account/role lookups only, with no write features or permissions.
 
 Done when each feed can be killed without silencing the other two; the ForexFactory file is served from cache inside the hour; a fixture holder change moves the personal handle and leaves the institutional account in place; a broken lookup raises an alert and does not clear the holder.
 
@@ -42,7 +44,7 @@ Done when each feed can be killed without silencing the other two; the ForexFact
 
 Wake filter, `gpt-6-luna` triage, `gpt-6.1-sol` decisions, persistent mind. The core logs `enter`, `add`, `exit` and `hold` with reasoning and updates the mind. It sends no `OrderRequest`.
 
-Shadow starts on the M1 harness, then on live events once M2 and M3 are up.
+Shadow starts on the M1 harness, then on live events once M2 and M3 are up. Validate the shared demo allocation (0.5 vCPU / 1 GiB total), SQL-backed state/search, and actual API/model costs while proving zero broker orders.
 
 Done when a trading day of live events produces a journal and zero broker orders.
 
@@ -52,7 +54,7 @@ Outer hard boundary with real numbers in configuration, daily-loss stop fed by `
 
 Reconciliation takes positions and balances from gateway snapshots. A mismatch halts new risk.
 
-Done when a request outside the boundary is refused and journaled; a second process cannot send; a stale snapshot blocks new opens; an override is executed, tagged, and absent from the self-review evidence set.
+Done when a request outside the boundary is refused and journaled; a second or stale owner cannot send during revision overlap; SQL loss blocks dispatch; a stale snapshot blocks new opens; an override is executed, tagged, and absent from the self-review evidence set. Exercise graceful handover, external heartbeat failure, and a restored database followed by broker reconciliation.
 
 ## M6 — Demo orders
 
@@ -68,7 +70,7 @@ Done when a fixture journal shows an add, a sharpen, and a refused retirement th
 
 ## M8 — Public launch
 
-The static site serves JSON snapshots: own fills, P&L, reasoning, playbook diffs, override labels, disclaimer. The snapshot has no bid, no ask, and no raw account snapshot. Visitors do not reach the broker or the models.
+Azure Static Web Apps Free serves the frontend, which reads sanitized public Blob snapshots: own fills, P&L, reasoning, playbook diffs, override labels, disclaimer. The snapshot has no bid, no ask, and no raw account snapshot. Visitors do not reach the broker or the models. Archives remain private; caching and visible snapshot age are validated. Confirm provider display rights and any required add-on before launch.
 
 Daily health and the remote kill are running. Spend alerts are running. The page states that this is a public experiment, not investment advice, with no signals, no copy-trading and no affiliate links.
 
