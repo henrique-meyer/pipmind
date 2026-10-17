@@ -70,7 +70,10 @@ def main():
         if link.startswith("#"):
             assert link[1:] in page.ids, f"Broken anchor: {link}"
         elif link.startswith("https:"):
-            assert urlsplit(link).hostname == "github.com", "Unexpected outbound destination"
+            assert urlsplit(link).hostname in {
+                "github.com",
+                "www.hmeyer.com",
+            }, "Unexpected outbound destination"
     assert fetch(args.url, "/", "HEAD")[2] == b""
     for private_path in (
         "/.env",
