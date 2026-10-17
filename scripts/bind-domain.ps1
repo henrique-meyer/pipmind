@@ -1,5 +1,6 @@
 param(
-    [Parameter(Mandatory)][string]$ConfigFile
+    [Parameter(Mandatory)][string]$ConfigFile,
+    [string]$DnsServer
 )
 $ErrorActionPreference = 'Stop'
 $config = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
@@ -9,9 +10,11 @@ foreach ($field in 'resourceGroup','location','appName','environmentName','works
 $app = az containerapp show -g $config.resourceGroup -n $config.appName -o json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read the target app' }
 $target = $app.properties.configuration.ingress.fqdn
-$cname = @(Resolve-DnsName -Name $config.customHostname -Type CNAME -DnsOnly)
+$dnsOptions = @{ DnsOnly = $true }
+if ($DnsServer) { $dnsOptions.Server = $DnsServer }
+$cname = @(Resolve-DnsName -Name $config.customHostname -Type CNAME @dnsOptions)
 if (-not ($cname | Where-Object { $_.NameHost.TrimEnd('.') -eq $target })) { throw 'CNAME must point directly to the Container App' }
-$txt = @(Resolve-DnsName -Name "asuid.$($config.customHostname)" -Type TXT -DnsOnly)
+$txt = @(Resolve-DnsName -Name "asuid.$($config.customHostname)" -Type TXT @dnsOptions)
 if (-not ($txt | Where-Object { ($_.Strings -join '') -eq $app.properties.customDomainVerificationId })) { throw 'Ownership TXT does not match' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $privateDirectory = Join-Path $repoRoot '.azure'
