@@ -1,0 +1,239 @@
+# Trimmed example of the social follow list.
+# Follow ROLES, not people. The weekly job re-runs holder_lookup and, when the
+# parsed name differs, stops polling the old personal handle and keeps the
+# institutional accounts. A failed parse is a failure, not "no change".
+#
+# Holders below were checked on 2026-10-17. This file shows the shape. It is
+# not the full production list (that adds the rest of the P1/P2 rate-setters).
+# Follower counts and posts-per-day estimates live in the cost model, not here.
+#
+# poll:
+#   full_timeline  — read original posts, exclude replies and reposts, use since_id
+#   event_window   — only from a few minutes before a high-impact release until ~30 min after
+#   rss_only       — do not poll X; news-feed already carries an official feed
+#   backup         — read only if the primary channel (for example Truth Social) is quiet
+
+schema_version: 1
+generated_as_example: "2026-10-17"
+design: Follow roles, not people. Weekly holder check. Institutional accounts survive a holder change.
+
+x_cost_model:
+  usd_per_post_read: 0.005
+  note: >
+    Pay-per-use. Trim the list so a month lands near $15–20.
+    Alert above $20. Do not drop posts from selected accounts to enforce a cutoff.
+
+roles:
+  - role_id: us_president
+    title: President of the United States
+    priority: 1
+    jurisdiction: US / USD
+    why_fx: Tariffs, trade policy and remarks about the Fed move USD immediately.
+    holder:
+      name: Donald J. Trump
+      since: "2025-01-20"
+      status: confirmed
+      verified_on: "2026-10-17"
+      source_url: https://www.whitehouse.gov/administration/
+    x_accounts:
+      - handle: realDonaldTrump
+        kind: personal
+        poll: backup
+      - handle: POTUS
+        kind: institutional
+        poll: rss_only
+    personal_x: realDonaldTrump
+    holder_lookup:
+      primary:
+        url: https://www.whitehouse.gov/administration/
+        parse: >
+          Strip HTML to text. Regex: Administration President (.+?) First Lady
+      fallback:
+        url: https://en.wikipedia.org/w/api.php?action=parse&format=json&prop=wikitext&redirects=1&section=0&page=President_of_the_United_States
+        parse: >
+          JSON .parse.wikitext['*']. Regex: \|\s*incumbent\s*=\s*\[\[([^|\]]+)
+    notes: Primary channel is Truth Social via a free public mirror. The X account is a backup.
+
+  - role_id: fed_chair
+    title: Chair, Federal Reserve Board
+    priority: 1
+    jurisdiction: US / USD
+    why_fx: Sets the US policy-rate path.
+    holder:
+      name: Kevin Warsh
+      since: "2026-05"
+      status: confirmed
+      verified_on: "2026-10-17"
+      source_url: https://www.federalreserve.gov/aboutthefed/bios/board/default.htm
+    x_accounts:
+      - handle: federalreserve
+        kind: institutional
+        poll: full_timeline
+    personal_x: null
+    holder_lookup:
+      primary:
+        url: https://www.federalreserve.gov/aboutthefed/bios/board/default.htm
+        parse: >
+          Strip HTML to text. Regex: ([A-Z][\w.]+(?: [A-Z][\w.]*)+), Chairman
+      fallback:
+        url: https://en.wikipedia.org/w/api.php?action=parse&format=json&prop=wikitext&redirects=1&section=0&page=Chair_of_the_Federal_Reserve
+        parse: >
+          JSON .parse.wikitext['*']. Regex: \|\s*incumbent\s*=\s*\[\[([^|\]]+)
+    notes: No personal account is polled. Placeholder handles that are unverified are rejected.
+
+  - role_id: ecb_president
+    title: President, European Central Bank
+    priority: 1
+    jurisdiction: EA / EUR
+    why_fx: Policy decisions and the press conference drive EUR.
+    holder:
+      name: Christine Lagarde
+      since: "2019-11-01"
+      status: confirmed
+      verified_on: "2026-10-17"
+      source_url: https://www.ecb.europa.eu/ecb/decisions/eb/html/index.en.html
+    x_accounts:
+      - handle: Lagarde
+        kind: personal
+        poll: full_timeline
+      - handle: ecb
+        kind: institutional
+        poll: full_timeline
+    personal_x: Lagarde
+    holder_lookup:
+      primary:
+        url: https://www.ecb.europa.eu/ecb/decisions/eb/html/index.en.html
+        parse: >
+          Strip HTML to text. Regex: (\w+ \w+) President of the ECB
+      fallback:
+        url: https://en.wikipedia.org/w/api.php?action=parse&format=json&prop=wikitext&redirects=1&section=0&page=President_of_the_European_Central_Bank
+        parse: >
+          Infobox incumbent.
+
+  - role_id: boj_governor
+    title: Governor, Bank of Japan
+    priority: 1
+    jurisdiction: JP / JPY
+    why_fx: BoJ policy is the main JPY driver.
+    holder:
+      name: Kazuo Ueda
+      since: "2023-04-09"
+      status: confirmed
+      verified_on: "2026-10-17"
+      source_url: https://www.boj.or.jp/en/about/organization/policyboard/index.htm
+    x_accounts:
+      - handle: Bank_of_Japan_e
+        kind: institutional
+        poll: full_timeline
+    personal_x: null
+    holder_lookup:
+      primary:
+        url: https://www.boj.or.jp/en/about/organization/policyboard/index.htm
+        parse: >
+          Strip HTML to text. Regex: Governor ([A-Z]+ \w+) Deputy Governor
+      fallback:
+        url: https://en.wikipedia.org/w/api.php?action=parse&format=json&prop=wikitext&redirects=1&section=0&page=Bank_of_Japan
+        parse: >
+          Regex: \|\s*president\s*=\s*\[\[([^|\]]+)
+    notes: "The English institutional handle is @Bank_of_Japan_e. @boj_en does not exist."
+
+  - role_id: japan_finance_minister
+    title: Minister of Finance, Japan
+    priority: 1
+    jurisdiction: JP / JPY
+    why_fx: Verbal and actual yen-intervention authority.
+    holder:
+      name: Satsuki Katayama
+      since: "2025-10-21"
+      status: confirmed
+      verified_on: "2026-10-17"
+      source_url: https://www.mof.go.jp/english/about_mof/ministers_profile/index.htm
+    x_accounts:
+      - handle: satsukikatayama
+        kind: personal
+        poll: full_timeline
+      - handle: MOF_Japan
+        kind: institutional
+        poll: full_timeline
+    personal_x: satsukikatayama
+    holder_lookup:
+      primary:
+        url: https://www.mof.go.jp/english/about_mof/ministers_profile/index.htm
+        parse: >
+          Read the minister profile linked from the English MoF page.
+          The Japanese roster links via japan.kantei.go.jp meibo slugs.
+      fallback:
+        url: https://en.wikipedia.org/w/api.php?action=parse&format=json&prop=wikitext&redirects=1&section=0&page=Minister_of_Finance_(Japan)
+        parse: >
+          Infobox incumbent.
+    notes: "Posts are often in Japanese. @katayama_s is spam; the government-verified account is @satsukikatayama."
+
+  - role_id: snb_chairman
+    title: Chairman of the Governing Board, Swiss National Bank
+    priority: 1
+    jurisdiction: CH / CHF
+    why_fx: SNB policy and FX operations drive CHF.
+    holder:
+      name: Martin Schlegel
+      since: "2024-10-01"
+      status: confirmed
+      verified_on: "2026-10-17"
+      source_url: https://www.snb.ch/en/the-snb/organisation/supervisory-management-boards
+    x_accounts:
+      - handle: SNB_BNS
+        kind: institutional
+        poll: full_timeline
+    personal_x: null
+    holder_lookup:
+      primary:
+        url: https://www.snb.ch/en/the-snb/organisation/supervisory-management-boards
+        parse: >
+          Strip HTML to text. Regex: ([A-Z]\w+ [A-Z]\w+), Chairman of the Governing Board
+      fallback:
+        url: https://en.wikipedia.org/w/api.php?action=parse&format=json&prop=wikitext&redirects=1&section=0&page=Swiss_National_Bank
+        parse: >
+          Regex: \|\s*president\s*=\s*\[\[([^|\]]+)
+    notes: "@SNB_BNS_en is a parody account. Use @SNB_BNS."
+
+  - role_id: us_bls
+    title: US Bureau of Labor Statistics
+    priority: 1
+    jurisdiction: US / USD
+    why_fx: Publishes payrolls, CPI, PPI and JOLTS.
+    holder: null
+    x_accounts:
+      - handle: BLS_gov
+        kind: institutional
+        poll: full_timeline
+    personal_x: null
+    holder_lookup: null
+    notes: >
+      An institution, so there is no holder to track. Prefer the official
+      release calendar and RSS for the numbers. X is a backup path.
+
+news_accounts:
+  - handle: NickTimiraos
+    poll: full_timeline
+    priority: 1
+    description: WSJ chief economics correspondent. High signal per post, small volume.
+  - handle: DeItaone
+    poll: event_window
+    priority: 1
+    description: Headline relay. Read only around high-impact releases, not all day.
+  - handle: FirstSquawk
+    poll: event_window
+    priority: 1
+    description: FX and macro squawk. Same event-window rule as DeItaone.
+  - handle: investingLive_
+    poll: rss_only
+    priority: 1
+    description: >
+      Ex-ForexLive. Take headlines from the website RSS in news-feed, not from X.
+      @ForexLive is dormant. @investinglive is an unrelated account.
+
+rejected_handles:
+  boj_en: does not exist; use Bank_of_Japan_e
+  ForexLive: dormant after the rebrand; use investingLive_
+  investinglive: unrelated account; use investingLive_
+  SNB_BNS_en: parody; use SNB_BNS
+  katayama_s: spam; use satsukikatayama

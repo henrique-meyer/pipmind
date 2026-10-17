@@ -1,0 +1,704 @@
+# Architecture
+
+PipMind is four services around one core. The core is the trader. The services are replaceable.
+
+| Service | Talks to | Emits | Accepts |
+| --- | --- | --- | --- |
+| `macro-feed` | FXMacroData, ForexFactory | `ReleaseEvent` | — |
+| `news-feed` | Public RSS, plus headlines relayed by the gateway | `NewsEvent` | `HeadlineRelay` |
+| `social-feed` | X, official pages for role lookups | `PostEvent` | — |
+| `broker-gateway` | One broker. The first implementation is Forex.com (StoneX / GAIN Capital CIAPI) | `PriceEvent`, `OrderUpdate`, `FillEvent`, `PositionSnapshot`, `AccountSnapshot` | `OrderRequest` |
+
+Decisions, sizing, the playbook, the outer safety boundary and reconciliation policy live in the core. The gateway has no trading logic. Swapping a data vendor or the broker means replacing one service and keeping these messages. See [ADR 0002](adr/0002-swappable-services.md).
+
+```mermaid
+flowchart TB
+  subgraph feeds [Information feeds]
+    macroFeed[macro-feed]
+    newsFeed[news-feed]
+    socialFeed[social-feed]
+  end
+  subgraph trading [Broker]
+    gateway[broker-gateway]
+    venue[Forex.com CIAPI]
+  end
+  subgraph coreBox [Core]
+    wake[Wake filter]
+    triage[gpt-6-luna triage]
+    decide[gpt-6.1-sol decision]
+    mind[Persistent mind]
+    boundary[Hard boundary and kill switch]
+    reconcile[Reconciliation]
+  end
+  site[Public static page]
+
+  macroFeed -->|ReleaseEvent| wake
+  newsFeed -->|NewsEvent| wake
+  socialFeed -->|PostEvent| wake
+  gateway -->|PriceEvent| wake
+  gateway -->|FillEvent and snapshots| reconcile
+  wake --> triage --> decide
+  mind <--> decide
+  decide --> boundary
+  boundary -->|OrderRequest| gateway
+  reconcile --> mind
+  decide -->|JSON snapshots| site
+  venue <--> gateway
+```
+
+Messages are JSON. Timestamps are ISO-8601 in UTC. Schemas below are design sketches (`draft 2020-12`), not a shipped validator. Each message carries `schema_version`.
+
+The core is a single Python 3.12 process built on the Microsoft Agent Framework. Model calls go to Azure OpenAI. State starts in SQLite.
+
+## macro-feed
+
+Emits one `ReleaseEvent` per release. The core never calls a macro vendor.
+
+- **Actuals.** FXMacroData over server-sent events is primary. Reconnect uses `Last-Event-ID` so a dropped connection replays what was missed. A signed webhook (HMAC, vendor retries) is the backup. SSE and webhook deliveries of the same print collapse to one `event_id`.
+- **Schedule, consensus, PMIs.** ForexFactory's weekly calendar file, cached and refreshed about once an hour. That file has no actual. It does have forecast, previous and impact, and it is how PMIs get onto the calendar. FXMacroData does not cover PMIs and does not publish a true consensus.
+- **`forecast` means consensus.** ForexFactory wins. An FXMacroData captured forecast is copied in only when ForexFactory has no number.
+
+A PMI print that never arrives as a `ReleaseEvent` can still arrive as a headline. `news-feed` does not invent a `ReleaseEvent` from that headline. A later actuals adapter, if one is added, lives inside `macro-feed`.
+
+Details, license and the hourly ForexFactory limit are in [Data sources](data-sources.md) and [ADR 0003](adr/0003-macro-data-sources.md).
+
+### ReleaseEvent
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:release-event",
+  "title": "ReleaseEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "currency", "indicator",
+    "actual", "forecast", "previous", "scheduled_at",
+    "released_at", "source", "received_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "currency": { "type": "string", "description": "ISO 4217 code." },
+    "indicator": { "type": "string", "description": "Stable name, for example US CPI m/m." },
+    "actual": { "type": ["number", "null"] },
+    "forecast": {
+      "type": ["number", "null"],
+      "description": "Consensus. ForexFactory first, FXMacroData captured forecast only as a fallback."
+    },
+    "previous": { "type": ["number", "null"] },
+    "revised_previous": { "type": ["number", "null"] },
+    "unit": { "type": "string" },
+    "impact": { "type": "string", "enum": ["low", "medium", "high"] },
+    "period": { "type": "string", "description": "The period the print covers, when known." },
+    "scheduled_at": { "type": "string", "format": "date-time" },
+    "released_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "string",
+      "description": "Which upstream supplied the actual. Consensus source is implied by the forecast rule unless forecast_source is set."
+    },
+    "forecast_source": { "type": "string", "enum": ["forexfactory", "fxmacrodata"] },
+    "received_at": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+## news-feed
+
+Emits `NewsEvent`. Starting sources are free RSS feeds: investinglive, BabyPips, MarketWatch, CNBC, Google News, and central-bank press feeds. Broker Reuters headlines arrive as `HeadlineRelay` from `broker-gateway`, which is the only CIAPI client. The feed never logs in to the broker itself.
+
+Two kinds of item:
+
+- **Breaking.** A new fact: a print, a decision, an official statement, a wire headline. These may wake the core.
+- **Analysis.** Commentary, education, recaps, outlooks. Stored and included in the daily brief and the nightly review. They do not wake a trading decision on their own.
+
+The adapter sets `kind` from the source section. The cheap model may correct it. Analysis feeds are not a back door into the intraday loop.
+
+Paywalls stay closed. When a feed provides a headline and a link, that is the whole item. The body is stored only when the feed itself included it and the terms allow keeping it. Google News is used as discovery: headline and outbound link.
+
+Wire text is an input to the model. The public page publishes the model's reasoning, not a republication of the wire.
+
+### NewsEvent
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:news-event",
+  "title": "NewsEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "source", "url", "headline",
+    "kind", "published_at", "received_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string" },
+    "url": { "type": "string" },
+    "headline": { "type": "string" },
+    "summary": {
+      "type": "string",
+      "description": "Text the feed itself supplied. Empty when the feed did not."
+    },
+    "kind": { "type": "string", "enum": ["breaking", "analysis"] },
+    "currencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "paywalled": { "type": "boolean" },
+    "published_at": { "type": "string", "format": "date-time" },
+    "received_at": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+### HeadlineRelay
+
+Internal message from the gateway to `news-feed`. It is broker text in transit, not a trading signal and not a public document.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:headline-relay",
+  "title": "HeadlineRelay",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "relay_id", "headline", "observed_at"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "relay_id": { "type": "string", "minLength": 1 },
+    "headline": { "type": "string" },
+    "url": { "type": "string" },
+    "observed_at": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+## social-feed
+
+Emits `PostEvent`. The follow list is a set of **roles** (Fed chair, BoJ governor, Japan's finance minister), not a set of people. A weekly job, run while the FX week is closed, re-reads an official page for each role and compares the holder. A changed holder stops polling of the old personal account; institutional accounts stay. A lookup that fails to parse is a failure and alerts the owner. It is never treated as "no change".
+
+X is pay-per-use. The account list is trimmed so the expected bill stays in the budget band. Spend raises an alert. The feed does not drop posts from the selected accounts to enforce a dollar cutoff. The design of the list, the weekly job and a trimmed example are in [Data sources](data-sources.md).
+
+### PostEvent
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:post-event",
+  "title": "PostEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "author", "role", "text", "ts", "url"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "author": { "type": "string", "description": "Display name or handle." },
+    "handle": { "type": "string" },
+    "role": {
+      "type": "string",
+      "description": "Role id from the follow list, or 'news' for a wire account."
+    },
+    "text": { "type": "string" },
+    "ts": { "type": "string", "format": "date-time" },
+    "url": { "type": "string" },
+    "received_at": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+## broker-gateway
+
+One process, one broker, one account. The Forex.com implementation speaks CIAPI Trading API v2 (v1 session and market calls are on the way out), streams prices over Lightstreamer, and falls back to REST. It is the only place that holds broker credentials, and those credentials come from the environment, never from the repo.
+
+The gateway does not decide to trade, size a position, or interpret news. It does:
+
+- keep the session alive, re-login when the broker says the session is gone, and reconnect the stream
+- map a core instrument id (`EUR/USD`) to the broker's market id, and reject an instrument it cannot map
+- emit `PriceEvent`
+- accept `OrderRequest` and emit `OrderUpdate` and `FillEvent`
+- emit `PositionSnapshot` and `AccountSnapshot` on a timer and after fills
+- respect broker rate limits with backoff
+- treat `client_order_id` as an idempotency key
+
+A previous private prototype showed three broker-side failures worth designing for directly. The price stream can go quiet without a server error, so a stale-stream watchdog marks the feed unhealthy and REST covers prices until the stream is fresh again. An expired session shows up as an authentication failure, so the next call logs in again and retries. A restart can overlap the old process, so the core holds a lease and the gateway refuses a repeated `client_order_id`.
+
+The gateway may coalesce quotes for transport. Venue timestamps are preserved. Coalescing is not a trading filter. A stream that has produced nothing inside the watchdog window is stale: the gateway sets `stale: true`, resubscribes, and serves REST quotes until venue timestamps are fresh. The watchdog interval is configuration per instrument.
+
+Size is a positive decimal in the unit the instrument map declares. If the broker cannot represent that size, the gateway rejects the request and reports the reason. It does not round up, and it does not invent a smaller order. Sizing belongs to the core.
+
+```mermaid
+sequenceDiagram
+  participant Core
+  participant Boundary
+  participant Gateway as broker-gateway
+  participant Venue as Forex.com
+  Core->>Boundary: OrderRequest
+  Boundary->>Gateway: OrderRequest
+  Gateway->>Venue: Broker order
+  Venue-->>Gateway: Ack and fills
+  Gateway-->>Core: OrderUpdate
+  Gateway-->>Core: FillEvent
+  Gateway-->>Core: PositionSnapshot
+  Gateway-->>Core: AccountSnapshot
+```
+
+### PriceEvent
+
+Internal. Never copied to the public site.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:price-event",
+  "title": "PriceEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "event_id", "instrument", "bid", "ask",
+    "venue_ts", "received_at", "source", "stale"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "instrument": { "type": "string", "description": "Core instrument id, for example EUR/USD." },
+    "bid": { "type": "number" },
+    "ask": { "type": "number" },
+    "venue_ts": { "type": "string", "format": "date-time" },
+    "received_at": { "type": "string", "format": "date-time" },
+    "source": { "type": "string", "enum": ["stream", "rest"] },
+    "stale": { "type": "boolean" }
+  }
+}
+```
+
+### OrderRequest
+
+Core to gateway. `client_order_id` is unique per command and is the idempotency key. A retry of the same command reuses it. A modify or a close is a new command with its own id, and points at the earlier command with `related_client_order_id` when it is targeting a working order.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:order-request",
+  "title": "OrderRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "client_order_id", "action", "instrument"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "client_order_id": { "type": "string", "minLength": 1 },
+    "action": { "type": "string", "enum": ["open", "close", "modify"] },
+    "instrument": { "type": "string" },
+    "side": { "type": "string", "enum": ["buy", "sell"] },
+    "size": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "Positive size in mapped units. On close, null closes the whole position in the instrument."
+    },
+    "order_type": { "type": "string", "enum": ["market", "limit"] },
+    "stop": {
+      "type": ["number", "null"],
+      "description": "Protective stop price. On modify, omit the property to leave it unchanged."
+    },
+    "limit": {
+      "type": ["number", "null"],
+      "description": "Limit price. Required when order_type is limit."
+    },
+    "related_client_order_id": {
+      "type": "string",
+      "description": "The working order a modify or cancel-like close refers to."
+    },
+    "time_in_force": { "type": "string", "enum": ["gtc", "day", "ioc"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "open" } }, "required": ["action"] },
+      "then": { "required": ["side", "size", "order_type"] }
+    }
+  ]
+}
+```
+
+### OrderUpdate
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:order-update",
+  "title": "OrderUpdate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "client_order_id", "status", "instrument", "ts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "client_order_id": { "type": "string" },
+    "broker_order_id": {
+      "type": "string",
+      "description": "Present once the broker has accepted the command. Opaque to the core."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["accepted", "working", "partial", "filled", "cancelled", "rejected"]
+    },
+    "instrument": { "type": "string" },
+    "side": { "type": "string", "enum": ["buy", "sell"] },
+    "size": { "type": ["number", "null"] },
+    "filled_size": { "type": "number" },
+    "reason": { "type": "string", "description": "Set on rejection or cancellation." },
+    "ts": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+A full fill emits an `OrderUpdate` with `status: filled` and one or more `FillEvent`s. A partial fill emits `status: partial` and a `FillEvent` per execution.
+
+### FillEvent
+
+The fill price is this account's execution. It may appear on the public page as a fill. It is not a quote.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:fill-event",
+  "title": "FillEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "fill_id", "client_order_id", "instrument",
+    "side", "size", "price", "ts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fill_id": { "type": "string", "minLength": 1 },
+    "client_order_id": { "type": "string" },
+    "broker_order_id": { "type": "string" },
+    "instrument": { "type": "string" },
+    "side": { "type": "string", "enum": ["buy", "sell"] },
+    "size": { "type": "number", "exclusiveMinimum": 0 },
+    "price": { "type": "number", "exclusiveMinimum": 0 },
+    "ts": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+### PositionSnapshot
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:position-snapshot",
+  "title": "PositionSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "as_of", "positions"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "as_of": { "type": "string", "format": "date-time" },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrument", "side", "size"],
+        "properties": {
+          "instrument": { "type": "string" },
+          "side": { "type": "string", "enum": ["buy", "sell", "flat"] },
+          "size": { "type": "number", "minimum": 0 },
+          "average_price": { "type": ["number", "null"] },
+          "unrealized_pnl": { "type": ["number", "null"] }
+        }
+      }
+    }
+  }
+}
+```
+
+### AccountSnapshot
+
+Internal. Used for reconciliation and the daily-loss stop. The public page does not dump this object.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:account-snapshot",
+  "title": "AccountSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "as_of", "balance", "currency"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "as_of": { "type": "string", "format": "date-time" },
+    "currency": { "type": "string" },
+    "balance": { "type": "number" },
+    "equity": { "type": "number" },
+    "margin_used": { "type": "number" },
+    "margin_available": { "type": "number" }
+  }
+}
+```
+
+## Core loop
+
+1. **Ingest.** Append `ReleaseEvent`, `NewsEvent`, `PostEvent` and `PriceEvent` to the event log. Price ticks are aggregated into a short state (last quote, session range, a move worth mentioning). Macro, news and social items are not discarded to save tokens.
+2. **Wake.** The filter decides that the strong model might have something to do. Wakes include a release, a breaking headline, a post from a followed role, an aggregated price move, a fill, a snapshot that disagrees with the core, and the clock (a daily brief, the nightly review, session open and close). Analysis items wait for the brief. There is no keyword list. A previous private prototype used one, and it missed headlines.
+3. **Triage.** `gpt-6-luna` summarizes the new material and says whether `gpt-6.1-sol` should be called. Every ingested macro, news and social item is visible to this model. Triage is allowed to say "do not wake". It is not allowed to drop the item from the journal of what was seen.
+4. **Decide.** `gpt-6.1-sol` reads the mind and the triage summary and returns `enter`, `add`, `exit` or `hold`, plus written reasoning and the limits it wants for this regime. See [ADR 0001](adr/0001-ai-makes-the-decisions.md).
+5. **Remember.** Working memory and the journal update after every decision, including holds that matter.
+6. **Bound.** The hard boundary accepts or refuses the order. A refusal is written back into the journal so the model sees it on the next call.
+7. **Send.** Only a boundary-approved `OrderRequest` goes to the gateway, and only while the lease is held and snapshots are fresh.
+8. **Reconcile.** Snapshots overwrite the core's view of positions, balance, margin and fill state. Then working memory is corrected if its thesis referred to a position that is gone.
+
+If the strong model errors, or triage cannot run, the core does not open new risk. Existing broker-side orders are left in place unless an override says to flatten. The owner is alerted.
+
+The decision step is an agent in the Microsoft Agent Framework. Its tools read the mind, search long-term memory, record the decision, and propose an order. Proposing an order hands the request to the boundary. The agent has no tool that talks to the broker.
+
+### Decision record
+
+Stored in the journal and, when it is a real action or a material hold, reflected on the public page.
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:decision-record",
+  "title": "DecisionRecord",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision_id", "action", "reasoning", "ts"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "decision_id": { "type": "string" },
+    "action": { "type": "string", "enum": ["enter", "add", "exit", "hold"] },
+    "instrument": { "type": "string" },
+    "side": { "type": "string", "enum": ["buy", "sell"] },
+    "size": { "type": ["number", "null"] },
+    "reasoning": { "type": "string" },
+    "playbook_version": { "type": "string" },
+    "evidence_ids": { "type": "array", "items": { "type": "string" } },
+    "override": { "type": "boolean" },
+    "ts": { "type": "string", "format": "date-time" }
+  }
+}
+```
+
+## Persistent mind
+
+The mind is read on every model call and updated after every decision. [ADR 0004](adr/0004-persistent-mind.md) records why. The five parts:
+
+| Part | Contents | In the cached prefix? |
+| --- | --- | --- |
+| Identity | Who it is, the mandate, constraints it must not rewrite | Yes |
+| Playbook | Self-written rules, with version | Yes, until the nightly review cuts a new version |
+| Working memory | Views, open-position theses, what it is waiting for | No. It changes after each decision |
+| Recent journal | Latest decisions, fills, refusals, surprises | No. A short tail is appended |
+| Long-term memory | Older journal, reviews, suggestion outcomes | No. Retrieved passages only |
+
+The cached prefix is how the cost model stays inside its band. Identity and the playbook are placed first and kept byte-stable between playbook versions. Everything that changed since the last call comes after.
+
+Long-term memory starts as SQLite full-text search. Replacing that index later does not change the five-part shape.
+
+The mind is operational data. It is not committed into this source repository.
+
+## Learning loop
+
+After the trading day, a self-review call (`gpt-6.1-sol`, with the day's journal, fills and rule hits) may:
+
+- **Add** a rule, marked active or on trial
+- **Sharpen** the wording of a rule, keeping its id
+- **Retire** a rule
+
+Retirement needs repeated evidence: more than one contrary outcome, cited in the review. A single loss is not enough. Retired rules stay in the history. The public diff shows the retirement and the evidence note.
+
+Override-tagged journal rows are excluded from that evidence. The review can say an override happened. It cannot learn a rule from one.
+
+Playbook versions are monotonic. The publisher writes the diff into the public snapshot. A rule that came from a suggestion says so.
+
+## Limits
+
+The model sets three limits for the regime it thinks it is in, and writes the public reason:
+
+- position size
+- daily risk budget
+- trade count
+
+Code enforces an outer hard boundary around those three, plus the kill switch. The numeric boundary is owner configuration. The values are deliberately not chosen in this design pass; they have to be set before any order is sent, including demo orders. The model cannot raise the boundary. A suggestion cannot either.
+
+The daily-loss stop is part of the boundary. It reads equity from `AccountSnapshot`, not from the model's estimate. When the day's loss reaches the stop, new risk is refused until the next session. The model is told.
+
+An order the boundary refuses is not retried by shrinking it inside the gateway. The refusal returns to the model.
+
+## Owner channels
+
+Two channels, specified in [ADR 0005](adr/0005-suggestions-and-overrides.md).
+
+**Suggestions.** The model may adopt, trial or reject, with a reason. The disposition is stored, and later reviews attach how the idea lined up with the market. That track record is part of the context for the next suggestion.
+
+**Overrides.** Executed as written, with no request for the model's agreement. Logged with an expiry or until lifted. Tagged so self-review skips them as evidence. The kill switch, pause and flatten are overrides. An override still cannot punch through the hard boundary; changing the boundary is its own recorded configuration act.
+
+On the public page, override actions are labeled as overrides.
+
+## Execution, lease, reconciliation
+
+The broker is the source of truth. The core's journal is a narrative; snapshots are the books.
+
+Before the core will emit `OrderRequest` it must hold the single-instance lease. The lease is a row in the same SQLite store, with a TTL the holder renews. A second process does not trade while the lease is held. A crash frees the lease when the TTL passes. On startup the core reconciles from snapshots before it is allowed to send a new order.
+
+Reconciliation:
+
+- positions and average price come from `PositionSnapshot`
+- balance, equity and margin come from `AccountSnapshot`
+- working orders and fills come from `OrderUpdate` and `FillEvent`
+- if the core's expected position disagrees with the snapshot, the snapshot wins, new risk is halted, and the owner is alerted
+- a snapshot older than the freshness window is treated as a disagreement: no new opens
+
+The gateway's idempotency check is the backstop for a retried command. The lease is the backstop for two decision processes.
+
+Demo orders and any later live orders use the same path. A Forex.com account is bound to one environment, so the demo milestone points the gateway at the demo environment on purpose.
+
+## Public page
+
+A publisher in the core writes JSON snapshots. A static host (Azure Static Web Apps or Cloudflare Pages) serves them. The site build has no broker credentials and no model key. Visitors do not add variable cost.
+
+The snapshot contains:
+
+- this account's own fills (instrument, side, size, execution price, time)
+- P&L for those decisions, in R and in percent; a dollar figure is optional
+- the reasoning, and the playbook version it used
+- playbook diffs
+- an override flag where the owner, not the model, acted
+- a standing disclaimer
+
+Broker quotes, `PriceEvent`, raw `AccountSnapshot`, and vendor feeds are not in the snapshot. Execution prices are the account's fills, published because they are part of the trade record. Market data stays in the trading system. That is a product choice: the page is there to show what this account did and why.
+
+### PublicSnapshot
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:public-snapshot",
+  "title": "PublicSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "as_of", "disclaimer", "fills", "decisions"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "as_of": { "type": "string", "format": "date-time" },
+    "disclaimer": { "type": "string" },
+    "playbook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version"],
+      "properties": {
+        "version": { "type": "string" },
+        "diff": { "type": "string" }
+      }
+    },
+    "pnl": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "realized_r": { "type": "number" },
+        "realized_pct": { "type": "number" },
+        "unrealized_r": { "type": "number" }
+      }
+    },
+    "fills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrument", "side", "size", "price", "ts"],
+        "properties": {
+          "instrument": { "type": "string" },
+          "side": { "type": "string", "enum": ["buy", "sell"] },
+          "size": { "type": "number" },
+          "price": { "type": "number" },
+          "ts": { "type": "string", "format": "date-time" },
+          "decision_id": { "type": "string" }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision_id", "action", "reasoning", "override"],
+        "properties": {
+          "decision_id": { "type": "string" },
+          "action": { "type": "string" },
+          "instrument": { "type": "string" },
+          "reasoning": { "type": "string" },
+          "override": { "type": "boolean" },
+          "ts": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}
+```
+
+The disclaimer states that the page is a public experiment, that it is not investment advice, and that there are no signals, no copy-trading and no affiliate links.
+
+## Failure handling
+
+| Failure | Behavior |
+| --- | --- |
+| FXMacroData SSE drops | Reconnect with `Last-Event-ID`. Webhook covers the gap. Duplicate `event_id`s collapse. |
+| Webhook signature fails | Drop the payload and alert. Do not emit a `ReleaseEvent`. |
+| One RSS feed fails | Other feeds continue. The failure is logged. Back off that feed. |
+| Paywalled article | Store headline and link. Do not fetch the body. |
+| Social lookup parse fails | Alert. Leave the current holder in place. |
+| X errors or a hot bill | Back off on transport errors. Alert on spend. Keep reading the selected accounts. |
+| Price stream goes quiet | Watchdog marks `stale`, resubscribes, REST supplies `PriceEvent` until the stream is fresh. |
+| HTTP 401 from the broker | Re-login, then retry the same `client_order_id`. |
+| HTTP 429 from the broker | Gateway backs off. Rate limits are per account and are not published as a fixed table. |
+| Unmapped instrument or unrepresentable size | `OrderUpdate` rejected. Core does not send a "close enough" order. |
+| Strong model or triage errors | No new risk. Alert. Leave existing protective orders with the broker. |
+| Snapshot stale or mismatched | Snapshot wins. Halt new opens. Alert. |
+| Lease not held | Do not send `OrderRequest`. |
+| Process crash | Lease expires on TTL. Restart reconciles before trading. |
+| Kill switch or pause | Override path. New orders stop. Flatten only if the override says so. |
+
+Failed closed is the default on the order path. Information feeds fail open in the sense that one dead feed does not blank the others, and items are not thrown away to save money.
+
+## Observability
+
+Alerts go to the owner. They do not, by themselves, drop data or stop the model. The kill switch is a separate, deliberate override.
+
+Alert on:
+
+- price stream stale beyond the watchdog, and REST fallback also failing
+- reconciliation mismatch, or snapshots past the freshness window
+- lease conflict, or this process trading without the lease
+- model errors, and a decision loop that is calling the strong model far above its usual rate
+- a followed high-impact release time arriving with no `ReleaseEvent` and no breaking headline
+- spend thresholds in the [cost model](cost-model.md)
+- a social-role lookup failure
+
+**Daily health**, once a day on trading days: last event time per feed, gateway session up or down, last snapshot age, open positions according to the broker, reconciliation ok or not, playbook version, month-to-date model and X spend, lease holder. Weekend coverage is the Sunday role check and a line that the market is closed.
+
+**Remote kill** files a pause or flatten override. It does not depend on the model. It is authenticated, logged, and visible on the public page as an override.
+
+Logs omit credentials. Public snapshots omit credentials, raw quotes and the account snapshot.
+
+## Deployment
+
+| Piece | Choice |
+| --- | --- |
+| Language | Python 3.12 |
+| Agent loop | Microsoft Agent Framework |
+| Models | Azure OpenAI: `gpt-6-luna` for triage, `gpt-6.1-sol` for decisions and the nightly review |
+| State | SQLite on a host volume, including the lease and the mind |
+| Packaging | Docker |
+| CI | GitHub Actions, from the first code milestone. Tests use fakes; CI does not call Azure or the broker |
+| Host | A small always-on Azure option: Container Apps with a minimum of one replica, or a B1s-class VM |
+| Public site | Static host, fed by pushed JSON |
+
+The trading process runs 24/5, from the Sunday open through Friday's close, and it stays up over the weekend for the role check. It cannot sit on a scale-to-zero platform: a cold start misses the open and misses a dead stream. Early development can run on a machine that is already on; the production shape is the small Azure host. Budget figures are in the [cost model](cost-model.md).
+
+One broker account, one gateway, one core holding the lease.
