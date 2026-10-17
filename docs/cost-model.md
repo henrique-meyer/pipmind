@@ -1,19 +1,32 @@
 # Cost model
 
-Target: **under $100 a month** for the whole system, at a planning point inside these bands.
+The hosted demo uses the [demo deployment profile](architecture.md#demo-instance): one Azure Container App containing two containers, Azure SQL S0, default managed networking, Blob Storage, a free static frontend, built-in app secrets, and essential monitoring. The application also supports separately sized production deployments.
 
-| Line | Band | Planning point |
-| --- | ---: | ---: |
-| FXMacroData | $42–50 | $42 (annual billing) |
-| X | $15–20 | $15 (trimmed follow list) |
-| Models | $25–40 | $30 (cached prefix, moderate call volume) |
-| Hosting | $0–14 | $10 (small always-on Azure host) |
-| News, calendar file, static site | $0 | $0 |
-| **Total** | | **about $97** |
+**Planning estimate: $59.14/month hosting, $151.31/month total with annual FXMacroData billing, or $159.64/month total with monthly FXMacroData billing. Planning budget: $180/month before tax.** This supersedes the initial under-$100 estimate. It is a planning budget with alerts, not an enforced runtime spending cap or approval to buy resources/subscriptions.
 
-The tops of the bands added together are over $100. The operating plan is the planning column, not every line at its maximum. If a month runs hot, the owner gets an alert. Nothing in the stack silently drops events, skips a model call, or stops reading a selected account in order to save money.
+### Monthly demo estimate
 
-Prices below are list prices stated for this design on 2026-10-17. Recheck them against Azure, FXMacroData and X before spending.
+| Line | Monthly USD | Basis |
+| --- | ---: | --- |
+| Container App, both containers combined | $39.42 | 0.5 vCPU / 1 GiB, 730 hours, active rates throughout |
+| Azure SQL Standard S0 | $14.72 | One 10-DTU database, 250 GB included storage, managed PITR backups |
+| Blob storage, operations, modest transfer | $2.00 | Usage allowance for sanitized snapshots and private archives |
+| Logs, alerts, external heartbeat | $3.00 | Usage allowance; small structured logs and essential monitoring |
+| Azure Static Web Apps Free | $0.00 | Frontend within free-plan quotas |
+| Built-in app secrets and managed identity | $0.00 additional | No separate Key Vault in the demo profile |
+| Standard public-repo CI and public GHCR publishing | $0.00 | Standard runners, controlled artifact/cache retention, public container images |
+| **Hosting subtotal** | **$59.14** | |
+| Azure OpenAI model calls | $35.00 | Usage allowance; decision/triage/review assumptions below |
+| X read-only API | $15.50 | $15 post-read allowance plus $0.50 for account lookups |
+| FXMacroData Individual, annual billing | $41.67 | $500/year paid upfront, amortized over 12 months |
+| **Total, annual FXMacroData plan** | **$151.31** | |
+| **Total, monthly FXMacroData plan** | **$159.64** | Replace $41.67 with $50/month |
+
+Basis checked on **2026-10-17**: East US 2 USD retail rates and 730 hours/month. Region is a pricing assumption, not a provisioned resource or confirmation of model quota. No reservation, promotional credit, idle discount, or unused subscription free grant is required to reach these totals. Actual models, traffic, logs, storage, and API use vary; allowances are not fixed provider prices. Recheck the deployment region, model availability/quota, and subscription pricing before provisioning.
+
+The $180 budget leaves $28.69 above the annual-plan estimate or $20.36 above the monthly-plan estimate. A possible public-display fee consumes some of that headroom; it is not included in the base totals. Higher audiences or usage can exceed the budget. Spending raises an alert; the system does not silently drop events or refuse model calls to stay within it. Provider credit exhaustion and account limits can still interrupt service and need their own alerts.
+
+Sources: [Azure retail pricing API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices), [Container Apps pricing](https://azure.microsoft.com/en-us/pricing/details/container-apps/), [SQL pricing](https://azure.microsoft.com/en-us/pricing/details/azure-sql-database/single/), [SQL limits](https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-dtu-single-databases), [SQL backup billing](https://learn.microsoft.com/en-us/azure/azure-sql/database/automated-backups-overview), [Static Web Apps quotas](https://learn.microsoft.com/en-us/azure/static-web-apps/quotas), [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), and [GitHub Packages billing](https://docs.github.com/en/billing/concepts/product-billing/github-packages).
 
 ## Models
 
@@ -22,7 +35,7 @@ Prices below are list prices stated for this design on 2026-10-17. Recheck them 
 | `gpt-6.1-sol` | Decisions, nightly self-review | $2 | $10 |
 | `gpt-6-luna` | Triage and summaries | $0.10 | $0.50 |
 
-Both are called through Azure OpenAI. Reasoning tokens on the strong model are counted as output.
+Both are called through Azure OpenAI. These are working token-rate assumptions, matching [OpenAI's published model prices](https://developers.openai.com/api/docs/models) at review time; they are not a confirmed quote for the selected Azure deployment type/region. Confirm Azure's deployed-model and cached-input rates before provisioning. Reasoning tokens on the strong model count as output.
 
 ### Unit cost, uncached
 
@@ -38,43 +51,34 @@ Planning assumptions for the size of a call:
 | Triage (`gpt-6-luna`) | 1,500 × $0.10 / 1e6 = $0.00015 | 150 × $0.50 / 1e6 = $0.000075 | **$0.000225** |
 | Nightly review | 30,000 × $2 / 1e6 = $0.06 | 8,000 × $10 / 1e6 = $0.08 | **$0.14** per night |
 
-A month is about 22 trading days. Review runs on calendar days the books are open, budgeted here as 30 nights plus the weekly pass, about **$5**.
+A month is about 22 trading days. Budget 30 nightly reviews plus $1 for weekly deeper review: `30 × $0.14 + $1 = $5.20`. This conservatively allows review every calendar night.
 
-| Volume per trading day | Calls per month | Uncached month |
-| --- | ---: | ---: |
-| Decisions 15 / 40 / 150 | 330 / 880 / 3,300 | $14.50 / $38.70 / $145 |
-| Triage items 500 / 1,500 / 4,000 | 11,000 / 33,000 / 88,000 | $2.50 / $7.40 / $19.80 |
-| Review | — | $5 / $5 / $8 |
-| **LLM subtotal, uncached** | | **$22 / $51 / $173** |
+| Scenario | Decisions / trading day | Triage items / trading day | Review / month | Uncached model month |
+| --- | ---: | ---: | ---: | ---: |
+| Quiet | 15 | 500 | $5.20 | $22.20 |
+| **Planning** | **20** | **1,500** | **$5.20** | **$31.99** |
+| Busy | 40 | 1,500 | $5.20 | $51.35 |
+| Stress | 150 | 4,000 | $8.00 | $173.00 |
 
-The middle column is a busy strong-model month, not the planning target. Forty uncached decisions a day plus triage and review is about **$51**, which is above the $25–40 model band.
+Planning arithmetic: `440 × $0.044 + 33,000 × $0.000225 + $5.20 = $31.985`, rounded to $31.99. The total uses a **$35 model allowance**, with a little room above that scenario. Decision and triage frequencies are assumptions, not runtime caps. A busy month adds about $16.35 to the base total before any other change.
 
 ### Cached input
 
-Identity and the current playbook are a stable prompt prefix ([architecture](architecture.md)). Azure bills cached input tokens below the normal input price. The discount for these two model names has to be read off the price sheet; it is not assumed to be known here. Two illustrations, both with **75% of decision and review input tokens cached** and triage left uncached:
-
-| Cached input price | Decision call | LLM month at 15 / 40 / 150 decisions a day |
-| --- | ---: | ---: |
-| Half of list input | $0.038 | about $20 / $45 / $153 |
-| A tenth of list input | $0.033 | about $17 / $41 / $136 |
-
-Worked middle cell, half-price cache: effective input rate is `0.75 × $1 + 0.25 × $2 = $1.25` per million. Decision input is $0.010, output stays $0.028, call is $0.038. Times 880 calls is $33.40. Plus triage $7.40 and review about $4.50 is about **$45**.
-
-Output and reasoning tokens are not discounted. They are most of a decision's cost, so caching alone does not pull a 40-decision day down to $25.
-
-The **$25–40 planning band** is a low-to-moderate decision rate (on the order of 15–25 strong-model calls per trading day, once triage is turning quiet periods into "do not wake") together with a real cached-input discount. Landing near $30 is the planning point used in the total above. A month that tracks the 40-call column should already be raising the model-spend alert, even though it can still fit under $100 if X and hosting are at the low end.
-
-Token counts are assumptions, not measurements. The first live month replaces them.
+Identity and the current playbook form a stable prompt prefix ([architecture](architecture.md)). Keep them byte-stable to allow provider caching. Any savings depend on the actual Azure cached-input price and measured hit rate; the $35 base allowance assumes no cache savings. Output and reasoning tokens remain billable. The first deployed month replaces token-size, reasoning-output, call-volume, and caching assumptions with measurements.
 
 ## FXMacroData
 
-The individual plan is about **$50 a month**, or **$500 a year** (about $42 a month). It is priced for one-person internal automated trading. The planning total uses the annual figure. A 14-day trial is the time to measure release latency before committing. The raw feed is an input to `macro-feed`, not something the public site redistributes.
+The Individual plan is **$50/month** or **$500/year** ($41.67/month equivalent, paid annually upfront). The base table uses annual billing; monthly billing adds $8.33 to its displayed total. Use the 14-day trial to measure release latency before committing. Raw data is an internal input to `macro-feed`, not a public feed.
+
+Before public launch, confirm whether publishing PipMind's reasoning needs the provider's Commercial Redistribution add-on. Its published display terms include charts and insights, so omitting raw feeds alone does not settle the question. If required, it starts at **$10/month for one audience block**, making the base totals at least **$161.31** (annual base plan equivalent) or **$169.64** (monthly base plan). Larger audiences can cost more; the $180 planning budget does not guarantee coverage of those fees. Confirm the right plan for the actual subscribing person/entity too. [Provider pricing and display terms](https://fxmacrodata.com/subscribe).
 
 ## X
 
-Pay-per-use, **$0.005 per post read**. There is no free tier in this model. Replies and reposts are excluded, and `since_id` is stored so a post is not read twice. Polling faster changes latency more than cost, as long as empty polls are not themselves billed. That last point has to be confirmed in the developer console; if empty polls cost money, the cadence slows down.
+X is **read-only**. Only post reads and necessary account/role lookups are budgeted. PipMind has no posting, replying, reposting, liking, following, or messaging features or write permissions. No posting charges are included.
 
-The follow list is roles plus a few news accounts, trimmed so the expected bill is about **$15** and the band tops out near **$20**. Reading every squawk account all day is on the order of $100 and is not the plan. Selection happens in the config, ahead of time. At runtime the feed keeps reading what it was configured to read.
+Published read rates are **$0.005 per returned post** and **$0.010 per returned user**. The monthly allowance is **$15 for up to roughly 3,000 post reads plus $0.50 for roughly 50 user lookups**. Those quantities are planning assumptions, not runtime limits; retries across billing windows and lookup volume may change actual charges. Exclude replies/reposts from ingestion and persist `since_id`. Confirm the endpoints and charges in the developer console. [X pricing and credits](https://docs.x.com/x-api/getting-started/pricing).
+
+The follow list is roles plus a few news accounts, trimmed ahead of time. The alert threshold is $20; it is not a promise that actual charges cannot exceed $20. At runtime the feed keeps reading what it was configured to read. X uses prepaid credits and can block requests when credits or provider-side spending limits are exhausted. Monitor low balance and failed replenishment, and alert before an interruption. Do not enable paid auto-recharge or change account spending limits without owner approval.
 
 A sketch of the trimmed set, using estimated original posts (no replies or reposts) and a 30-day month:
 
@@ -83,7 +87,7 @@ A sketch of the trimmed set, using estimated original posts (no replies or repos
 | Official accounts at poll priority 1 and 2 | ~44 | ~$7 |
 | One high-signal correspondent, full timeline | ~4 | ~$1 |
 | Two squawk accounts, only in high-impact windows | ~25 | ~$4 |
-| **Planning total** | **~75** | **~$12, band $15–20** |
+| **Trimmed-list sketch** | **~73** | **~$11; budget $15 for post reads** |
 
 Weekday-only polling, with a Sunday catch-up, should land lower than a flat 30-day count. The first week of real counts replaces the estimates. The role list and the window rule are in [Data sources](data-sources.md).
 
@@ -91,18 +95,27 @@ One hundred posts a day is $15 over a 30-day month (`100 × 0.005 × 30`). That 
 
 ## Hosting
 
-The process has to stay up from the Sunday open through Friday's close, so the production host does not scale to zero.
+The hosted demo runs continuously, including weekend role checks. One replica contains an engine/feed container and a broker-gateway container at **0.25 vCPU / 0.5 GiB each**, for **0.5 vCPU / 1 GiB combined**. Validate this initial allocation during shadow mode.
 
-Two small always-on Azure shapes, both in the **$8–14** band, to be recomputed from current prices:
+Compute calculation, at active retail rates for the full month:
 
-- Container Apps, 0.25 vCPU and 0.5 GiB, minimum one replica. At $0.000024 per vCPU-second and $0.000003 per GiB-second, a full month minus the free grant is roughly $14.
-- A B1s-class Linux VM plus disk, roughly $8–14.
+`730 × 3,600 × (0.5 × $0.000024 + 1 × $0.000003) = $39.42`.
 
-The planning total uses **$10**. Development can run on a machine that is already paid for, which is the $0 end of the band, and is not the production plan.
+SQL S0's checked daily meter is $0.4839: `730 / 24 × $0.4839 = $14.718625`, rounded to **$14.72**. Its included managed PITR backups do not need a separate backup-storage line; additional long-term retention or export storage would need its own estimate. The Blob allowance covers small private archives and sanitized public snapshots, not unlimited retention or public traffic.
 
-The static site (Azure Static Web Apps or Cloudflare Pages) is on the free tier. Log ingestion for a single process should stay inside a dollar or two; if it does not, that shows up in the total alert.
+Do not subtract Container Apps' free grant from the baseline: it is shared across the subscription and may be used by other projects. Idle billing and remaining grants can reduce actual cost. Brief overlapping revisions, requests, maintenance, and usage above the allowances can increase it. [Billing rules](https://learn.microsoft.com/en-us/azure/container-apps/billing).
 
-News RSS, central-bank feeds and the ForexFactory calendar file are free. The ForexFactory file is rate-limited, which is an operational constraint, not a fee. See [Data sources](data-sources.md).
+The demo uses default managed networking, built-in app secrets, and a Consumption workload profile. It adds no custom-VNet load balancer/public IP resources, NAT Gateway, private endpoints, dedicated plan management, separate queue broker, cache, or Key Vault. These are not hidden in the $59.14 subtotal. The gateway shares the app lifecycle/identity in this demo; production separation requires its own cost estimate.
+
+News RSS, central-bank feeds, and the ForexFactory calendar have no subscription line in this plan; their operational limits still apply. Local development runs on an existing machine with Docker Compose and has no continuously hosted duplicate Azure environment. See [Data sources](data-sources.md).
+
+## Production deployment costs
+
+Production is a separately priced deployment profile, not a different application or permission to use a live broker account. Larger or separate engine/gateway/feed apps, independent identities, private networking, stable egress, higher SQL capacity/redundancy, longer retention, and richer monitoring can all increase monthly spend. Select them from measured load and agreed security, availability, and recovery requirements; do not present the demo estimate as a production quote. The [architecture](architecture.md#production-deployment-options) lists the options.
+
+## Scope and exclusions
+
+The totals assume modest cached website traffic, small retained data/log volumes, one hosted region, existing domain registration, and the model/feed volumes above. They exclude tax, a new domain registration, broker spreads/commissions/financing, trading capital, production upgrades, and any unconfirmed public-display fee. There is no charge in this model for X publishing because the integration is read-only. Cloud provisioning and provider purchases still require separate approval.
 
 ## Alerts
 
@@ -113,7 +126,9 @@ Checked in the daily health report, and immediately when a single day looks wron
 | Model spend, month to date | Above $40 |
 | Model spend, one day | Above $4 (a loop, or reasoning tokens running away) |
 | X spend, month to date | Above $20 |
-| Projected month, all lines | Above $90 |
+| Projected month, all lines | Above $160 early warning; above $180 planning budget |
+| X credit balance or replenishment | Low balance, failed replenishment, or provider access cutoff |
+| Storage, logs, or resource pressure | Trending beyond the allowances or tested demo capacity |
 
 An alert notifies the owner. It does not disable a feed, and it does not refuse a model call. If the system is genuinely looping, the owner uses the kill switch, which is an override and stops trading. It is not a billing feature.
 

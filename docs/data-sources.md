@@ -47,7 +47,9 @@ Wire copy and article text are model inputs. The public snapshot contains the mo
 
 ## social-feed
 
-X is pay-per-use at $0.005 per post read. The budget for this line is about $15–20. The way to stay there is to **choose a small follow list**, not to throw posts away after they have been requested. Spend above $20 alerts the owner and leaves the list running. See the [cost model](cost-model.md).
+X integration is **read-only**: read selected accounts' posts and perform necessary account/role lookups. PipMind does not post, reply, repost, like, follow, send messages, or request write permissions. Its public record is published on its own website.
+
+X is pay-per-use at $0.005 per returned post and $0.010 per returned user lookup. The planning allowance is $15.50/month ($15 for post reads and $0.50 for lookups), with a spend alert above $20. The way to control expected cost is to **choose a small follow list**, not to throw posts away after they have been requested. Spend alerts leave the configured reading running, but exhausted credits or provider-side limits can interrupt access; monitor low balance and failed replenishment too. See the [cost model](cost-model.md#x) and [provider pricing](https://docs.x.com/x-api/getting-started/pricing).
 
 ### Follow roles, not people
 

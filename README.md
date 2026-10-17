@@ -57,21 +57,23 @@ flowchart TB
 
 On each wake, a cheap model (`gpt-6-luna`) triages and summarizes. A strong model (`gpt-6.1-sol` on Azure OpenAI) makes the decision. Code enforces an outer size and loss boundary, a daily-loss stop and a kill switch. The broker's snapshots are the source of truth for positions and balances.
 
-The public page is a static site built from JSON snapshots. Visitors do not call the model or the broker, so a crowd adds no cost. The page shows this account's own fills, its P&L, the reasoning for each decision, and playbook diffs. Broker quotes and other market data stay inside the trading system. That split is a design choice: the page is a record of what this account did, and it is not a market-data display.
+The public page is a static site built from JSON snapshots. Visitors do not call the model or the broker; static hosting and Blob traffic remain subject to their quotas and usage charges. The page shows this account's own fills, its P&L, the reasoning for each decision, and playbook diffs. Broker quotes and other market data stay inside the trading system. That split is a design choice: the page is a record of what this account did, and it is not a market-data display. X is a read-only input; PipMind does not publish posts or request X write permissions.
 
 ## Design docs
 
 | Doc | What it covers |
 | --- | --- |
 | [Architecture](docs/architecture.md) | Services, event contracts, the mind, learning, limits, failure handling, deployment |
-| [Cost model](docs/cost-model.md) | Budget under $100 a month, and the assumptions behind it |
+| [Cost model](docs/cost-model.md) | Demo estimate of $151–160/month, $180 planning budget, assumptions, and production cost options |
 | [Data sources](docs/data-sources.md) | Feeds, why each one is there, and the role-based social list |
 | [Roadmap](docs/roadmap.md) | Milestones M0–M8, from this design to a public launch |
 | [ADRs](docs/adr/0001-ai-makes-the-decisions.md) | Why the model decides, why the services are swappable, where macro data comes from, why the mind persists, and how suggestions differ from overrides |
 
 ## Stack
 
-Python 3.12, the Microsoft Agent Framework, Azure OpenAI, SQLite, Docker, GitHub Actions. The production target is a small always-on Azure host. The monthly budget target is under $100, with spend alerts rather than silent cutoffs. Details are in the [cost model](docs/cost-model.md).
+Python 3.12, the Microsoft Agent Framework, Azure OpenAI, Azure SQL, Docker, GitHub Actions. The hosted demo uses one always-on Azure Container App with engine/feed and broker-gateway containers, default networking, SQL S0, Blob snapshots, and Azure Static Web Apps Free. Hosting is estimated at $59/month and the full system at $151–160/month, with an $180 planning budget and spend alerts rather than silent cutoffs. Tax and a possible provider display add-on are additional. Details are in the [cost model](docs/cost-model.md).
+
+The application remains suitable for separately configured production deployments with independent apps/identities, stronger networking, larger resources, and enhanced recovery/monitoring at a higher cost. Production hosting does not authorize a live broker account; the rollout still starts with replay, shadow mode, and demo orders. See [deployment profiles](docs/architecture.md#deployment).
 
 ## Disclaimer
 
