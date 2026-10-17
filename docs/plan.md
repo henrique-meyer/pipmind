@@ -75,5 +75,5 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 - Story: [PIP-5](https://nitro.atlassian.net/browse/PIP-5)
 - Status: Complete
 - Scope: match the DocPilot/QuillSign footer wording and links to the personal site and this repository; put the forex loss disclaimer in its own paragraph; remove the public-experiment credit and separate license link.
-- Acceptance: requested content and links on desktop/mobile, existing license preserved, checked container and actual HTTPS deployment.
-- Validation: local container HTTP checks, separate rendered footer paragraphs and both outbound link destinations verified in the browser; lint/format, image, Bicep and secret checks run in CI. Release verification checks the published image, ready revision, health/build and custom-domain HTTPS footer while preserving its certificate binding.
+- Acceptance: requested content and links, existing license preserved, adjacent disclaimer lines at the same text size as the credit; desktop credit right-aligned and top-aligned with the first disclaimer line, with responsive stacking when needed; checked container and actual HTTPS deployment.
+- Validation: local container HTTP checks, adjacent disclaimer paragraphs, matching text sizes and exact desktop top/right alignment verified in the browser; both outbound link destinations verified; lint/format, image, Bicep and secret checks run in CI. Release verification checks the published image, ready revision, health/build and custom-domain HTTPS footer while preserving its certificate binding.
