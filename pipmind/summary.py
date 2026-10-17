@@ -13,7 +13,7 @@ def render(path):
     report = loads(path.read_bytes())
     counts = report["counts"]
     lines = [
-        "## M1 replay evaluation",
+        "## Replay evaluation",
         "",
         f"{counts['passed']} passed · {counts['failed']} failed · {counts['deferred']} deferred",
         "",
@@ -27,6 +27,9 @@ def render(path):
         f"Fixture week: {'passed' if report['fixture_week']['passed'] else 'FAILED'}.",
         f"Portability contracts: {sum(row['passed'] for row in report['portability'])}/"
         f"{len(report['portability'])}.",
+        f"Dry gateway: {'passed' if report['gateway']['passed'] else 'FAILED'} "
+        f"({sum(report['gateway']['checks'].values())}/{len(report['gateway']['checks'])}); "
+        f"dispatches: {report['gateway']['dispatches']}.",
         "Baseline differences: " + (", ".join(report["baseline_differences"]) or "none") + ".",
         "",
         "### Deferred real-path coverage",

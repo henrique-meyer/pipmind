@@ -7,9 +7,9 @@ M1 implements an offline event-processing core, injected clock/model/store inter
 Use Python 3.12 and `uv`:
 
 ```sh
-uv sync --locked
+uv sync --locked --extra gateway
 uv run python -m pipmind.replay validate
-uv run python -m pytest -q
+uv run --extra gateway python -m pytest -q
 uv run python -m pipmind.replay run --ci
 ```
 
@@ -19,7 +19,7 @@ With the existing Docker setup instead of a host `uv` installation, PowerShell c
 
 ```powershell
 $replayImage = ((Get-Content Dockerfile -TotalCount 1) -split ' ')[1]
-docker run --rm -v "${PWD}:/workspace" -w /workspace $replayImage uv sync --locked
+docker run --rm -v "${PWD}:/workspace" -w /workspace $replayImage uv sync --locked --extra gateway
 docker run --rm --network none -v "${PWD}:/workspace" -w /workspace $replayImage .venv/bin/python -m pipmind.replay run --ci
 ```
 
@@ -27,20 +27,20 @@ This prepares a Linux virtual environment in the ignored `.venv` directory. Re-s
 
 Generated output lives in ignored `evals/reports/latest/`: private per-case/repetition traces, fixture-week `decisions.jsonl`, full `report.json` and sanitized `summary.json`. A two-repetition run includes both week repetitions in the decisions file. Each case, repetition and variant receives fresh mind and simulated broker snapshot state. Full traces contain inputs, memory, tool results and reasoning; never upload them.
 
-The [tracked baseline](../evals/baseline-v1.json) contains sanitized synthetic outcomes, counts, deferrals and version/hash metadata. Source/contracts/fixtures use LF through `.gitattributes` so content hashes agree across Windows and Linux. Reports record source commit/dirty state, implementation content hash, dataset/week/portability hashes, context/grader/model versions, starting playbook hashes, repetitions, fake call counts and measured latency. Token/cost counts are explicitly synthetic zeros. Real-provider metering belongs with the M4 adapter; M1 cannot measure it.
+The [tracked baseline](../evals/baseline-v1.json) contains sanitized synthetic outcomes, counts, deferrals and version/hash metadata. Source/contracts/fixtures use LF through `.gitattributes` so content hashes agree across Windows and Linux. Reports record source commit/dirty state, implementation content hash, dataset/week/portability/gateway-fixture hashes, context/grader/model versions, starting playbook hashes, repetitions, fake call counts and measured latency. Token/cost counts are explicitly synthetic zeros. Real-provider metering belongs with the M4 adapter; M1 cannot measure it.
 
 ## Delivered coverage
 
-| Area | Passing M1 cases | Deferred | Real-path gate |
+| Area | Passing delivered cases | Deferred | Real-path gate |
 | --- | ---: | ---: | --- |
 | Triage | 6 | 0 | — |
 | Decision/memory | 5 | 1 | M5 reconciliation |
-| Safety/recovery | 1 | 9 | M5 boundary, SQL ownership and broker recovery |
+| Safety/recovery | 2 | 8 | M2 mapping refusal delivered; remaining M5 boundary, SQL ownership and broker recovery |
 | Self-review | 0 | 6 | M7 review implementation |
 | Public/read-only | 1 | 1 | M8 publisher/redaction |
-| **Total** | **13** | **17** | Deferred cases are not passing controls. |
+| **Total** | **14** | **16** | Deferred cases are not passing controls. |
 
-The [starter JSONL](../evals/fixtures/starter-v1.jsonl) covers ordinary releases, analysis retention, breaking news, role posts, duplicate delivery, missing PMI actuals, memory continuity, conflicting reports, delayed revisions, retrieval and prompt injection. Later cases specify unsupported instruments, stale quotes/snapshots, excess size, daily loss, pause/kill, lost ownership, SQL outage, uncertain broker outcomes, reconciliation, review add/sharpen/retire/override/grounding and public redaction. X is read-only input with no mutation tool.
+The [starter JSONL](../evals/fixtures/starter-v1.jsonl) covers ordinary releases, analysis retention, breaking news, role posts, duplicate delivery, missing PMI actuals, memory continuity, conflicting reports, delayed revisions, retrieval and prompt injection. The unsupported-instrument case now uses the M2 dry gateway; later cases specify stale quotes/snapshots, excess size, daily loss, pause/kill, lost ownership, SQL outage, uncertain broker outcomes, reconciliation, review add/sharpen/retire/override/grounding and public redaction. X is read-only input with no mutation tool.
 
 The [fixture week](../evals/fixtures/week-v1.jsonl) has 20 Release/News/Post/Price events across five days, producing 15 scripted decisions, five unsent proposals and zero dispatches. Non-waking items remain in the journal. Duplicate receipts do not repeat model calls. Revisions enter context only at availability time, and evidence must already exist. Invalid/future evidence, unavailable models and unregistered/malformed tools produce journaled refusals without a keyword fallback. Only mind reads and bounded memory search are registered. The simulated gateway has no transport and unconditionally refuses dispatch.
 
@@ -93,4 +93,4 @@ Real bundles/contents stay private, ignored, excluded from images/public snapsho
 
 CI runs unit/mutation/archive tests and full replay with networking disabled, compares the baseline, and renders per-area results and every deferral in the job summary. Only allowlisted `summary.json`, bounded to 64 KiB, is uploaded for seven days. Raw events, reasoning, mind, tool results and bundles are excluded.
 
-M2/M5/M7/M8 must activate the respective cases through their actual implementations. SQL behavior needs the SQL Server adapter/integration checks. Continue through live-event shadow mode and broker demo orders regardless of M1 scores; live trading and new resources remain separate owner decisions.
+M2 activates S01 against durable mapping refusal and adds the [15-check dry gateway session](gateway.md). M5/M7/M8 must activate the remaining respective cases through their actual implementations. SQL behavior needs the SQL Server adapter/integration checks. Continue through live-event shadow mode and broker demo orders regardless of M1 scores; live trading and new resources remain separate owner decisions.

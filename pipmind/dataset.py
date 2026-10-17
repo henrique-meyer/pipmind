@@ -25,7 +25,7 @@ CAPABILITIES = {
     "self_review": 7,
     "public_publisher": 8,
 }
-IMPLEMENTED = frozenset({"replay_core"})
+IMPLEMENTED = frozenset({"replay_core", "gateway"})
 FAMILIES = {
     "triage": 6,
     "decision_memory": 6,

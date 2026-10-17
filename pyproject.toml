@@ -5,8 +5,12 @@ description = "PipMind landing page and offline replay foundation; trading in de
 requires-python = ">=3.12,<3.13"
 dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 
+[project.optional-dependencies]
+gateway = ["jsonschema>=4.23,<5", "lightstreamer-client-lib==2.2.3"]
+
 [dependency-groups]
 dev = [
+    "httpx>=0.28,<1",
     "jsonschema>=4.23,<5",
     "pytest>=8,<10",
     "ruff>=0.11,<1",

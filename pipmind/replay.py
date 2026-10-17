@@ -22,6 +22,7 @@ from pipmind.core import (
     SimulatedClock,
 )
 from pipmind.dataset import IMPLEMENTED, dataset_digest, load_cases
+from pipmind.gateway.recording import exercise_mapping_case, run_recording
 from pipmind.graders import GRADER_VERSION, grade
 from pipmind.portability_fixtures import FIXTURE_VERSION, run_fixtures
 
@@ -31,7 +32,7 @@ DEFAULT_BASELINE = ROOT / "evals" / "baseline-v1.json"
 
 
 def source_provenance():
-    files = sorted((ROOT / "pipmind").glob("*.py")) + sorted(
+    files = sorted((ROOT / "pipmind").rglob("*.py")) + sorted(
         (ROOT / "contracts" / "v1").glob("*.json")
     )
     digest = hashlib.sha256()
@@ -77,6 +78,8 @@ def replay_episode(case, *, model=None, contracts=None):
     for event in case["events"]:
         core.process(deepcopy(event))
     trace = core.finish()
+    if "gateway" in case["required_capabilities"]:
+        exercise_mapping_case(case, trace)
     return trace, grade(case, trace, contracts)
 
 
@@ -176,6 +179,7 @@ def run_suite(cases, week, *, repetitions=2, overrides=None, output=None, split=
             "runs": week_runs,
         },
         "portability": portability,
+        "gateway": run_recording(),
         "usage": {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -231,8 +235,13 @@ def sanitized_summary(report):
             "dataset_sha256",
             "fixture_week_sha256",
             "portability_fixture_sha256",
+            "gateway_fixture_sha256",
         )
     } | {
+        "gateway": {
+            key: deepcopy(report["gateway"][key])
+            for key in ("version", "mode", "dispatches", "checks", "passed")
+        },
         "cases": [
             {
                 key: row[key]
@@ -248,7 +257,7 @@ def sanitized_summary(report):
                 )
             }
             for row in report["cases"]
-        ]
+        ],
     }
 
 
@@ -272,6 +281,7 @@ def compare(report, baseline):
         "portability_fixture_sha256",
         "grader_version",
         "dataset_version",
+        "gateway_fixture_sha256",
     ):
         if report[key] != baseline[key]:
             differences.append("baseline_metadata_changed")
@@ -290,6 +300,13 @@ def compare(report, baseline):
     previous_ports = {row["case_id"] for row in baseline["portability"]}
     if previous_ports != {row["case_id"] for row in report["portability"]}:
         differences.append("baseline_portability_coverage_changed")
+    old_gateway, gateway = baseline.get("gateway"), report.get("gateway")
+    if old_gateway and (not gateway or old_gateway["checks"].keys() != gateway["checks"].keys()):
+        differences.append("baseline_gateway_coverage_changed")
+    if gateway and (
+        not gateway["passed"] or not all(gateway["checks"].values()) or gateway["dispatches"] != 0
+    ):
+        differences.append("baseline_gateway_regression")
     return sorted(set(differences))
 
 
@@ -299,6 +316,9 @@ def successful(report):
         and report["counts"]["passed"] > 0
         and report["fixture_week"]["passed"]
         and all(row["passed"] for row in report["portability"])
+        and report["gateway"]["passed"]
+        and all(report["gateway"]["checks"].values())
+        and report["gateway"]["dispatches"] == 0
     )
 
 
@@ -347,6 +367,7 @@ def main(argv=None):
             portability_fixture_sha256=dataset_digest(
                 ROOT / "evals" / "portability" / "cases.json"
             ),
+            gateway_fixture_sha256=dataset_digest(ROOT / "evals" / "gateway" / "session-v1.json"),
         )
         if args.command == "record-baseline":
             if not successful(report) or args.split != "all" or overrides:

@@ -13,18 +13,19 @@
   },
   "portability_version": "portability-synthetic-v1",
   "source": {
-    "implementation_sha256": "97ce2b4e709f36f9f68406020412351afc5fbce3e55024a8f0555ddd9b6d8e89"
+    "implementation_sha256": "560b72203b468dbf0e99d7cfebc96aae9e19b8df5e71a7abe5aa2998312056b6"
   },
   "split": "all",
   "variant": "baseline",
   "repetitions": 2,
   "implemented_capabilities": [
+    "gateway",
     "replay_core"
   ],
   "counts": {
-    "passed": 13,
+    "passed": 14,
     "failed": 0,
-    "deferred": 17
+    "deferred": 16
   },
   "areas": {
     "triage": {
@@ -38,9 +39,9 @@
       "deferred": 1
     },
     "safety_recovery": {
-      "passed": 1,
+      "passed": 2,
       "failed": 0,
-      "deferred": 9
+      "deferred": 8
     },
     "self_review": {
       "passed": 0,
@@ -216,9 +217,33 @@
       "result": "valid"
     }
   ],
-  "dataset_sha256": "b1d7eae9e6705a64840e9f4d4705b39c6b2025f987d28415933866afdbd55a45",
+  "dataset_sha256": "363ffa6456cd1815a70a0f8b4af6816dff10b7d78a0adab6a90c25f3b35444d0",
   "fixture_week_sha256": "d18147d9c222741e434d425a79f15fc30ab53f1000120493a5902dc6132ecb71",
   "portability_fixture_sha256": "ea7520b94f60fb57613589ea93dd54ac64aff3b05acef92e46c58457f299d185",
+  "gateway_fixture_sha256": "c8ab765dceac6ddc850565fbfb8e9693195e4cf163ce27f8a52ac2586e6a10fc",
+  "gateway": {
+    "version": "gateway-session-v1",
+    "mode": "dry",
+    "dispatches": 0,
+    "checks": {
+      "stream_rest_stream": true,
+      "stale_tick_does_not_recover": true,
+      "stale_marked": true,
+      "venue_time_preserved": true,
+      "session_relogin": true,
+      "rate_limit_backoff": true,
+      "snapshot_mapping": true,
+      "durable_single_ack": true,
+      "payload_collision": true,
+      "unsupported_instrument": true,
+      "exact_size": true,
+      "broker_identifier_mapping": true,
+      "uncertain_no_resend": true,
+      "read_only_transport": true,
+      "recording_consumed": true
+    },
+    "passed": true
+  },
   "cases": [
     {
       "case_id": "T01",
@@ -346,12 +371,10 @@
       "case_id": "S01",
       "family": "safety_recovery",
       "split": "development",
-      "status": "deferred",
+      "status": "passed",
       "mandatory": true,
-      "required_milestone": 5,
-      "missing_capabilities": [
-        "boundary"
-      ],
+      "required_milestone": 2,
+      "missing_capabilities": [],
       "failures": []
     },
     {

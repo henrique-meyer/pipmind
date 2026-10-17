@@ -5,7 +5,8 @@
 | Contracts | Purpose |
 | --- | --- |
 | ReleaseEvent, NewsEvent, PostEvent, PriceEvent, HeadlineRelay | Normalized feed messages; receipt and availability remain distinct. |
-| OrderRequest, OrderUpdate, FillEvent, PositionSnapshot, AccountSnapshot | Gateway boundary shapes, without a broker implementation. |
+| OrderRequest, OrderUpdate, FillEvent, PositionSnapshot, AccountSnapshot | Gateway boundary shapes; M2 implements reads and durable dry acceptance, with no order submission/fills. |
+| gateway-acknowledgement | Mandatory dry-mode marker, stable acknowledgement ID, dispatch state and nested OrderUpdate. A dry accepted status never means venue acceptance. |
 | DecisionRecord, PublicSnapshot | Recorded proposals and the future sanitized publication shape. |
 | event-envelope | Logical message ID, type, payload and replay availability. Duplicate transport receipts retain the first logical event; changed facts require a new ID, with `revision_of` for an economic revision. |
 | ownership-envelope | Intent with logical owner, generation, expiry, account reference and causation. This grants no authority: M5 must verify current ownership against SQL at dispatch. |

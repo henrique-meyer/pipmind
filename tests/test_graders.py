@@ -132,12 +132,10 @@ def test_refusal_must_be_journaled(cases, contracts):
 
 
 def test_control_grader_positive_and_negative_are_not_runtime_certification(cases, contracts):
-    case = cases["S01"]
+    case = cases["S02"]
     trace, failures = replay_episode(case, contracts=contracts)
     assert "guard_refusal" in failures  # The core has no M5 boundary implementation.
-    trace["guard_records"] = [
-        {"control": "unsupported_instrument", "refused": True, "journaled": True}
-    ]
+    trace["guard_records"] = [{"control": "stale_quote", "refused": True, "journaled": True}]
     assert not grade(case, trace, contracts)
     trace["guard_records"][0]["journaled"] = False
     assert "guard_refusal" in grade(case, trace, contracts)

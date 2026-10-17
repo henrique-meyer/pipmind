@@ -1,6 +1,6 @@
 # Roadmap
 
-Status of the repo today: **M1 offline replay foundation delivered.** The core runs only with scripted models and no broker dispatch. The deployed container remains the landing page; there are no orders or public track record.
+Status of the repo today: **M2 dry gateway delivered.** The core runs with scripted models; the gateway has no order submission path. Synthetic broker sessions and durable dry acknowledgements are tested offline; real broker connectivity is unverified. The deployed container remains the landing page; there are no orders or public track record.
 
 The rollout order is fixed even where the milestone numbers have groundwork in between:
 
@@ -35,6 +35,8 @@ The harness replays a recorded week of `ReleaseEvent`, `NewsEvent`, `PostEvent` 
 Done when a fixture week runs from the command line, resulting decisions and a baseline report are stored in ignored output next to the fixture, the 30-case dataset validates, graders reject seeded failures, and CI passes every mandatory check for delivered capabilities while listing later-milestone cases as deferred. No real broker dispatch is possible from the harness.
 
 ## M2 — broker-gateway
+
+**Delivered by [PIP-8](plan.md#pip-8--m2-dry-broker-gateway).** The [gateway guide](gateway.md) documents the separate container/internal service, optional read adapter and 15-check synthetic recorded session. S01 now exercises actual durable mapping refusal: 14 starter cases pass and 16 remain deferred. Actual broker connectivity, hosted SQL/fencing and ambiguous venue recovery remain subject to their explicit gates; no broker account or Azure resource was changed.
 
 Forex.com CIAPI implementation: Trading API v2 session, Lightstreamer prices, REST fallback, stale-stream watchdog, re-login on an expired session, symbol map, snapshots.
 
