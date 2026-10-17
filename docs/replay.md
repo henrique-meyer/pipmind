@@ -13,7 +13,7 @@ uv run python -m pytest -q
 uv run python -m pipmind.replay run --ci
 ```
 
-Only dependency installation requires network access. CI runs tests and replay with `--network none`, a read-only container filesystem, no additional capabilities and no provider credentials. Existing lint, Bicep, secret and real landing-container HTTP checks remain enabled.
+Only dependency installation requires network access. CI runs tests and replay with `--network none`, a read-only container filesystem, no additional capabilities and no provider credentials. Offline CI containers run as the host runner UID so they can write ignored workspace output without restoring root capabilities; the public commit SHA is forwarded explicitly for provenance. Existing lint, Bicep, secret and real landing-container HTTP checks remain enabled.
 
 With the existing Docker setup instead of a host `uv` installation, PowerShell can use the pinned development image from the Dockerfile:
 

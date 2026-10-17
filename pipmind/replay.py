@@ -3,6 +3,8 @@
 import argparse
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -47,10 +49,15 @@ def source_provenance():
         )
     except (OSError, subprocess.CalledProcessError):
         commit, dirty = None, None
+    origin = "git" if commit else "unavailable"
+    supplied = os.environ.get("PIPMIND_SOURCE_SHA", "")
+    if commit is None and re.fullmatch(r"[0-9a-f]{40}", supplied):
+        commit, origin = supplied, "environment"
     return {
         "source_commit": commit,
         "working_tree_dirty": dirty,
         "implementation_sha256": digest.hexdigest(),
+        "source_commit_origin": origin,
     }
 
 
@@ -371,7 +378,12 @@ def main(argv=None):
         return 0 if successful(report) and not differences else 1
     except (ContractError, OSError, KeyError) as error:
         # Never print raw fixture contents or exception messages from external input.
-        code = str(error) if isinstance(error, ContractError) else "invalid_input_or_baseline"
+        if isinstance(error, ContractError):
+            code = str(error)
+        elif isinstance(error, OSError):
+            code = f"io_error:{error.errno}"
+        else:
+            code = "invalid_input_or_baseline"
         print(f"Replay failed: {code}", file=sys.stderr)
         return 1
 

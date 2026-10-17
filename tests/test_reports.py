@@ -10,6 +10,7 @@ from pipmind.replay import (
     main,
     run_suite,
     sanitized_summary,
+    source_provenance,
     successful,
 )
 
@@ -122,3 +123,18 @@ def test_job_summary_explains_deferrals_without_private_trace_fields(report, tmp
     assert "13 passed" in markdown and "17 deferred" in markdown
     assert "S07 — M5: sql_ownership" in markdown
     assert "memory-seed" not in markdown and "broker_binding_ref" not in markdown
+
+
+@pytest.mark.parametrize("supplied,expected", [("a" * 40, "a" * 40), ("not-a-sha", None)])
+def test_container_provenance_uses_only_a_valid_supplied_commit(monkeypatch, supplied, expected):
+    import subprocess
+
+    def missing_git(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(subprocess, "check_output", missing_git)
+    monkeypatch.setenv("PIPMIND_SOURCE_SHA", supplied)
+    result = source_provenance()
+    assert result["source_commit"] == expected
+    assert result["working_tree_dirty"] is None
+    assert result["source_commit_origin"] == ("environment" if expected else "unavailable")

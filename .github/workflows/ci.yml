@@ -23,14 +23,14 @@ jobs:
           docker run --rm -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 sh -c 'uv sync --locked && uv run --locked ruff check . && uv run --locked ruff format --check .'
       - name: Test contracts, replay, graders and archive rejection offline
         run: |
-          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pytest -q
+          docker run --rm --network none --user "$(id -u):$(id -g)" --env PIPMIND_SOURCE_SHA="$GITHUB_SHA" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pytest -q
       - name: Replay fixture week and gate baseline coverage offline
         run: |
-          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pipmind.replay run --ci --output .data/replay-ci
+          docker run --rm --network none --user "$(id -u):$(id -g)" --env PIPMIND_SOURCE_SHA="$GITHUB_SHA" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pipmind.replay run --ci --output .data/replay-ci
       - name: Summarize replay outcomes and deferred coverage
         if: always() && hashFiles('.data/replay-ci/summary.json') != ''
         run: |
-          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pipmind.summary .data/replay-ci/summary.json >> "$GITHUB_STEP_SUMMARY"
+          docker run --rm --network none --user "$(id -u):$(id -g)" --env PIPMIND_SOURCE_SHA="$GITHUB_SHA" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pipmind.summary .data/replay-ci/summary.json >> "$GITHUB_STEP_SUMMARY"
       - name: Save sanitized replay summary only
         if: always() && hashFiles('.data/replay-ci/summary.json') != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
