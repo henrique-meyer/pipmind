@@ -49,11 +49,11 @@ jobs:
       - name: Deploy Bicep and verify running revision
         run: |
           # Retain any custom-domain binding created after DNS verification.
-          az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.configuration.ingress.customDomains' -o json > "$RUNNER_TEMP/domains.json"
+          az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query '{customDomains:properties.configuration.ingress.customDomains}' -o json > "$RUNNER_TEMP/domains.json"
           python3 - "$RUNNER_TEMP/domains.json" "$RUNNER_TEMP/parameters.json" <<'PY'
           import json, os, sys
           with open(sys.argv[1]) as f:
-              domains = json.load(f) or []
+              domains = json.load(f).get("customDomains") or []
           values = {"location": os.environ["AZURE_LOCATION"], "appName": os.environ["AZURE_CONTAINER_APP"], "environmentName": os.environ["AZURE_CONTAINER_ENVIRONMENT"], "workspaceName": os.environ["AZURE_LOG_WORKSPACE"], "containerImage": os.environ["CONTAINER_IMAGE"], "customDomains": domains}
           with open(sys.argv[2], "w") as f:
               json.dump({"parameters": {k: {"value": v} for k, v in values.items()}}, f)
