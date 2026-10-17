@@ -43,7 +43,7 @@ def main():
         try:
             status, headers, body = fetch(args.url, "/healthz")
             break
-        except (URLError, TimeoutError):
+        except (URLError, TimeoutError, ConnectionError):
             if attempt == 29:
                 raise
             time.sleep(2)
