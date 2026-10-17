@@ -2,6 +2,29 @@
 
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
+## PIP-6 — Portable Markdown mind export/import design
+
+- Story: [PIP-6](https://nitro.atlassian.net/browse/PIP-6)
+- Status: Design complete; export/import implementation scheduled below
+- Scope: specify a ZIP-based `.pipmind` bundle containing Markdown mind files and a manifest, separate experience-clone and original-trader recovery modes, and delivery requirements across the existing milestones. SQL remains the runtime state store.
+- Acceptance: preserve the complete retained five-part mind and provenance at a consistent checkpoint; define compatibility/integrity validation and atomic import; separate historical experience from active account authority; require matching operational state, fresh ownership and broker reconciliation for recovery. Promise the same saved mind, without promising identical future decisions.
+- Excludes: application implementation, model weights/fine-tuning, cloud changes, paid calls and authorization to trade.
+- Validation: reviewed architecture, persistent-mind ADR, roadmap and plan for consistency; checked 33 local Markdown links/anchors, 12 JSON examples, fenced blocks, diff whitespace and Gitleaks. Verified Git ignores `.pipmind` files and a built Docker image excludes a synthetic archive placed inside an otherwise included application folder. Required PR CI covers lint/format, Bicep compilation, secrets, image build and HTTP smoke checks.
+
+### Mind portability delivery requirements
+
+These requirements extend the existing milestones; this documentation story does not implement export/import. See [the bundle and import contract](architecture.md#markdown-mind-export-and-import).
+
+| Milestone | Delivery and acceptance |
+| --- | --- |
+| M1 — Contracts/replay | Define the ZIP-based `.pipmind` format, versioned Markdown/front-matter, manifest and recovery-sidecar contracts, clone/recovery semantics and compatibility rules. Add synthetic round-trip and invalid-bundle fixtures, including unsafe archive paths/expansion, with explicit capability/deferred coverage; recovery fixtures cannot dispatch to a broker. |
+| M4 — Shadow | Implement SQL-backed consistent export and staged atomic import of all five mind parts; preserve exact identity/playbook text and retained history, IDs, evidence and override tags. Verify experience-clone lineage, historical position theses, separate destination account initialization, rebuilt retrieval and zero orders. Reject incomplete, corrupt, incompatible or unsafe bundles without changing active state. |
+| M5 — Safety/recovery | Implement recovery of the original trader from a matching mind/operational checkpoint; validate private destination account binding, retained stop/override state, fresh fenced ownership, pending-command reconciliation and explicit resume. Test SQL round trips, interrupted import, stale exports, account mismatch, overlapping owners and ambiguous orders against actual enforcement paths. |
+| M6 — Demo orders | Exercise recovery against the demo gateway with known and uncertain command outcomes; verify no duplicate dispatch, preserved protective orders and agreement with fresh broker snapshots before resumption. |
+| M7 — Self-review | Round-trip current and retired rule versions, reviews, suggestion outcomes and override exclusions; preserve evidence references and monotonic versions after clone/recovery and subsequent review. |
+
+Keep real bundles in ignored private data/output paths and outside images/public snapshots. Record integrity and compatibility results without private contents. Full operational recovery also requires protected database backups/event records; a Markdown-only mind export cannot authorize or reconstruct account execution state.
+
 ## PIP-2 — Demo infrastructure and production deployment options
 
 - Story: [PIP-2](https://nitro.atlassian.net/browse/PIP-2)
