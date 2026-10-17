@@ -1,0 +1,37 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Lint and format
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 sh -c 'uv sync --locked && uv run --locked ruff check . && uv run --locked ruff format --check .'
+      - name: Compile infrastructure
+        run: |
+          az bicep build --file infra/main.bicep --outfile "$RUNNER_TEMP/main.json"
+          az bicep build --file infra/domain.bicep --outfile "$RUNNER_TEMP/domain.json"
+      - name: Secret scan
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact --no-banner
+      - name: Build and exercise actual container
+        run: |
+          docker build --build-arg BUILD_SHA="$GITHUB_SHA" -t pipmind:ci .
+          docker run -d --name pipmind-ci --read-only --cap-drop ALL --security-opt no-new-privileges -p 127.0.0.1:8080:8080 pipmind:ci
+          python3 scripts/smoke.py --url http://127.0.0.1:8080 --build "$GITHUB_SHA"
+      - name: Remove test container
+        if: always()
+        run: docker rm -f pipmind-ci || true

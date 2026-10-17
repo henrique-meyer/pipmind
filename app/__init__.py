@@ -1,0 +1,1 @@
+"""PipMind HTTP application."""
