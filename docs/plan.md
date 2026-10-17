@@ -69,3 +69,11 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 - Acceptance: Foundry resource/project and configurable model deployments are explicit; Agent Framework orchestration remains in Container Apps; model availability/pricing remains subject to Foundry deployment verification; no stale platform references remain.
 - Excludes: cloud provisioning, AI runtime implementation, model changes and landing-container deployment.
 - Validation: audited tracked platform references and the landing-only infrastructure/dependencies; checked Markdown links/anchors, JSON examples, diff whitespace, secret scan and CI. The existing $35 model allowance and totals remain provisional until Foundry deployment prices and availability are verified.
+
+## PIP-5 — Shared landing footer
+
+- Story: [PIP-5](https://nitro.atlassian.net/browse/PIP-5)
+- Status: Complete
+- Scope: match the DocPilot/QuillSign footer wording and links to the personal site and this repository; put the forex loss disclaimer in its own paragraph; remove the public-experiment credit and separate license link.
+- Acceptance: requested content and links on desktop/mobile, existing license preserved, checked container and actual HTTPS deployment.
+- Validation: local container HTTP checks, separate rendered footer paragraphs and both outbound link destinations verified in the browser; lint/format, image, Bicep and secret checks run in CI. Release verification checks the published image, ready revision, health/build and custom-domain HTTPS footer while preserving its certificate binding.
