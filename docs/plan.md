@@ -44,12 +44,12 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 ## PIP-3 — Replay evaluation design and initial landing deployment
 
 - Story: [PIP-3](https://nitro.atlassian.net/browse/PIP-3)
-- Status: Complete; custom-domain TLS awaits owner DNS configuration
+- Status: Complete; custom-domain HTTPS verified
 - Scope: specify versioned evaluation scenarios, graders, baseline reports and credential-free CI in M1; build and deploy a branded landing-only container using dedicated Azure Container Apps resources, GHCR and private deployment configuration.
 - Acceptance: replay evaluation requirements are explicit; local container and deployed revision serve the page and health/version response; CI validates code, image, infrastructure and secrets; return concrete DNS records for the owner to configure, then bind managed TLS once DNS resolves.
 - Excludes: implementing the trading/replay engine, SQL/model/feed provisioning, paid model evaluation runs, broker credentials and live trading. The initial scenario dataset and graders are M1 delivery requirements.
 - Validation: local and GitHub Actions lint/format, locked image build and actual HTTP checks, Bicep compilation, PowerShell syntax, Gitleaks, private-configuration scan, local Markdown/JSON checks and desktop/mobile browser review. Verify the deployed image digest, ready revision and public health/build/page before merging the deployment completion. The source image is published to GHCR; the minimal Azure landing environment is separate from the future trading profile.
-- Handoff: provide the generated app CNAME target and ownership TXT to the owner using private deployment state. The DNS entries and actual hostname stay out of source. After DNS resolves, deploy the Bicep managed certificate/binding and verify custom-domain HTTPS. This pending external DNS step does not imply that custom-domain TLS is already working.
+- Custom-domain completion: owner DNS records verified; Bicep managed certificate issued and bound. Verified the trusted TLS certificate chain and hostname, HTTP-to-HTTPS redirect, expected source build, page/assets, navigation, security headers and private-route isolation through the custom domain. The ready revision retains its immutable image and secure ingress. Actual hostname, DNS values and certificate identifiers remain in ignored private deployment state. Azure manages certificate renewal while the documented DNS and ingress requirements remain satisfied.
 
 ### M1 evaluation delivery checklist
 
