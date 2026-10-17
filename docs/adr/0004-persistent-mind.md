@@ -27,9 +27,21 @@ The hosted demo uses Azure SQL Database Standard S0, with full-text search for t
 
 The nightly self-review is the only writer of playbook versions. Retiring a rule takes repeated evidence. Diffs are published. See the learning loop in [Architecture](../architecture.md).
 
+### Portable saved mind (2026-10-17)
+
+The five-part mind has a versioned Markdown export/import contract. A `.pipmind` file is a standard ZIP archive containing the Markdown records and a root `manifest.json` with format/schema versions, export kind, checkpoint, coverage, compatibility metadata and file checksums. SQL remains the transactional runtime store; the complete retained journal, reviews, rule versions, provenance, evidence references and override tags are portable, including context otherwise retained by an agent session. See the [architecture contract](../architecture.md#markdown-mind-export-and-import).
+
+Two modes serve different purposes:
+
+- **Clone experience:** inherit identity, playbook and experience in a new trader lineage. Keep source account history and position theses as historical context, initialize destination account state separately, and apply destination owner permissions/limits. Source operational authority and active overrides are not cloned; historical override exclusions remain.
+- **Recover original trader:** restore the saved mind and a matching structured operational sidecar for the same broker account/environment. Preserve command identity and stops/overrides, fence out the previous owner, acquire fresh ownership, reconcile broker activity since the checkpoint and resolve ambiguous orders before explicit owner resumption. A mind-only archive cannot perform operational recovery.
+
+Both modes validate integrity, completeness, compatibility and archive safety before staged atomic import into an inactive store, and start paused. Clone transformations are explicit in the import report. Bundles carry no secrets or reusable lease authority and remain private, outside Git, images and public snapshots. Import preserves recorded experience; it neither imports model weights nor guarantees identical future decisions. This decision adds design and milestone requirements, not an implemented exporter or new cloud resources.
+
 ## Consequences
 
 - A decision can cite Thursday's thesis on Monday.
 - Cache savings depend on the prefix staying byte-stable. Editors of the identity and playbook have to treat that prefix as a contract.
 - Working memory can drift away from the broker. Reconciliation overwrites positions and P&L from gateway snapshots before the next decision.
 - The mind is operational data. It is not committed to this source repository; the public page publishes the playbook diff and the reasoning.
+- A saved mind can move between deployments without making a Markdown directory the live state store. Recovery still depends on matching durable execution records, fencing and broker reconciliation; clone history remains attributed to its source.

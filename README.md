@@ -12,6 +12,8 @@ The model is the trader. Deterministic code does not encode a strategy. The mode
 
 It is also one continuous trader, not a fresh prompt on every tick. A persistent mind holds its identity, a playbook of rules it wrote itself, its current views, and a journal. A nightly review adds, sharpens or retires those rules, and the diff is public.
 
+The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. Export/import is planned, not implemented.
+
 Losses stay on the page next to the reasoning that produced them. The project makes no claim about returns.
 
 Vendors and the broker sit behind small services with fixed messages. Replacing a data provider, or replacing the broker, does not rewrite the core.

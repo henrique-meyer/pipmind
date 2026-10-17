@@ -36,6 +36,7 @@ appsettings.*.local.json
 *.pubxml
 
 # Local application data, uploads, databases, and emulator state
+*.pipmind
 /.data/
 /.azurite/
 __azurite*__.*

@@ -13,3 +13,5 @@
 !LICENSE
 **/__pycache__/
 **/*.pyc
+# Portable mind archives are private, including inside otherwise allowed folders.
+**/*.pipmind

@@ -515,6 +515,60 @@ Hosted long-term memory starts with Azure SQL full-text search. Store access and
 
 The mind is operational data. It is not committed into this source repository.
 
+### Markdown mind export and import
+
+PipMind supports a portable saved mind: another environment can import the same identity, playbook and retained experience at an identified checkpoint. This preserves saved state, not the underlying model weights or identical future decisions. Model availability, application behavior, retrieved context, new events and account conditions can change subsequent decisions. Learning here updates durable experience and playbook data; it does not fine-tune the model. This is a design requirement, not an implemented feature.
+
+SQL remains the transactional runtime store. Export/import is an explicit owner operation over that store, rather than live editing a directory of Markdown files. All durable context used by the agent must be exportable; provider-side conversation/session IDs cannot be the sole copy of memory.
+
+#### Bundle format
+
+A `.pipmind` file is a standard ZIP archive with a PipMind manifest at its root. Both export kinds use this extension; `manifest.json` declares `experience` or `recovery`. The custom extension identifies the artifact for users, while the importer validates the actual container, format and version. A representative layout is:
+
+```text
+saved-mind.pipmind
+  manifest.json
+  mind/
+    identity.md
+    playbook.md
+    working-memory.md
+    journal/
+    reviews/
+    memories/
+    playbook-history/
+  recovery/                 # recovery kind only
+    state.json              # versioned operational sidecar
+```
+
+The Markdown files contain all five mind parts and the complete retained archive, not only summaries or passages previously retrieved. Versioned front matter carries stable record/rule IDs, timestamps, provenance, evidence links, suggestion dispositions and override tags. Preserve identity/playbook text bytes, rule status (including retired rules), review history and chronology. Declare retention bounds and any known gaps; an incomplete export must not be advertised as a complete saved mind. Derived search indexes can be rebuilt from the preserved records.
+
+The manifest contains the format and schema versions, export kind, logical trader/lineage and export IDs, UTC creation time, checkpoint/event watermarks, archive coverage, file inventory with SHA-256 checksums, and application, prompt, retrieval, model-version and inference-setting metadata needed to assess compatibility. Use logical configuration references, not credentials, private endpoints or actual cloud deployment identifiers. Record unavailable version metadata explicitly; a different model/runtime requires a visible compatibility decision and cannot imply equivalent future behavior. Checksums detect corruption; they do not authenticate who created the bundle. Use authenticated owner access and trusted private transfer/storage.
+
+Recovery adds structured durable operational state tied to the same checkpoint: command and deduplication ledgers, pending/ambiguous dispatches, broker identifiers and known outcomes, event/reconciliation watermarks, account-state references, and active stops/overrides. This private sidecar complements the human-readable mind; Markdown alone cannot reconstruct safe order execution. The bundle excludes secrets, credentials, cloud resource configuration and reusable lease authority. Broker/account binding is verified against private destination configuration, not trusted from narrative text.
+
+#### Import modes
+
+| Mode | Preserved experience | Destination behavior |
+| --- | --- | --- |
+| **Clone experience** | Identity, current and historical playbooks, journal, reviews, suggestions and long-term memories, with source provenance. Preserve working views and position theses as dated source context. | Create a new trader lineage linked to the source checkpoint. Archive source position theses as historical, initialize active account/position state from the destination, and refresh time-sensitive views before new decisions. Do not activate source positions, pending commands, account permissions, leases, overrides or numerical risk limits. Destination owner configuration supplies its limits and access. |
+| **Recover original trader** | The complete saved mind and matching operational sidecar, retaining original trader identity and historical IDs. | Restore into an inactive destination for the same privately configured broker account/environment. Preserve command IDs, known outcomes and stop/override restrictions; acquire fresh fenced ownership, reconcile fresh positions, balances, orders and fills, and resolve ambiguous commands before explicit owner resumption. |
+
+A clone deliberately separates inherited knowledge from account authority. The import report identifies these transformations rather than claiming byte-identical active working state. Historical source fills and P&L remain attributed to the source lineage and never become the destination account's execution history or track record. Override tags remain excluded from learning even when the active override itself is not cloned. Destination immutable identity constraints and code-enforced boundaries still apply; incompatible identity/policy content is rejected rather than silently rewritten.
+
+Recovery cannot bring the original lease back to life or reset a daily-loss stop. Verify the original owner is drained or fenced out; invalidate old ownership generations using the recovery protocol even if the SQL store was restored. Reconcile events and broker activity since the checkpoint, including possible orders accepted after export. Never automatically resend a pending command because the snapshot predates its result. Missing operational records, an account/environment mismatch, stale snapshots or unresolved outcomes keep dispatch disabled. Active restrictive overrides survive recovery until their established expiry or explicit owner action, under the existing override policy.
+
+#### Consistency and validation
+
+Export from a consistent database checkpoint covering mind, rule versions and referenced history; recovery includes operational state at that same boundary. Coordinate writers or use a transactionally consistent snapshot, then capture subsequent durable events for recovery catch-up. Record the boundary and finish the archive before making it available. Export does not halt the source by itself; recovery is a separate controlled handover. Keep database backups and durable event records: a mind bundle is not a replacement for operational disaster recovery.
+
+Import first validates the manifest/schema, every inventoried file/hash, record relationships, coverage and supported versions in isolation. Reject unknown/missing files, duplicate entries/IDs, broken evidence links, incompatible schemas and partial or corrupt bundles. Apply bounded archive entry counts, decompressed sizes and compression ratios; reject absolute/traversal paths, links and any entry escaping staging. Parsing Markdown/front matter must not execute code, fetch URLs or treat imported narrative as permission to call tools. Define supported migrations explicitly and retain the source artifact; never silently discard fields.
+
+Stage the complete import and rebuilt retrieval index before an atomic activation into an empty/inactive destination store. Failed validation, interruption or migration leaves existing active state unchanged; merging into a running mind is outside this contract. Import itself makes no model calls or order submissions, and both modes start paused. A clone enters replay/shadow validation before separately authorized trading; recovery requires the ownership/reconciliation gates above and an authenticated resume action. Imports grant neither live-account authorization nor permission to provision resources.
+
+Real `.pipmind` bundles and extracted contents are private operational data, stored under ignored private data/output paths, excluded from Git and container images, and kept out of public snapshots, logs and CI artifacts. Compression provides no confidentiality; use protected storage/transport and any separately configured encryption outside the base ZIP format. Public playbook diffs are a separate sanitized publication. Only synthetic fixtures may be tracked, without a blanket ignore exception for real exports.
+
+Verification must compare exported/imported retained records, exact identity/playbook text, versions, IDs, chronology, provenance and override exclusions. Exercise clone account separation and explicit transformations, recovery with late/ambiguous orders and stale owners, and invalid/interrupted import with no active-store mutation. SQL transaction, ownership and recovery checks use the actual SQL Server adapter; fake traces alone cannot certify them. The [roadmap](roadmap.md) and [portability delivery plan](plan.md#mind-portability-delivery-requirements) assign these checks to M1/M4/M5/M6/M7 without changing rollout order.
+
 ## Learning loop
 
 After the trading day, a self-review call (`gpt-6.1-sol`, with the day's journal, fills and rule hits) may:

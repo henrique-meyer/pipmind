@@ -22,6 +22,8 @@ Done when the docs are on `main` and the architecture diagram renders.
 
 Check the JSON schemas in as the source of truth. GitHub Actions runs lint and schema checks on fakes, with no Azure calls and no broker calls.
 
+Define the [Markdown mind portability contract](architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` bundle with a versioned manifest, complete retained five-part mind, checksums and compatibility metadata. Specify experience-clone and original-trader recovery semantics, including a matching operational sidecar for recovery. Add synthetic round-trip and corrupt/incomplete/incompatible/unsafe-archive fixtures; mark SQL/recovery checks deferred until their actual paths exist. A saved mind does not guarantee identical future trades.
+
 Include the [evaluation foundation](architecture.md#evaluations-and-replay): 30 versioned starter scenarios covering triage, decisions/memory, safety/recovery, self-review, public redaction and X read-only behavior; deterministic graders tested with valid and deliberately invalid traces; and a saved baseline report. Case metadata identifies required capabilities, initial state, clock, event availability, expected constraints and evidence. Preserve chronology, isolate case/variant memory and reserve held-out episodes.
 
 PR CI validates fixtures and graders, runs the replay and all applicable mandatory checks without credentials, and reports baseline differences and deferred coverage. Cases for unimplemented gateway/SQL/review/publication paths remain visibly deferred until their milestones; tests of fake traces cannot certify those controls. Optional real Microsoft Foundry comparisons and model judges are explicitly triggered, versioned and cost-recorded, with repetitions and human-calibrated rubrics.
@@ -50,9 +52,11 @@ Wake filter, `gpt-6-luna` triage, `gpt-6.1-sol` decisions, persistent mind. The 
 
 Shadow starts on the M1 harness, then on live events once M2 and M3 are up. Validate the shared demo allocation (0.5 vCPU / 1 GiB total), SQL-backed state/search, and actual API/model costs while proving zero broker orders.
 
+Implement consistent SQL-backed mind export and staged atomic import. Experience clone creates a new trader lineage, preserves retained learning/provenance, archives source position theses as history, and initializes destination account state separately. Start paused and validate in replay/shadow; imported account history, commands, permissions, overrides and numerical risk limits cannot become active destination state. Verify full retained-record round trips, exact identity/playbook text, rebuilt retrieval and failure with no active-state mutation. Model weights, secrets and live-trading authorization are outside the bundle.
+
 After resource approval, provision the Microsoft Foundry resource/project and model deployments, verify regional availability/quota and prices, and configure managed-identity access through the Agent Framework Foundry connector. Keep the agent loop, tools and mind in Container Apps/SQL. Verify a project-backed inference call before the shadow run; provisioning a Foundry-hosted agent runtime is outside this baseline.
 
-Done when a trading day of live events produces a journal and zero broker orders.
+Done when a trading day of live events produces a journal and zero broker orders, and SQL-backed export/import and experience-clone checks pass with the documented transformations and no order submissions.
 
 ## M5 — Safety and reconciliation
 
@@ -60,19 +64,21 @@ Outer hard boundary with real numbers in configuration, daily-loss stop fed by `
 
 Reconciliation takes positions and balances from gateway snapshots. A mismatch halts new risk.
 
+Implement original-trader recovery from a `.pipmind` recovery bundle with matching operational checkpoint, command/deduplication records, pending outcomes and stop/override state. Validate the same privately configured broker account/environment, fence out the previous owner even after database restore, acquire fresh ownership, and reconcile activity since export before explicit owner resumption. Test stale checkpoints, late/ambiguous orders, account mismatch, interrupted import and overlapping owners through the actual SQL/gateway paths; unresolved or missing state keeps dispatch disabled. A mind-only bundle is insufficient for recovery.
+
 Done when a request outside the boundary is refused and journaled; a second or stale owner cannot send during revision overlap; SQL loss blocks dispatch; a stale snapshot blocks new opens; an override is executed, tagged, and absent from the self-review evidence set. Exercise graceful handover, external heartbeat failure, and a restored database followed by broker reconciliation. Activate all corresponding M1 safety cases against actual enforcement paths, including SQL Server integration, and require every mandatory case to pass.
 
 ## M6 — Demo orders
 
 The gateway sends orders to the demo environment. Open, modify and close go through `OrderRequest`. Fills and snapshots come back. The broker's snapshot wins any disagreement.
 
-Done when a scripted round-trip is flat at the end and the core's position matches `PositionSnapshot` without a manual edit.
+Done when a scripted round-trip is flat at the end and the core's position matches `PositionSnapshot` without a manual edit. Exercise recovery with known and ambiguous demo-order outcomes, proving no duplicate dispatch, preserved protective orders and agreement with fresh broker snapshots before resumption.
 
 ## M7 — Self-review
 
 The nightly review can add a rule, sharpen one, or retire one. Retirement requires repeated evidence. Playbook versions are stored, and a public diff document is produced. Override-tagged rows do not count as evidence.
 
-Done when a fixture journal shows an add, a sharpen, and a refused retirement that cited only one outcome. Activate the M1 self-review cases against the implementation, including valid repeated-evidence retirement, override exclusion and evidence grounding.
+Done when a fixture journal shows an add, a sharpen, and a refused retirement that cited only one outcome. Activate the M1 self-review cases against the implementation, including valid repeated-evidence retirement, override exclusion and evidence grounding. Verify clone/recovery round trips preserve current/retired rule versions, review and suggestion history, evidence references and override exclusions; subsequent reviews continue monotonic versions.
 
 ## M8 — Public launch
 
