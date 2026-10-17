@@ -16,7 +16,7 @@ The hosted demo uses the [demo deployment profile](architecture.md#demo-instance
 | Built-in app secrets and managed identity | $0.00 additional | No separate Key Vault in the demo profile |
 | Standard public-repo CI and public GHCR publishing | $0.00 | Standard runners, controlled artifact/cache retention, public container images |
 | **Hosting subtotal** | **$59.14** | |
-| Azure OpenAI model calls | $35.00 | Usage allowance; decision/triage/review assumptions below |
+| Microsoft Foundry model calls | $35.00 | Usage allowance; decision/triage/review assumptions below |
 | X read-only API | $15.50 | $15 post-read allowance plus $0.50 for account lookups |
 | FXMacroData Individual, annual billing | $41.67 | $500/year paid upfront, amortized over 12 months |
 | **Total, annual FXMacroData plan** | **$151.31** | |
@@ -35,7 +35,9 @@ Sources: [Azure retail pricing API](https://learn.microsoft.com/en-us/rest/api/c
 | `gpt-6.1-sol` | Decisions, nightly self-review | $2 | $10 |
 | `gpt-6-luna` | Triage and summaries | $0.10 | $0.50 |
 
-Both are called through Azure OpenAI. These are working token-rate assumptions, matching [OpenAI's published model prices](https://developers.openai.com/api/docs/models) at review time; they are not a confirmed quote for the selected Azure deployment type/region. Confirm Azure's deployed-model and cached-input rates before provisioning. Reasoning tokens on the strong model count as output.
+Both model roles use deployments in a Microsoft Foundry resource/project. The table retains the previous token-rate planning assumptions, originally based on [OpenAI's published model prices](https://developers.openai.com/api/docs/models); it is not a verified Foundry price or confirmation that these model versions are available in the selected region. Before provisioning, verify Foundry model availability/quota, deployment type, input/output/reasoning and cached-input rates, and replace the assumptions with the actual deployment quote. Reasoning tokens on the strong model count as output.
+
+The $35 line remains a model-usage allowance. This platform correction does not validate or change the numerical estimate. Foundry-hosted agent compute, managed memory/search, paid platform tools and cloud evaluation services are outside the base profile; add their charges explicitly if selected. Agent Framework orchestration and the persistent mind stay in Container Apps and SQL. Optional judge runs are additional usage. The current landing deployment has no Foundry resource or model deployment.
 
 ### Unit cost, uncached
 
@@ -64,7 +66,7 @@ Planning arithmetic: `440 × $0.044 + 33,000 × $0.000225 + $5.20 = $31.985`, ro
 
 ### Cached input
 
-Identity and the current playbook form a stable prompt prefix ([architecture](architecture.md)). Keep them byte-stable to allow provider caching. Any savings depend on the actual Azure cached-input price and measured hit rate; the $35 base allowance assumes no cache savings. Output and reasoning tokens remain billable. The first deployed month replaces token-size, reasoning-output, call-volume, and caching assumptions with measurements.
+Identity and the current playbook form a stable prompt prefix ([architecture](architecture.md)). Keep them byte-stable to allow provider caching. Any savings depend on the selected Foundry deployment's cached-input price and measured hit rate; the $35 base allowance assumes no cache savings. Output and reasoning tokens remain billable. The first deployed month replaces token-size, reasoning-output, call-volume, and caching assumptions with measurements.
 
 ## FXMacroData
 

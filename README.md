@@ -55,7 +55,7 @@ flowchart TB
   venue <--> gateway
 ```
 
-On each wake, a cheap model (`gpt-6-luna`) triages and summarizes. A strong model (`gpt-6.1-sol` on Azure OpenAI) makes the decision. Code enforces an outer size and loss boundary, a daily-loss stop and a kill switch. The broker's snapshots are the source of truth for positions and balances.
+On each wake, a cheap model (`gpt-6-luna`) triages and summarizes. A strong model (`gpt-6.1-sol` on Microsoft Foundry) makes the decision. Code enforces an outer size and loss boundary, a daily-loss stop and a kill switch. The broker's snapshots are the source of truth for positions and balances.
 
 The public page is a static site built from JSON snapshots. Visitors do not call the model or the broker; static hosting and Blob traffic remain subject to their quotas and usage charges. The page shows this account's own fills, its P&L, the reasoning for each decision, and playbook diffs. Broker quotes and other market data stay inside the trading system. That split is a design choice: the page is a record of what this account did, and it is not a market-data display. X is a read-only input; PipMind does not publish posts or request X write permissions.
 
@@ -72,7 +72,9 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 
 ## Stack
 
-Python 3.12, the Microsoft Agent Framework, Azure OpenAI, Azure SQL, Docker, GitHub Actions. The hosted demo uses one always-on Azure Container App with engine/feed and broker-gateway containers, default networking, SQL S0, Blob snapshots, and Azure Static Web Apps Free. Hosting is estimated at $59/month and the full system at $151–160/month, with an $180 planning budget and spend alerts rather than silent cutoffs. Tax and a possible provider display add-on are additional. Details are in the [cost model](docs/cost-model.md).
+Python 3.12, the Microsoft Agent Framework, Microsoft Foundry, Azure SQL, Docker, GitHub Actions. The hosted demo uses one always-on Azure Container App with engine/feed and broker-gateway containers, default networking, SQL S0, Blob snapshots, and Azure Static Web Apps Free. Hosting is estimated at $59/month and the full system at $151–160/month, with an $180 planning budget and spend alerts rather than silent cutoffs. Tax and a possible provider display add-on are additional. Details are in the [cost model](docs/cost-model.md).
+
+AI integration uses a Foundry resource/project and the Agent Framework Foundry connector. The agent loop and SQL-backed mind run in Container Apps. Foundry model availability, quota and deployment prices must be verified before provisioning; see [Foundry model access](docs/architecture.md#microsoft-foundry-model-access). The current landing page has no AI integration yet.
 
 The application remains suitable for separately configured production deployments with independent apps/identities, stronger networking, larger resources, and enhanced recovery/monitoring at a higher cost. Production hosting does not authorize a live broker account; the rollout still starts with replay, shadow mode, and demo orders. See [deployment profiles](docs/architecture.md#deployment).
 

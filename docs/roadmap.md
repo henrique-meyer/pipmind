@@ -24,7 +24,7 @@ Check the JSON schemas in as the source of truth. GitHub Actions runs lint and s
 
 Include the [evaluation foundation](architecture.md#evaluations-and-replay): 30 versioned starter scenarios covering triage, decisions/memory, safety/recovery, self-review, public redaction and X read-only behavior; deterministic graders tested with valid and deliberately invalid traces; and a saved baseline report. Case metadata identifies required capabilities, initial state, clock, event availability, expected constraints and evidence. Preserve chronology, isolate case/variant memory and reserve held-out episodes.
 
-PR CI validates fixtures and graders, runs the replay and all applicable mandatory checks without credentials, and reports baseline differences and deferred coverage. Cases for unimplemented gateway/SQL/review/publication paths remain visibly deferred until their milestones; tests of fake traces cannot certify those controls. Optional real Azure OpenAI comparisons and model judges are explicitly triggered, versioned and cost-recorded, with repetitions and human-calibrated rubrics.
+PR CI validates fixtures and graders, runs the replay and all applicable mandatory checks without credentials, and reports baseline differences and deferred coverage. Cases for unimplemented gateway/SQL/review/publication paths remain visibly deferred until their milestones; tests of fake traces cannot certify those controls. Optional real Microsoft Foundry comparisons and model judges are explicitly triggered, versioned and cost-recorded, with repetitions and human-calibrated rubrics.
 
 The harness replays a recorded week of `ReleaseEvent`, `NewsEvent`, `PostEvent` and `PriceEvent`. The core writes decisions and reasoning. It has no gateway.
 
@@ -49,6 +49,8 @@ Done when each feed can be killed without silencing the other two; the ForexFact
 Wake filter, `gpt-6-luna` triage, `gpt-6.1-sol` decisions, persistent mind. The core logs `enter`, `add`, `exit` and `hold` with reasoning and updates the mind. It sends no `OrderRequest`.
 
 Shadow starts on the M1 harness, then on live events once M2 and M3 are up. Validate the shared demo allocation (0.5 vCPU / 1 GiB total), SQL-backed state/search, and actual API/model costs while proving zero broker orders.
+
+After resource approval, provision the Microsoft Foundry resource/project and model deployments, verify regional availability/quota and prices, and configure managed-identity access through the Agent Framework Foundry connector. Keep the agent loop, tools and mind in Container Apps/SQL. Verify a project-backed inference call before the shadow run; provisioning a Foundry-hosted agent runtime is outside this baseline.
 
 Done when a trading day of live events produces a journal and zero broker orders.
 

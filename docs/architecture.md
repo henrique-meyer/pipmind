@@ -48,7 +48,7 @@ flowchart TB
 
 Messages are JSON. Timestamps are ISO-8601 in UTC. Schemas below are design sketches (`draft 2020-12`), not a shipped validator. Each message carries `schema_version`.
 
-The core is a single Python 3.12 process built on the Microsoft Agent Framework. Model calls go to Azure OpenAI. The hosted demo stores durable state in Azure SQL Database Standard S0. Local development uses a SQL Server container for database integration checks; a SQLite adapter may support isolated replay fixtures, but is not the hosted state or lease store.
+The core is a single Python 3.12 process built on the Microsoft Agent Framework. Model calls go to Microsoft Foundry. The hosted demo stores durable state in Azure SQL Database Standard S0. Local development uses a SQL Server container for database integration checks; a SQLite adapter may support isolated replay fixtures, but is not the hosted state or lease store.
 
 ## macro-feed
 
@@ -459,6 +459,16 @@ If the strong model errors, or triage cannot run, the core does not open new ris
 
 The decision step is an agent in the Microsoft Agent Framework. Its tools read the mind, search long-term memory, record the decision, and propose an order. Proposing an order hands the request to the boundary. The agent has no tool that talks to the broker.
 
+### Microsoft Foundry model access
+
+Microsoft Foundry is the AI platform. Plan a Foundry resource and project with configurable deployments for the triage, decision/review and optional evaluation-judge roles. The selected model families remain `gpt-6-luna` and `gpt-6.1-sol`; availability, API capabilities, quota and regional pricing must be verified before provisioning. Deployment names are configuration, not hard-coded model identifiers.
+
+Use the Python Agent Framework Foundry connector (`agent-framework-foundry`, `FoundryChatClient`) for project-backed inference. The project endpoint and deployment names belong in private configuration. Use explicit managed-identity credentials in the hosted engine with narrowly scoped Foundry permissions; use the established local Azure identity for approved developer runs. The engine owns instructions, tool execution, sessions and the SQL-backed mind in Container Apps. Foundry-managed memory and hosted agent runtimes are separate capabilities to assess only if subsequently needed.
+
+Foundry resource/project provisioning, deployment selection, identity access and an inference smoke check belong to M4 after resource approval. Optional model-judged evaluations use the configured Foundry project and grader deployment. The landing bootstrap has no model connector or AI resource, and credential-free replay CI continues to use fakes.
+
+Implementation references: [Microsoft Foundry model provider](https://learn.microsoft.com/en-us/agent-framework/integrations/by-component/model-providers/microsoft-foundry) and [Foundry SDKs and endpoints](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/sdk-overview).
+
 ### Decision record
 
 Stored in the journal and, when it is a real action or a material hold, reflected on the public page.
@@ -547,11 +557,11 @@ Use Agent Framework local/custom evaluators where appropriate, with direct code 
 ### Execution and release gates
 
 - **Every PR:** validate dataset/schema integrity, chronological evidence references and deterministic graders, including known-bad traces; run the fixture-week replay and applicable mandatory cases with fake model responses, an isolated store and simulated gateway. No Azure/model/vendor/broker credentials or external service calls. Require zero failed mandatory checks and show per-area scores, baseline differences and the number of deferred cases.
-- **Explicit model-quality run:** use the configured Azure OpenAI triage/decision deployments against the same scenarios, optionally with a model judge. Compare the candidate with a saved baseline from identical starting state and repeat cases to measure variability. Record paid usage separately from runtime model spend. This is opt-in, not a paid PR workflow or an additional always-on service.
+- **Explicit model-quality run:** use the configured Microsoft Foundry triage/decision deployments against the same scenarios, optionally with a model judge. Compare the candidate with a saved baseline from identical starting state and repeat cases to measure variability. Record paid usage separately from runtime model spend. This is opt-in, not a paid PR workflow or an additional always-on service.
 - **Capability gates:** M1 must exercise delivered core/replay paths and prove graders detect seeded failures. Cases requiring gateway, SQL ownership, self-review or publication remain visibly deferred until their implementation milestones; mocked refusals are not proof that production enforcement works. Activate those real-path checks at M2/M5/M7/M8, with SQL Server integration tests for database behavior. Mandatory cases for delivered capabilities cannot be skipped silently.
 - **Before promotion:** review regressions in triage, grounded reasoning, memory, self-review and cost; require every applicable safety fixture to pass. A high average quality score cannot compensate for a forbidden action. Replay/model scores do not establish profitability: retain the rollout through live-event shadow mode and broker demo trading, with execution costs and uncertainty included in later performance analysis.
 
-References: [Agent Framework evaluation](https://learn.microsoft.com/en-us/agent-framework/agents/evaluation?pivots=programming-language-csharp) and [OpenAI evaluation datasets](https://developers.openai.com/api/docs/guides/evaluation-getting-started).
+References: [Agent Framework evaluation](https://learn.microsoft.com/en-us/agent-framework/agents/evaluation?pivots=programming-language-csharp) and [Foundry SDKs and evaluation access](https://learn.microsoft.com/en-us/azure/foundry/how-to/develop/sdk-overview).
 
 ## Limits
 
@@ -739,7 +749,8 @@ Logs omit credentials. Public snapshots omit credentials, raw quotes and the acc
 | --- | --- |
 | Language | Python 3.12 |
 | Agent loop | Microsoft Agent Framework |
-| Models | Azure OpenAI: `gpt-6-luna` for triage, `gpt-6.1-sol` for decisions and the nightly review |
+| AI platform | Microsoft Foundry resource/project; Agent Framework Foundry connector, private deployment configuration and managed-identity access |
+| Models | Foundry deployments: `gpt-6-luna` for triage, `gpt-6.1-sol` for decisions and the nightly review; verify availability and quota before provisioning |
 | Hosted state | Azure SQL Database Standard S0; mind, journal, durable events, command ledger, and lease |
 | Local state | SQL Server in Docker Compose for integration checks; optional isolated SQLite replay adapter |
 | Packaging | Docker |
