@@ -1,0 +1,170 @@
+[
+  {
+    "case_id": "valid-experience",
+    "operation": "valid",
+    "kind": "experience",
+    "expected_code": "valid"
+  },
+  {
+    "case_id": "valid-recovery",
+    "operation": "valid",
+    "kind": "recovery",
+    "expected_code": "valid"
+  },
+  {
+    "case_id": "corrupt",
+    "operation": "corrupt",
+    "kind": "experience",
+    "expected_code": "checksum_mismatch"
+  },
+  {
+    "case_id": "missing-manifest",
+    "operation": "missing_manifest",
+    "kind": "experience",
+    "expected_code": "missing_manifest"
+  },
+  {
+    "case_id": "missing-file",
+    "operation": "missing_file",
+    "kind": "experience",
+    "expected_code": "inventory_mismatch"
+  },
+  {
+    "case_id": "unlisted",
+    "operation": "unlisted",
+    "kind": "experience",
+    "expected_code": "inventory_mismatch"
+  },
+  {
+    "case_id": "duplicate-entry",
+    "operation": "duplicate_entry",
+    "kind": "experience",
+    "expected_code": "duplicate_entry"
+  },
+  {
+    "case_id": "traversal",
+    "operation": "traversal",
+    "kind": "experience",
+    "expected_code": "unsafe_path"
+  },
+  {
+    "case_id": "absolute-path",
+    "operation": "absolute",
+    "kind": "experience",
+    "expected_code": "unsafe_path"
+  },
+  {
+    "case_id": "windows-path",
+    "operation": "windows_path",
+    "kind": "experience",
+    "expected_code": "unsafe_path"
+  },
+  {
+    "case_id": "symlink",
+    "operation": "symlink",
+    "kind": "experience",
+    "expected_code": "unsafe_entry_type"
+  },
+  {
+    "case_id": "large-file",
+    "operation": "file_size",
+    "kind": "experience",
+    "expected_code": "file_size"
+  },
+  {
+    "case_id": "expansion",
+    "operation": "ratio",
+    "kind": "experience",
+    "expected_code": "compression_ratio"
+  },
+  {
+    "case_id": "entry-limit",
+    "operation": "entry_count",
+    "kind": "experience",
+    "expected_code": "entry_count"
+  },
+  {
+    "case_id": "incompatible",
+    "operation": "incompatible",
+    "kind": "experience",
+    "expected_code": "schema:bundle-manifest"
+  },
+  {
+    "case_id": "incomplete",
+    "operation": "incomplete",
+    "kind": "experience",
+    "expected_code": "incomplete_coverage"
+  },
+  {
+    "case_id": "broken-evidence",
+    "operation": "broken_evidence",
+    "kind": "experience",
+    "expected_code": "broken_evidence"
+  },
+  {
+    "case_id": "duplicate-record",
+    "operation": "duplicate_record",
+    "kind": "experience",
+    "expected_code": "duplicate_record"
+  },
+  {
+    "case_id": "bad-front-matter",
+    "operation": "bad_front_matter",
+    "kind": "experience",
+    "expected_code": "invalid_json"
+  },
+  {
+    "case_id": "checkpoint",
+    "operation": "recovery_checkpoint",
+    "kind": "recovery",
+    "expected_code": "recovery_checkpoint"
+  },
+  {
+    "case_id": "lease-authority",
+    "operation": "reusable_lease",
+    "kind": "recovery",
+    "expected_code": "schema:recovery-state"
+  },
+  {
+    "case_id": "pending-ledger",
+    "operation": "pending_coverage",
+    "kind": "recovery",
+    "expected_code": "pending_coverage"
+  },
+  {
+    "case_id": "missing-mind",
+    "operation": "missing_mind_part",
+    "kind": "experience",
+    "expected_code": "missing_mind_part"
+  },
+  {
+    "case_id": "duplicate-json",
+    "operation": "duplicate_json",
+    "kind": "experience",
+    "expected_code": "invalid_json"
+  },
+  {
+    "case_id": "total-expansion",
+    "operation": "expanded_size",
+    "kind": "experience",
+    "expected_code": "expanded_size"
+  },
+  {
+    "case_id": "missing-recovery-sidecar",
+    "operation": "missing_recovery",
+    "kind": "recovery",
+    "expected_code": "missing_recovery_state"
+  },
+  {
+    "case_id": "experience-with-authority",
+    "operation": "experience_authority",
+    "kind": "experience",
+    "expected_code": "experience_has_authority"
+  },
+  {
+    "case_id": "inherited-provenance",
+    "operation": "inherited_provenance",
+    "kind": "experience",
+    "expected_code": "valid"
+  }
+]

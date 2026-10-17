@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:working-memory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "views",
+    "position_theses",
+    "waiting_for"
+  ],
+  "properties": {
+    "views": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "position_theses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instrument",
+          "thesis",
+          "as_of"
+        ],
+        "properties": {
+          "instrument": {
+            "type": "string",
+            "minLength": 1
+          },
+          "thesis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          }
+        }
+      }
+    },
+    "waiting_for": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:order-request",
+  "title": "OrderRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "client_order_id",
+    "action",
+    "instrument"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "client_order_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "open",
+        "close",
+        "modify"
+      ]
+    },
+    "instrument": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": [
+        "buy",
+        "sell"
+      ]
+    },
+    "size": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0,
+      "description": "Positive size in mapped units. On close, null closes the whole position in the instrument."
+    },
+    "order_type": {
+      "type": "string",
+      "enum": [
+        "market",
+        "limit"
+      ]
+    },
+    "stop": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Protective stop price. On modify, omit the property to leave it unchanged."
+    },
+    "limit": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Limit price. Required when order_type is limit."
+    },
+    "related_client_order_id": {
+      "type": "string",
+      "description": "The working order a modify or cancel-like close refers to."
+    },
+    "time_in_force": {
+      "type": "string",
+      "enum": [
+        "gtc",
+        "day",
+        "ioc"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "open"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "required": [
+          "side",
+          "size",
+          "order_type"
+        ],
+        "properties": {
+          "size": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "order_type": {
+            "const": "limit"
+          }
+        },
+        "required": [
+          "order_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "limit"
+        ],
+        "properties": {
+          "limit": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    }
+  ]
+}

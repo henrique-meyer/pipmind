@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:position-snapshot",
+  "title": "PositionSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "as_of",
+    "positions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "positions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instrument",
+          "side",
+          "size"
+        ],
+        "properties": {
+          "instrument": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell",
+              "flat"
+            ]
+          },
+          "size": {
+            "type": "number",
+            "minimum": 0
+          },
+          "average_price": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unrealized_pnl": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "dataset_version": "starter-v1",
+  "source": "Original synthetic fixtures; no provider recordings or personal data.",
+  "license": "Repository license",
+  "cases": "fixtures/starter-v1.jsonl",
+  "fixture_week": "fixtures/week-v1.jsonl",
+  "grader_version": "deterministic-v1",
+  "split_policy": "Development episodes precede chronological holdout episodes; holdout is not prompt-tuning material. Public synthetic fixtures are not a blind real-model benchmark.",
+  "implemented_capabilities": [
+    "replay_core"
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:public-snapshot",
+  "title": "PublicSnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "as_of",
+    "disclaimer",
+    "fills",
+    "decisions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "disclaimer": {
+      "type": "string"
+    },
+    "playbook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "diff": {
+          "type": "string"
+        }
+      }
+    },
+    "pnl": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "realized_r": {
+          "type": "number"
+        },
+        "realized_pct": {
+          "type": "number"
+        },
+        "unrealized_r": {
+          "type": "number"
+        }
+      }
+    },
+    "fills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instrument",
+          "side",
+          "size",
+          "price",
+          "ts"
+        ],
+        "properties": {
+          "instrument": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "size": {
+            "type": "number"
+          },
+          "price": {
+            "type": "number"
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          },
+          "decision_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision_id",
+          "action",
+          "reasoning",
+          "override"
+        ],
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "instrument": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "override": {
+            "type": "boolean"
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:release-event",
+  "title": "ReleaseEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "currency",
+    "indicator",
+    "actual",
+    "forecast",
+    "previous",
+    "scheduled_at",
+    "released_at",
+    "source",
+    "received_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "currency": {
+      "type": "string",
+      "description": "ISO 4217 code."
+    },
+    "indicator": {
+      "type": "string",
+      "description": "Stable name, for example US CPI m/m."
+    },
+    "actual": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "forecast": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Consensus. ForexFactory first, FXMacroData captured forecast only as a fallback."
+    },
+    "previous": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "revised_previous": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "unit": {
+      "type": "string"
+    },
+    "impact": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "period": {
+      "type": "string",
+      "description": "The period the print covers, when known."
+    },
+    "scheduled_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "released_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "source": {
+      "type": "string",
+      "description": "Which upstream supplied the actual. Consensus source is implied by the forecast rule unless forecast_source is set."
+    },
+    "forecast_source": {
+      "type": "string",
+      "enum": [
+        "forexfactory",
+        "fxmacrodata"
+      ]
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "revision_of": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

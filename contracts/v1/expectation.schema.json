@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:expectation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "wake_labels",
+    "minimum_decisions",
+    "maximum_decisions",
+    "allowed_actions",
+    "required_evidence",
+    "memory_views",
+    "refusal_codes",
+    "retained_event_ids",
+    "guard"
+  ],
+  "properties": {
+    "wake_labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "minimum_decisions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "maximum_decisions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "allowed_actions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "enter",
+          "add",
+          "exit",
+          "hold"
+        ]
+      }
+    },
+    "required_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "memory_views": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "refusal_codes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "retained_event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "guard": {
+      "enum": [
+        "none",
+        "unsupported_instrument",
+        "stale_quote",
+        "stale_snapshot",
+        "excess_size",
+        "daily_loss",
+        "paused",
+        "stale_owner",
+        "store_unavailable",
+        "ambiguous_broker",
+        "reconciliation",
+        "review_add",
+        "review_sharpen",
+        "review_retire_once",
+        "review_retire_repeated",
+        "review_override",
+        "review_grounding",
+        "public_redaction"
+      ]
+    }
+  }
+}

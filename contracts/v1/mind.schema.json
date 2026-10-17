@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:mind",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trader_id",
+    "identity",
+    "playbook",
+    "working_memory",
+    "journal",
+    "long_term"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "trader_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "playbook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "text"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "working_memory": {
+      "$ref": "urn:pipmind:schema:v1:working-memory"
+    },
+    "journal": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:pipmind:schema:v1:memory-record"
+      }
+    },
+    "long_term": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:pipmind:schema:v1:memory-record"
+      }
+    }
+  }
+}

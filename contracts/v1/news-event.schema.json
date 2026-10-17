@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:news-event",
+  "title": "NewsEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "source",
+    "url",
+    "headline",
+    "kind",
+    "published_at",
+    "received_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "headline": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Text the feed itself supplied. Empty when the feed did not."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "breaking",
+        "analysis"
+      ]
+    },
+    "currencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "paywalled": {
+      "type": "boolean"
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    }
+  }
+}

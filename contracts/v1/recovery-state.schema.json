@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:recovery-state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "checkpoint_id",
+    "trader_id",
+    "lineage_id",
+    "broker_binding_ref",
+    "environment",
+    "account_state_ref",
+    "event_watermark",
+    "reconciliation_watermark",
+    "commands",
+    "deduplication_ids",
+    "pending_command_ids",
+    "stops",
+    "overrides"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "checkpoint_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trader_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lineage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "broker_binding_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "environment": {
+      "enum": [
+        "demo",
+        "live"
+      ]
+    },
+    "account_state_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_watermark": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reconciliation_watermark": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "command_id",
+          "state",
+          "broker_order_id",
+          "known_outcome"
+        ],
+        "properties": {
+          "command_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "state": {
+            "enum": [
+              "accepted",
+              "dispatching",
+              "unknown",
+              "reconciled",
+              "refused"
+            ]
+          },
+          "broker_order_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "known_outcome": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "deduplication_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "pending_command_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "stops": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "active",
+          "expires_at"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "kill",
+              "pause",
+              "daily_loss"
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          }
+        }
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "override_id",
+          "instruction",
+          "expires_at",
+          "active"
+        ],
+        "properties": {
+          "override_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "instruction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          },
+          "active": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

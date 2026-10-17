@@ -1,12 +1,16 @@
 [project]
 name = "pipmind"
 version = "0.1.0"
-description = "PipMind demo landing page; trading engine in development"
+description = "PipMind landing page and offline replay foundation; trading in development"
 requires-python = ">=3.12,<3.13"
 dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 
 [dependency-groups]
-dev = ["ruff>=0.11,<1"]
+dev = [
+    "jsonschema>=4.23,<5",
+    "pytest>=8,<10",
+    "ruff>=0.11,<1",
+]
 
 [tool.ruff]
 target-version = "py312"
@@ -14,3 +18,6 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

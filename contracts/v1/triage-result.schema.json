@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:triage-result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "wake",
+    "summary"
+  ],
+  "properties": {
+    "wake": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

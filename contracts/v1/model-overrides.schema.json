@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:model-overrides",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "triage"
+      ],
+      "properties": {
+        "triage": {
+          "$ref": "urn:pipmind:schema:v1:triage-result"
+        },
+        "reply": {
+          "$ref": "urn:pipmind:schema:v1:model-reply"
+        },
+        "error": {
+          "enum": [
+            "triage",
+            "decision"
+          ]
+        }
+      }
+    }
+  }
+}

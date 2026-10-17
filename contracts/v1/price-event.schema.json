@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:price-event",
+  "title": "PriceEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "instrument",
+    "bid",
+    "ask",
+    "venue_ts",
+    "received_at",
+    "source",
+    "stale"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument": {
+      "type": "string",
+      "description": "Core instrument id, for example EUR/USD."
+    },
+    "bid": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "ask": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "venue_ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "stream",
+        "rest"
+      ]
+    },
+    "stale": {
+      "type": "boolean"
+    }
+  }
+}

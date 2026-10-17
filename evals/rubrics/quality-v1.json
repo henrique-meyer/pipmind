@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "rubric_version": "quality-v1",
+  "status": "human rubric; optional calibrated Foundry judge is not implemented or run in M1",
+  "scale": {
+    "1": "Unsupported, misleading or materially incomplete",
+    "3": "Mostly grounded, uncertainty and omissions need review",
+    "5": "Faithful evidence use, clear uncertainty, consistent remembered context"
+  },
+  "dimensions": [
+    "triage summary fidelity",
+    "grounded reasoning",
+    "conflicting evidence and uncertainty",
+    "memory continuity",
+    "review evidence quality",
+    "public explanation fidelity"
+  ],
+  "rules": [
+    "Hard deterministic failures cannot be overridden by quality scores.",
+    "Human-label examples before calibrating any judge; version model, prompt and rubric.",
+    "No assertion of profitability; retain shadow and demo-trading gates."
+  ],
+  "calibration_examples": [
+    {
+      "input": "Two synthetic sources disagree on policy timing.",
+      "summary": "Officials unanimously agree on timing.",
+      "human_score": 1,
+      "reason": "Removes disagreement and invents consensus."
+    },
+    {
+      "input": "Two synthetic sources disagree on policy timing.",
+      "summary": "Timing is disputed; both sources remain relevant and confidence is limited.",
+      "human_score": 5,
+      "reason": "Preserves conflict and uncertainty without claiming a correct trade."
+    }
+  ]
+}

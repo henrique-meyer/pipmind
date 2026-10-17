@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:scenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "title",
+    "family",
+    "split",
+    "required_milestone",
+    "required_capabilities",
+    "mandatory",
+    "tags",
+    "clock_start",
+    "initial_mind",
+    "initial_account",
+    "initial_positions",
+    "events",
+    "model_responses",
+    "tool_results",
+    "expected",
+    "rubric_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_-]{1,63}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "family": {
+      "enum": [
+        "triage",
+        "decision_memory",
+        "safety_recovery",
+        "self_review",
+        "public_read_only"
+      ]
+    },
+    "split": {
+      "enum": [
+        "development",
+        "holdout"
+      ]
+    },
+    "required_milestone": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8
+    },
+    "required_capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "replay_core",
+          "gateway",
+          "boundary",
+          "sql_ownership",
+          "reconciliation",
+          "broker_recovery",
+          "self_review",
+          "public_publisher"
+        ]
+      }
+    },
+    "mandatory": {
+      "const": true
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clock_start": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "initial_mind": {
+      "$ref": "urn:pipmind:schema:v1:mind"
+    },
+    "initial_account": {
+      "$ref": "urn:pipmind:schema:v1:account-snapshot"
+    },
+    "initial_positions": {
+      "$ref": "urn:pipmind:schema:v1:position-snapshot"
+    },
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "urn:pipmind:schema:v1:event-envelope"
+      }
+    },
+    "model_responses": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "triage"
+        ],
+        "properties": {
+          "triage": {
+            "$ref": "urn:pipmind:schema:v1:triage-result"
+          },
+          "reply": {
+            "$ref": "urn:pipmind:schema:v1:model-reply"
+          },
+          "error": {
+            "enum": [
+              "triage",
+              "decision"
+            ]
+          }
+        }
+      }
+    },
+    "tool_results": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "expected": {
+      "$ref": "urn:pipmind:schema:v1:expectation"
+    },
+    "rubric_version": {
+      "const": "deterministic-v1"
+    }
+  }
+}

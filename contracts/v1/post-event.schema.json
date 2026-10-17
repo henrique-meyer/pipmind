@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:post-event",
+  "title": "PostEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "author",
+    "role",
+    "text",
+    "ts",
+    "url",
+    "received_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "author": {
+      "type": "string",
+      "description": "Display name or handle."
+    },
+    "handle": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string",
+      "description": "Role id from the follow list, or 'news' for a wire account."
+    },
+    "text": {
+      "type": "string"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "url": {
+      "type": "string"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    }
+  }
+}
