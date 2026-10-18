@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pipmind.contracts import Contracts, event_facts, event_id, loads, stamp, utc, validate_event
 from pipmind.shadow.common import ShadowError, digest, encoded, terms
+from pipmind.shadow.context import query_terms, record_view, relevance, semantic_text
 from pipmind.shadow.sql import transaction
 
 PARTS = {
@@ -82,7 +83,7 @@ class SqlMind:
             ),
         )
         pk = cur.fetchone()[0]
-        for term in terms(body):
+        for term in terms(semantic_text(record_view(meta, body)["body"])):
             cur.execute("INSERT pm_terms VALUES(%s,%s)", (term, pk))
 
     def initialize(self, identity, playbook, moment, *, binding, records=()):
@@ -244,11 +245,28 @@ class SqlMind:
                 "'$.status'),'')<>'price_coalesced' ORDER BY pk DESC",
                 (self.trader, moment.replace(tzinfo=None)),
             )
-            recent = [
-                {"metadata": loads(meta), "body": body[:8000]}
-                for meta, body in reversed(cur.fetchall())
-            ]
+            recent = [record_view(loads(meta), body) for meta, body in reversed(cur.fetchall())]
+            # Current working views persist regardless of retrieval. A recent
+            # audit trace is not automatically relevant to the incoming event.
+            recent = [row for row in recent if not query or relevance(row, query)][-3:]
             memories = self._search(cur, query, moment)
+            working = head["working"]
+            active_query = " ".join(
+                [
+                    *working["views"],
+                    *working["waiting_for"],
+                    *(
+                        row["instrument"] + " " + row["thesis"]
+                        for row in working["position_theses"]
+                    ),
+                ]
+            )
+            if active_query:
+                active = self._search(cur, active_query, moment)
+                combined = {
+                    row["metadata"]["record_id"]: row for row in [*memories[:3], *active[:3]]
+                }
+                memories = list(combined.values())
             return {
                 "revision": head["revision"],
                 "paused": head["paused"],
@@ -260,29 +278,54 @@ class SqlMind:
             }
 
     def _search(self, cur, query, moment):
-        tokens = terms(query)[:12]
+        cur.execute(
+            "SELECT meta,body FROM pm_records WHERE trader=%s AND id=%s "
+            "AND part IN ('memory','review','journal','playbook_history') AND ts<=%s",
+            (self.trader, query[:500], moment.replace(tzinfo=None)),
+        )
+        exact = cur.fetchone()
+        if exact:
+            return [record_view(loads(exact[0]), exact[1])]
+        tokens = query_terms(query)
         if not tokens:
             return []
         # Transactional inverted index avoids an asynchronous full-text index's
         # visibility gap immediately after commit/import. No narrative is SQL.
         placeholders = ",".join(["%s"] * len(tokens))
         condition = " OR ".join('"' + term + '"' for term in tokens)
-        cur.execute(
-            "DECLARE @query nvarchar(4000)=%s; "
-            "SELECT TOP(5) r.meta,r.body,s.hits FROM pm_records r JOIN ("
-            "SELECT record_pk,SUM(score) AS hits FROM ("
-            f"SELECT record_pk,COUNT(*) AS score FROM pm_terms WHERE term IN ({placeholders}) "
-            "GROUP BY record_pk UNION ALL "
-            "SELECT [KEY],RANK FROM CONTAINSTABLE(pm_records,body,@query)) hits GROUP BY record_pk"
-            ") s ON r.pk=s.record_pk WHERE r.trader=%s AND r.ts<=%s "
-            "AND r.part IN ('memory','review','journal','playbook_history') "
-            "ORDER BY s.hits DESC,r.pk DESC",
-            (condition, *tokens, self.trader, moment.replace(tzinfo=None)),
+        candidates = []
+        # Partition candidates so recursive legacy journal traces cannot crowd
+        # original source events/reviews out of the archive search.
+        for journal in (False, True):
+            part_filter = (
+                "r.part='journal'"
+                if journal
+                else "r.part IN ('memory','review','playbook_history')"
+            )
+            cur.execute(
+                "DECLARE @query nvarchar(4000)=%s; "
+                "SELECT TOP(40) r.meta,r.body,s.hits FROM pm_records r JOIN ("
+                "SELECT record_pk,SUM(score) AS hits FROM ("
+                f"SELECT record_pk,COUNT(*) AS score FROM pm_terms WHERE term IN ({placeholders}) "
+                "GROUP BY record_pk UNION ALL "
+                "SELECT [KEY],RANK FROM CONTAINSTABLE(pm_records,body,@query)) hits "
+                "GROUP BY record_pk"
+                ") s ON r.pk=s.record_pk WHERE r.trader=%s AND r.ts<=%s "
+                f"AND {part_filter} "
+                "ORDER BY s.hits DESC,r.pk DESC",
+                (condition, *tokens, self.trader, moment.replace(tzinfo=None)),
+            )
+            while cur.description is None:
+                if not cur.nextset():
+                    raise ShadowError("memory_search_result_missing")
+            candidates.extend(
+                record_view(loads(meta), body, query) for meta, body, _ in cur.fetchall()
+            )
+        candidates = [row for row in candidates if relevance(row, query)]
+        candidates.sort(
+            key=lambda row: (relevance(row, query), row["metadata"]["ts"]), reverse=True
         )
-        while cur.description is None:
-            if not cur.nextset():
-                raise ShadowError("memory_search_result_missing")
-        return [{"metadata": loads(meta), "body": body[:8000]} for meta, body, _ in cur.fetchall()]
+        return candidates[:5]
 
     def search(self, query, moment):
         if not isinstance(query, str) or not 1 <= len(query) <= 500:

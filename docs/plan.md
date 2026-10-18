@@ -2,6 +2,16 @@
 
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
+## PIP-15 — Compact model context and hosted token measurement
+
+- Story: [PIP-15](https://nitro.atlassian.net/browse/PIP-15)
+- Status: In Progress
+- Scope: phase-specific compact triage and relevant decision evidence, non-recursive journal/memory projections and bounded read tools, while preserving full accepted input and audit traces in SQL. Explain the existing Markdown saved-mind and curated knowledge-library fit without creating a second live-state store.
+- Acceptance: regression checks for large recursive histories, relevant/conflicting evidence, provenance/time/trader isolation and actual SQL audit/export retention; existing CI remains green. Deploy only the authorized backend release with unchanged resources/quota/landing, then measure actual tokens/latency/refusals against the previous behavior on retained representative inputs. Keep controlled comparisons separate from live samples and monthly cost assumptions.
+- Boundaries: no history deletion/rewrite, event dropping, deterministic trading strategy, new provider/resource purchase, broker execution or M7 playbook mutation. Full-day qualification remains PIP-14.
+- Memory continuity: every decision retains current views, all position theses and waiting conditions. Search the whole retained archive without an age cutoff; preserve month-old relevant and contrary evidence amid unrelated recent traces, with dates/provenance and explicit retrieval limits. A recent window is not a replacement for the persistent market state.
+- Implementation checks: phase-specific prompt views and exact request audit, structured journal projections, query-aware source passages, whole-archive/source-ID retrieval and separate source/journal candidate pools. Seven new offline regressions cover recursion, continuing state, long articles, wire context, tool projection and oversized mandatory-state refusal. The real SQL suite adds month-old/contrary evidence, legacy-noise, time/trader isolation and unchanged-audit checks. Hosted paired measurement follows the authorized release; complete-day quality/cost remain PIP-14.
+
 ## PIP-12 — M4 shadow runtime and persistent mind
 
 - Story: [PIP-12](https://nitro.atlassian.net/browse/PIP-12)

@@ -3,7 +3,8 @@
 from copy import deepcopy
 
 from pipmind.contracts import ContractError, Contracts, event_id, stamp, utc, validate_event
-from pipmind.shadow.common import ShadowError, encoded, now
+from pipmind.shadow.common import ShadowError, now
+from pipmind.shadow.context import event_query
 from pipmind.shadow.model import ModelFailure
 
 
@@ -23,7 +24,7 @@ class ShadowEngine:
             return False
         if validate_event(event, self.contracts) > moment:
             raise ShadowError("future_shadow_input")
-        query = encoded(event["payload"])
+        query = event_query(event)
         context = self.store.context(moment, query)
         result = {
             "mode": "shadow",

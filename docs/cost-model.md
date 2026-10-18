@@ -43,6 +43,8 @@ On 2026-10-18, subscription catalog/capacity and Azure retail API checks confirm
 
 The $35 line remains a usage allowance, supported by the revised $34.44 planning scenario below. Actual context sizes, reasoning and wake counts still need hosted measurement. Foundry-hosted agent compute, managed memory/search, paid tools and cloud evaluation services are outside this profile. Agent Framework and the persistent mind stay in Container Apps and SQL. Optional judge runs are additional usage; M7 self-review is not implemented by M4.
 
+The first PIP-13 live context reached about 44,000 input tokens because journal excerpts recursively included previous prompts. Those observations do not support the small-input assumptions below. PIP-15 replaces that assembly with compact triage/current state and selected decision evidence, preserving full SQL history. Its byte bounds are not tokenizer measurements or a spending cap. Re-measure actual model counters, tool use, latency, refusals and wake frequency after deployment; the $35 allowance remains unqualified until a representative workload passes PIP-14.
+
 ### Unit cost, uncached
 
 Planning assumptions for the size of a call:

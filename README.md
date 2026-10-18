@@ -2,7 +2,7 @@
 
 An autonomous AI forex trader that reads economic data, news and social posts 24/5, writes and evolves its own trading rules, and publishes every trade, its P&L and its reasoning live.
 
-**Status: M4 shadow application foundation.** The replay/evaluation foundation, dry broker gateway, information feeds and SQL-backed shadow runtime are implemented. The Foundry adapter is opt-in; hosted inference, provider/capacity/cost validation and a full live shadow day are pending resource approval. No order submission exists. There is no track record; the deployed container still serves the landing page only.
+**Status: hosted M4 shadow foundation.** The replay/evaluation foundation, dry broker gateway, information feeds and SQL-backed shadow runtime are implemented. The approved private backend runs alongside the preserved public landing, with initial real Foundry/feed/journal/clone flows verified. Complete provider/broker coverage, model quality, capacity/cost and a full live shadow day remain qualification gates. No order submission or track record exists. See [the shadow guide](docs/shadow.md), including [continuing memory and Markdown knowledge](docs/shadow.md#markdown-knowledge-and-continuing-memory).
 
 PipMind is a public portfolio project by [Henrique Meyer](https://github.com/henrique-meyer), a senior software engineer and architect at Nitrosoft Technology Inc. It will run on one Forex.com account (StoneX / GAIN Capital, via CIAPI) and keep a public page of what it did and why.
 
