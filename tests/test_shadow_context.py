@@ -101,6 +101,14 @@ def test_cut_legacy_json_fragment_cannot_reintroduce_a_historical_prompt():
     assert "requires_source_lookup" in card["body"] and card["partial"]
 
 
+def test_unstructured_archival_journal_cannot_break_context_projection():
+    source = row(
+        "unstructured", body={"reply": "action", "triage": ["summary"], "context": "AUDIT_ONLY_"}
+    )
+    card = record_view(source["metadata"], source["body"])
+    assert "AUDIT_ONLY_" not in encoded(card)
+
+
 def test_retrieval_query_uses_event_meaning_not_json_fields_timestamps_or_ids():
     query = event_query(
         {

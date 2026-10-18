@@ -56,7 +56,7 @@ def query_terms_all(text):
 def semantic_text(body):
     try:
         data = loads(body)
-    except ContractError:
+    except (ContractError, RecursionError):
         return body
 
     def strings(value):
@@ -76,7 +76,7 @@ def record_view(meta, body, query=""):
     """Extract meaning before clipping. Never return historical context/tools/usage."""
     try:
         data = loads(body)
-    except ContractError:
+    except (ContractError, RecursionError):
         data = None
     partial = False
     if meta["part"] == "journal" and data is None and body.lstrip().startswith("{"):
@@ -87,12 +87,12 @@ def record_view(meta, body, query=""):
     elif meta["part"] == "journal" and isinstance(data, dict):
         view = {key: data[key] for key in ("event_id", "ts", "status", "error") if key in data}
         triage = data.get("triage") or {}
-        if triage:
+        if isinstance(triage, dict) and triage:
             view["triage"] = {
                 key: clipped(triage[key], 800) for key in ("wake", "summary") if key in triage
             }
         reply = data.get("decision") or data.get("reply") or {}
-        if reply:
+        if isinstance(reply, dict) and reply:
             view["decision"] = {
                 key: excerpt(reply[key], query, 1200) if isinstance(reply[key], str) else reply[key]
                 for key in ("action", "instrument", "side", "size", "reasoning", "evidence_ids")
