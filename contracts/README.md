@@ -19,3 +19,7 @@ M1 resolves ambiguities in the old sketches: post receipt time is required; an o
 Use `Contracts.validate(name, payload)` plus semantic event/dataset validation. Contract changes require deliberate version/migration, fixture and baseline review. The explicit local [jsonschema registry](https://python-jsonschema.readthedocs.io/en/stable/referencing/) has no HTTP retrieval callback. Imported Markdown is never executable tool authority.
 
 M3 adds nullable `ReleaseEvent.scheduled_at`/`released_at` and optional publication status/precision, preserving unknown timing rather than inventing a publication instant. Existing v1 timestamps remain valid and receipt/availability chronology stays enforced. See [feed timing and data normalization](../docs/feeds.md#macro-data-and-chronology).
+
+M4 adds `ClockEvent` (heartbeat, daily brief and session open/close observations) to the event envelope. Bundle manifests accept version 2 with the explicit `shadow-runtime-v1` compatibility profile and larger bounded inventory. Markdown/front-matter remains v1; the original synthetic v1 archive limits remain enforced separately. Only validated v2 experience bundles can activate a paused SQL clone; recovery cannot. See [runtime bundles and limits](../docs/shadow.md#experience-bundles-and-cloning).
+
+PriceEvent also permits optional `source_event_id`: shadow records a later staleness observation with a new immutable ID while retaining the original gateway quote identity. Existing price messages remain valid.

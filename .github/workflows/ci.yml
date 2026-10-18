@@ -12,7 +12,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -54,6 +54,19 @@ jobs:
         run: |
           docker build --target feeds -t pipmind-feeds:ci .
           python3 scripts/feeds_smoke.py
+      - name: Build and exercise shadow with real SQL Server and full-text search
+        run: |
+          docker build -f infra/sql.Dockerfile -t pipmind-sql:local .
+          docker build --target shadow -t pipmind-shadow:ci .
+          python3 scripts/shadow_smoke.py
+      - name: Save bounded synthetic SQL shadow summary only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: m4-shadow-summary
+          path: .data/shadow-ci/summary.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
       - name: Secret scan
         run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact --no-banner
       - name: Build and exercise actual container

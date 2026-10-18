@@ -1,4 +1,4 @@
-"""M1 bundle contract validation only. No extraction or active-state import/export."""
+"""Bounded bundle validation. This module never extracts files or activates state."""
 
 import hashlib
 import io
@@ -15,6 +15,9 @@ MAX_ENTRIES = 128
 MAX_FILE_BYTES = 131_072
 MAX_TOTAL_BYTES = 2_097_152
 MAX_RATIO = 100
+RUNTIME_MAX_ENTRIES = 10000
+RUNTIME_MAX_TOTAL_BYTES = 33_554_432
+RUNTIME_MAX_FILE_BYTES = 1_048_576
 PART_PATHS = {
     "identity": r"mind/identity\.md",
     "playbook": r"mind/playbook\.md",
@@ -52,16 +55,27 @@ def _json(content):
 
 
 def _read_archive(content):
-    if len(content) > MAX_TOTAL_BYTES:
+    if len(content) > RUNTIME_MAX_TOTAL_BYTES:
         raise BundleError("archive_size")
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             entries = archive.infolist()
-            if len(entries) > MAX_ENTRIES:
+            if len(entries) > RUNTIME_MAX_ENTRIES:
                 raise BundleError("entry_count")
             names = [entry.filename for entry in entries]
             if len(set(names)) != len(names):
                 raise BundleError("duplicate_entry")
+            runtime = False
+            if "manifest.json" in names:
+                item = archive.getinfo("manifest.json")
+                if item.file_size > MAX_TOTAL_BYTES:
+                    raise BundleError("file_size")
+                hint = _json(archive.read(item))
+                runtime = isinstance(hint, dict) and hint.get("schema_version") == 2
+            if not runtime and len(content) > MAX_TOTAL_BYTES:
+                raise BundleError("archive_size")
+            if not runtime and len(entries) > MAX_ENTRIES:
+                raise BundleError("entry_count")
             total = 0
             for entry in entries:
                 name = entry.filename
@@ -76,18 +90,32 @@ def _read_archive(content):
                     raise BundleError("encrypted_entry")
                 if entry.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
                     raise BundleError("compression_method")
-                if entry.file_size > MAX_FILE_BYTES:
+                limit = (
+                    (MAX_TOTAL_BYTES if name == "manifest.json" else RUNTIME_MAX_FILE_BYTES)
+                    if runtime
+                    else MAX_FILE_BYTES
+                )
+                if entry.file_size > limit:
                     raise BundleError("file_size")
                 if entry.file_size > max(entry.compress_size, 1) * MAX_RATIO:
                     raise BundleError("compression_ratio")
                 total += entry.file_size
-            if total > MAX_TOTAL_BYTES:
+            if total > (RUNTIME_MAX_TOTAL_BYTES if runtime else MAX_TOTAL_BYTES):
                 raise BundleError("expanded_size")
             result = {}
             for entry in entries:
                 with archive.open(entry) as stream:
-                    payload = stream.read(MAX_FILE_BYTES + 1)
-                if len(payload) > MAX_FILE_BYTES:
+                    limit = (
+                        (
+                            MAX_TOTAL_BYTES
+                            if entry.filename == "manifest.json"
+                            else RUNTIME_MAX_FILE_BYTES
+                        )
+                        if runtime
+                        else MAX_FILE_BYTES
+                    )
+                    payload = stream.read(limit + 1)
+                if len(payload) > limit:
                     raise BundleError("file_size")
                 result[entry.filename] = payload
             return result
@@ -102,6 +130,10 @@ def validate_bundle(content, contracts=None):
         raise BundleError("missing_manifest")
     manifest = _json(files["manifest.json"])
     _check("bundle-manifest", manifest, contracts)
+    if (manifest["schema_version"] == 2) != (
+        manifest["compatibility"]["compatibility_decision"] == "shadow-runtime-v1"
+    ):
+        raise BundleError("incompatible_bundle_profile")
     inventory = manifest["files"]
     paths = [row["path"] for row in inventory]
     if len(set(paths)) != len(paths):

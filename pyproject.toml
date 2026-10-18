@@ -8,6 +8,14 @@ dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 [project.optional-dependencies]
 gateway = ["jsonschema>=4.23,<5", "lightstreamer-client-lib==2.2.3"]
 feeds = ["jsonschema>=4.23,<5", "defusedxml>=0.7,<1"]
+shadow = [
+    "jsonschema>=4.23,<5",
+    "defusedxml>=0.7,<1",
+    "agent-framework-foundry==1.15.0",
+    "azure-identity==1.26.0",
+    "python-tds==1.17.1",
+    "pyOpenSSL==26.4.0",
+]
 
 [dependency-groups]
 dev = [

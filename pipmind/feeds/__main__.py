@@ -11,13 +11,48 @@ from pipmind.feeds.fixtures import process_checks, run_fixtures
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["replay", "serve"])
+    parser.add_argument("command", choices=["replay", "serve", "reprocess"])
+    parser.add_argument("--key")
     parser.add_argument("--process-checks", action="store_true")
     parser.add_argument("--output", type=Path, default=ROOT / ".data" / "feed-replay")
     parser.add_argument("--host", choices=["127.0.0.1", "0.0.0.0"], default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8082)
     args = parser.parse_args(argv)
     try:
+        if args.command == "reprocess":
+            import os
+
+            from pipmind.feeds import config as recipes
+            from pipmind.feeds.common import identity
+            from pipmind.feeds.sql_store import configured_store
+            from pipmind.feeds.store import encoded
+
+            if not args.key:
+                raise ContractError("quarantine_key_required")
+            config = recipes.load(os.environ["PIPMIND_FEED_CONFIG"])
+            store = configured_store(
+                os.environ.get("PIPMIND_FEED_STORE", ".data/feeds/events.sqlite3"),
+                profile=identity(encoded(config)),
+            )
+            if args.key.startswith("rest-page:"):
+                from datetime import UTC, datetime
+
+                from pipmind.feeds.backfill import reprocess_capture
+                from pipmind.feeds.common import Reads
+                from pipmind.feeds.macro import Calendar
+
+                moment = datetime.now(UTC)
+                calendar = Calendar(
+                    store,
+                    Reads("PipMind private reprocessing"),
+                    config["calendar_url"],
+                    lambda: moment,
+                )
+                queued = reprocess_capture(store, args.key, config, calendar, moment)
+            else:
+                queued = store.reprocess(args.key)
+            print("Quarantine record queued" if queued else "No quarantined record queued")
+            return 0
         if args.command == "serve":
             import uvicorn
 

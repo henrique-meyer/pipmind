@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
+from uuid import uuid4
 
 from pipmind.contracts import Contracts, event_facts, loads, stamp, validate_event
 from pipmind.feeds.common import FeedError, identity
@@ -51,6 +52,25 @@ class FeedStore:
                 sequence INTEGER PRIMARY KEY, producer TEXT NOT NULL, code TEXT NOT NULL,
                 ts TEXT NOT NULL)""")
             db.execute("PRAGMA user_version=1")
+            if self.state("delivery:source_id", db=db) is None:
+                self.save("delivery:source_id", str(uuid4()), db=db)
+
+    def source_id(self):
+        return self.state("delivery:source_id")
+
+    def reprocess(self, key):
+        with self.transaction() as db:
+            result = db.execute(
+                "UPDATE inbox SET status='pending' WHERE key=? AND status='quarantined'", (key,)
+            )
+            return result.rowcount == 1
+
+    def capture(self, key):
+        with self.transaction() as db:
+            row = db.execute(
+                "SELECT raw,received_at,status FROM inbox WHERE key=?", (key,)
+            ).fetchone()
+            return {"raw": loads(row[0]), "received_at": row[1], "status": row[2]} if row else None
 
     @contextmanager
     def transaction(self):
@@ -125,6 +145,7 @@ class FeedStore:
                 {"key": key, "raw": loads(raw), "received_at": ts}
                 for key, raw, ts in db.execute(
                     "SELECT key,raw,received_at FROM inbox WHERE producer=? AND status='pending' "
+                    "AND key NOT LIKE 'rest-page:%' "
                     "ORDER BY sequence LIMIT 100",
                     (producer,),
                 )
@@ -161,6 +182,19 @@ class FeedStore:
     def quarantine(self, key):
         with self.transaction() as db:
             db.execute("UPDATE inbox SET status='quarantined' WHERE key=?", (key,))
+
+    def complete_batch(self, producer, key, payloads, now, *, cursor=None):
+        with self.transaction() as db:
+            row = db.execute("SELECT status,producer FROM inbox WHERE key=?", (key,)).fetchone()
+            if row == ("complete", producer) and cursor:
+                self.save(*cursor, db=db)
+            if row != ("pending", producer):
+                return
+            for payload in payloads:
+                self.emit(db, producer, payload, now)
+            db.execute("UPDATE inbox SET status='complete' WHERE key=?", (key,))
+            if cursor:
+                self.save(*cursor, db=db)
 
     def page(self, producer, payloads, key, cursor, now):
         with self.transaction() as db:

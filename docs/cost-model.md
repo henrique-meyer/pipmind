@@ -2,6 +2,8 @@
 
 The hosted demo uses the [demo deployment profile](architecture.md#demo-instance): one Azure Container App containing two containers, Azure SQL S0, default managed networking, Blob Storage, a free static frontend, built-in app secrets, and essential monitoring. The application also supports separately sized production deployments.
 
+M4 application code does not provision this profile or validate its allowances. The [hosted shadow proposal](shadow.md#hosted-m4-approval-and-live-qualification) preserves the existing landing while adding a private backend temporarily; its extra landing usage and actual model/provider offer must be priced and approved before deployment. No new charges or updated Azure quote are claimed by PIP-12.
+
 **Planning estimate: $59.14/month hosting, $151.31/month total with annual FXMacroData billing, or $159.64/month total with monthly FXMacroData billing. Planning budget: $180/month before tax.** This supersedes the initial under-$100 estimate. It is a planning budget with alerts, not an enforced runtime spending cap or approval to buy resources/subscriptions.
 
 ### Monthly demo estimate

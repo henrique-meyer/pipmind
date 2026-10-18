@@ -54,6 +54,8 @@ Done when each feed can be killed without silencing the other two; the ForexFact
 
 ## M4 — Shadow mode
 
+**Application foundation delivered by [PIP-12](plan.md#pip-12--m4-shadow-runtime-and-persistent-mind).** See the [shadow guide](shadow.md) for the SQL adapter, Foundry connector, private engine/feed container, mandatory offline/SQL checks and paused experience-clone operations. The hosted deployment is pending owner approval. M4 remains open until actual inference, provider coverage/capacity/cost validation, full retained-day export and a full trading day of live events with independently verified zero orders pass.
+
 Wake filter, `gpt-6-luna` triage, `gpt-6.1-sol` decisions, persistent mind. The core logs `enter`, `add`, `exit` and `hold` with reasoning and updates the mind. It sends no `OrderRequest`.
 
 Shadow starts on the M1 harness, then on live events once M2 and M3 are up. Validate the shared demo allocation (0.5 vCPU / 1 GiB total), SQL-backed state/search, and actual API/model costs while proving zero broker orders.

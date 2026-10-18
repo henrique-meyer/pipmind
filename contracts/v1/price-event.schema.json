@@ -23,6 +23,11 @@
       "type": "string",
       "minLength": 1
     },
+    "source_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Original gateway quote identity when recording a distinct staleness observation."
+    },
     "instrument": {
       "type": "string",
       "description": "Core instrument id, for example EUR/USD."

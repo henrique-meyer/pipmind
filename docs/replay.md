@@ -29,6 +29,8 @@ Generated output lives in ignored `evals/reports/latest/`: private per-case/repe
 
 The [tracked baseline](../evals/baseline-v1.json) contains sanitized synthetic outcomes, counts, deferrals and version/hash metadata. Source/contracts/fixtures use LF through `.gitattributes` so content hashes agree across Windows and Linux. Reports record source commit/dirty state, implementation content hash, dataset/week/portability/gateway/feed-fixture hashes, context/grader/model versions, starting playbook hashes, repetitions, fake call counts and measured latency. Token/cost counts are explicitly synthetic zeros. Real-provider metering belongs with the M4 adapter; M1 cannot measure it.
 
+M4 adds a separate [mandatory SQL shadow gate](shadow.md#local-sql-and-mandatory-checks) and [scenario inventory](../evals/shadow/scenario-v1.json): twelve applicable starter scenarios run through the actual SQL-backed shadow engine, alongside clone/restart/full-text/transaction tests and eight synthetic SQL replay checks. This does not activate the sixteen later safety/review/publication cases or replace real-model evaluation. CI runs the private shadow container on an internal Docker network with a real SQL Server and retains only its bounded synthetic summary.
+
 ## Delivered coverage
 
 | Area | Passing delivered cases | Deferred | Real-path gate |

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "version": "shadow-sql-v1",
+  "source": "Synthetic starter-v1 cases through the actual SQL shadow runtime; no model quality or live-day claim.",
+  "starter_cases": ["T01", "T02", "T03", "T04", "T05", "T06", "D01", "D02", "D03", "D04", "D05", "S10"],
+  "additional_gates": ["durable_restart", "analysis_retained", "positive_shadow_proposal", "no_dispatch", "sql_clone_paused", "clone_account_separation", "clone_no_operational_state", "retrieval_rebuilt"],
+  "remaining_live_gates": ["approved_azure_resources", "project_backed_foundry_inference", "provider_coverage_and_outage_backfill", "actual_usage_costs", "shared_container_capacity", "one_full_fx_trading_day_zero_orders"]
+}

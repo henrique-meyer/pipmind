@@ -13,7 +13,7 @@ from pipmind.feeds.common import Reads, url
 from pipmind.feeds.macro import Calendar, Macro
 from pipmind.feeds.news import News
 from pipmind.feeds.social import Social, XReads
-from pipmind.feeds.store import FeedStore
+from pipmind.feeds.sql_store import configured_store
 from pipmind.feeds.stream import stream_once
 
 
@@ -34,8 +34,16 @@ class Stop:
 
 
 def worker(producer, path, config, mode, profile, stop_path):
+    try:
+        _worker(producer, path, config, mode, profile, stop_path)
+    except (ContractError, OSError):
+        # The supervisor retries. Never dump driver exceptions/private recipes.
+        raise SystemExit(1) from None
+
+
+def _worker(producer, path, config, mode, profile, stop_path):
     stop = Stop(stop_path)
-    store = FeedStore(path, mode=mode, profile=profile)
+    store = configured_store(path, mode=mode, profile=profile)
 
     def now():
         return datetime.now(UTC)
@@ -72,6 +80,33 @@ def worker(producer, path, config, mode, profile, stop_path):
                         stop.wait(backoff)
 
                 threading.Thread(target=streaming, daemon=True, name="macro-sse").start()
+            if os.environ.get("PIPMIND_CANONICAL_READS") == "true":
+                from pipmind.feeds.backfill import CanonicalBackfill
+
+                def backfill():
+                    source = CanonicalBackfill(
+                        store,
+                        reads,
+                        os.environ.get("PIPMIND_FXMD_API_ROOT", "https://api.fxmacrodata.com"),
+                        os.environ.get("PIPMIND_FXMD_API_KEY", ""),
+                        calendar,
+                        now,
+                    )
+                    while not stop.is_set():
+                        for mapping in config["macro"]:
+                            if stop.is_set():
+                                return
+                            try:
+                                source.page(
+                                    mapping,
+                                    os.environ["PIPMIND_MACRO_BACKFILL_START"],
+                                    now().date().isoformat(),
+                                )
+                            except (ContractError, OSError, KeyError, ValueError):
+                                store.alert("macro", "canonical_backfill_failed", now())
+                        stop.wait(30)
+
+                threading.Thread(target=backfill, daemon=True, name="macro-backfill").start()
         elif producer == "news":
             step = News(store, reads, config["news"], now)
         else:
@@ -127,6 +162,7 @@ def worker(producer, path, config, mode, profile, stop_path):
 class Supervisor:
     def __init__(self, path, config, *, mode="local-read", profile="synthetic"):
         self.path, self.config, self.mode, self.profile = str(path), config, mode, profile
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.context = multiprocessing.get_context("spawn")
         self.stop_paths = {}
         self.processes, self.restarts, self.next_start = {}, {}, {}
