@@ -234,6 +234,17 @@ def test_stream_escaped_date_keeps_the_exact_venue_instant(clock, escapes):
         broker_time("\\\\\\/Date(1791190800123)\\\\\\/")
 
 
+def test_future_stream_quote_preserves_the_specific_refusal(clock):
+    router = PriceRouter(synthetic_symbols(), None, clock.now)
+    raw = quote(clock, TickDate=(clock.now() + timedelta(seconds=1)).isoformat())
+    with pytest.raises(GatewayError, match="^future_broker_quote$"):
+        router.stream(raw)
+    assert router.current() == []
+    clock.advance(clock.now() + timedelta(seconds=2))
+    event = router.stream(raw)
+    assert utc(event["venue_ts"]) == clock.now() - timedelta(seconds=1)
+
+
 def test_transport_read_allowlist_and_bounded_retries(clock):
     transport = Mock()
     transport.request.side_effect = [

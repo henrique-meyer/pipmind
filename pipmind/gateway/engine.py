@@ -89,6 +89,8 @@ class PriceRouter:
         try:
             item = self.symbols.market(int(raw["MarketId"]))
             event = self._price(item, raw, "stream")
+        except GatewayError:
+            raise
         except (KeyError, TypeError, ValueError):
             raise GatewayError("invalid_stream_quote") from None
         if event["stale"]:
