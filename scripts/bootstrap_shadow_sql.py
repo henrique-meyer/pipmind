@@ -88,8 +88,10 @@ def bootstrap(config):
             now().isoformat(),
             binding=digest(config["bindingRef"]),
         )
-    # UUID.bytes_le matches SQL Server uniqueidentifier storage (not UUID.bytes).
-    sid = UUID(config["identityPrincipalId"]).bytes_le.hex()
+    # Azure SQL identifies service principals/managed identities by application
+    # (client) ID. RBAC uses the different principal/object ID. UUID.bytes_le
+    # matches SQL Server uniqueidentifier storage (not UUID.bytes).
+    sid = UUID(config["identityClientId"]).bytes_le.hex()
     with connect() as db:
         cur = db.cursor()
         cur.execute("SELECT sid,type FROM sys.database_principals WHERE name='pipmind-shadow'")

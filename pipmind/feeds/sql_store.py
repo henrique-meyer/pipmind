@@ -116,7 +116,7 @@ class SqlFeedStore:
         with self.transaction() as db:
             db.execute(
                 "SELECT TOP(100) k,raw,received FROM pf_inbox WHERE producer=%s "
-                "AND status='pending' AND k NOT LIKE 'rest-page:%' ORDER BY seq",
+                "AND status='pending' AND k NOT LIKE 'rest-page:%%' ORDER BY seq",
                 (producer,),
             )
             return [
