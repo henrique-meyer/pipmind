@@ -13,7 +13,7 @@
   },
   "portability_version": "portability-synthetic-v1",
   "source": {
-    "implementation_sha256": "9857e1a0da337cf48f1583849cd3df3ddbbb6899117b8dd055a7ed90f016d576"
+    "implementation_sha256": "b0502860bd1f20887eea080686daf9a76e9e77a91be199771f044d471b82d942"
   },
   "split": "all",
   "variant": "baseline",
@@ -220,7 +220,7 @@
   "dataset_sha256": "363ffa6456cd1815a70a0f8b4af6816dff10b7d78a0adab6a90c25f3b35444d0",
   "fixture_week_sha256": "d18147d9c222741e434d425a79f15fc30ab53f1000120493a5902dc6132ecb71",
   "portability_fixture_sha256": "ea7520b94f60fb57613589ea93dd54ac64aff3b05acef92e46c58457f299d185",
-  "gateway_fixture_sha256": "c8ab765dceac6ddc850565fbfb8e9693195e4cf163ce27f8a52ac2586e6a10fc",
+  "gateway_fixture_sha256": "7e4ca38bd36778922424f7327b356404aa2b81845aa8ab97d041c0b8eb9b6b26",
   "feed_fixture_sha256": "dab50410bf9ef322adea5b88e275d913c30c8c90ecd2d10db35620db03eb3c60",
   "feeds": {
     "version": "feeds-synthetic-v1",

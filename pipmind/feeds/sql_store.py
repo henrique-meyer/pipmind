@@ -28,6 +28,22 @@ DDL = (
 )
 
 
+ACTIVE_PROFILE = "configuration:active"
+
+
+def bound_profile(db):
+    db.execute("SELECT v FROM pf_state WHERE k=%s", (ACTIVE_PROFILE,))
+    row = db.fetchone()
+    if row:
+        value = loads(row[0])
+        if not isinstance(value, str) or len(value) != 64:
+            raise ShadowError("feed_store_profile_changed")
+        return value
+    db.execute("SELECT v FROM pf_meta WHERE k='profile'")
+    row = db.fetchone()
+    return row[0] if row else None
+
+
 class SqlFeedStore:
     def __init__(self, connect, *, mode="local-read", profile="synthetic"):
         if mode != "local-read":
@@ -39,7 +55,7 @@ class SqlFeedStore:
                 db.execute(statement)
             db.execute("SELECT k,v FROM pf_meta")
             meta = dict(db.fetchall())
-            if meta and (meta.get("profile") != identity(profile) or meta.get("version") != "1"):
+            if meta and (bound_profile(db) != identity(profile) or meta.get("version") != "1"):
                 raise FeedError("feed_store_profile_mismatch")
             if not meta:
                 for key, value in (
@@ -55,9 +71,7 @@ class SqlFeedStore:
         try:
             with transaction(self.connect, "pipmind-feed-store") as cur:
                 if self.profile is not None:
-                    cur.execute("SELECT v FROM pf_meta WHERE k='profile'")
-                    row = cur.fetchone()
-                    if not row or row[0] != self.profile:
+                    if bound_profile(cur) != self.profile:
                         raise ShadowError("feed_store_profile_changed")
                 yield cur
         except ShadowError as error:
@@ -256,12 +270,16 @@ def reconfigure(connect, previous, replacement, moment):
         raise FeedError("feed_configuration_unchanged")
     try:
         with transaction(connect, "pipmind-feed-store") as db:
-            db.execute("SELECT v FROM pf_meta WHERE k='profile'")
-            row = db.fetchone()
-            if not row or row[0] != before:
+            if bound_profile(db) != before:
                 raise ShadowError("feed_store_profile_mismatch")
-            # Keep the source ID, every input/event and every source cursor exact.
-            db.execute("UPDATE pf_meta SET v=%s WHERE k='profile'", (after,))
+            # The runtime cannot update immutable metadata. Use its existing
+            # state-table grant, keeping the original binding/source exact.
+            db.execute(
+                "UPDATE pf_state SET v=%s OUTPUT INSERTED.k WHERE k=%s",
+                (encoded(after), ACTIVE_PROFILE),
+            )
+            if db.fetchone() is None:
+                db.execute("INSERT pf_state(k,v) VALUES(%s,%s)", (ACTIVE_PROFILE, encoded(after)))
             db.execute(
                 "INSERT pf_state(k,v) VALUES(%s,%s)",
                 (

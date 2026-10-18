@@ -244,6 +244,9 @@ def test_transport_read_allowlist_and_bounded_retries(clock):
     )
     assert broker.read("/v2/margin/clientAccountMargin") == {"ok": True}
     assert broker.generation == 2 and sleeps == [3]
+    reads = [c for c in transport.request.call_args_list if c.args[0] == "GET"]
+    assert all(not {"Session", "UserName"} & set(c.kwargs.get("query") or {}) for c in reads)
+    assert all(set(c.kwargs["headers"]) == {"Session", "UserName"} for c in reads)
     with pytest.raises(GatewayError, match="broker_endpoint_forbidden"):
         broker.read("/order/newtradeorder")
     assert all(
@@ -328,6 +331,68 @@ def test_interactive_login_requirements_cannot_be_bypassed(flag):
     with pytest.raises(GatewayError, match="broker_login_requires_attention"):
         broker.login()
     assert broker.generation == 0 and broker._session is None
+
+
+@pytest.mark.parametrize("expiry", [None, 0, -1])
+def test_demo_binding_requires_positive_expiry_on_the_selected_operator(expiry):
+    broker = Ciapi(synthetic_config(), synthetic_symbols())
+    broker.read = Mock(
+        return_value={
+            "tradingAccounts": [
+                {"clientAccountId": 11, "tradingAccountId": 12, "tradingAccountStatus": "Open"}
+            ],
+            "clientAccounts": [{"clientAccountId": 11, "accountOperatorId": 13}],
+            "accountOperators": [{"accountOperatorId": 13, "daysUntilExpiryForDemo": expiry}],
+        }
+    )
+    with pytest.raises(GatewayError):
+        broker.verify_account()
+
+
+def test_false_operator_flag_is_demo_read_only_and_aliases_cannot_conflict():
+    cfg = synthetic_config()
+    cfg.environment = "live"
+    transport = Mock()
+    transport.request.return_value = Response(
+        200, {"session": "x" * 36, "allowedAccountOperator": False}
+    )
+    broker = Ciapi(cfg, synthetic_symbols(), transport=transport)
+    with pytest.raises(GatewayError, match="broker_login_requires_attention"):
+        broker.login()
+    cfg.environment = "demo"
+    broker.login()
+    assert broker.generation == 1
+    transport.request.return_value = Response(200, {"session": "x" * 36, "Session": "y" * 36})
+    with pytest.raises(GatewayError, match="ambiguous_broker_fields"):
+        broker.login()
+
+
+def test_current_camel_case_market_and_snapshot_dtos(clock):
+    broker = Ciapi(synthetic_config(), synthetic_symbols(), now=clock.now)
+    broker.read = Mock(
+        side_effect=[
+            {
+                "marketInformation": {
+                    "marketId": 42,
+                    "name": "EUR/USD",
+                    "incrementSize": 1000,
+                    "webMinSize": 1000,
+                }
+            },
+            {
+                "currencyIsoCode": "USD",
+                "cash": 10000,
+                "netEquity": 10000,
+                "margin": 0,
+                "tradableFunds": 10000,
+            },
+            {"openPositions": []},
+        ]
+    )
+    broker.verify_symbols()
+    account, positions = broker.snapshots()
+    assert account["balance"] == account["equity"] == 10000
+    assert positions["positions"] == []
 
 
 def test_http_transport_bounds_body_and_does_not_follow_redirects():
