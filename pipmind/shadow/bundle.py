@@ -12,7 +12,11 @@ from pipmind.portability import BundleError, validate_bundle
 from pipmind.shadow.common import ShadowError, digest, encoded
 from pipmind.shadow.model import PROMPT_VERSION
 
-RETRIEVAL_VERSION = "sql-memory-v1"
+RETRIEVAL_VERSION = "sql-memory-v2"
+SUPPORTED_CONTEXTS = {
+    ("shadow-context-v1", "sql-memory-v1"),
+    (PROMPT_VERSION, RETRIEVAL_VERSION),
+}
 
 
 def export_experience(store, moment):
@@ -100,8 +104,8 @@ def import_experience(store, content, moment, binding, expected_identity, *, int
     if (
         bundle.manifest["kind"] != "experience"
         or bundle.manifest["schema_version"] != 2
-        or compatibility["prompt_version"] != PROMPT_VERSION
-        or compatibility["retrieval_version"] != RETRIEVAL_VERSION
+        or (compatibility["prompt_version"], compatibility["retrieval_version"])
+        not in SUPPORTED_CONTEXTS
         or utc(bundle.manifest["checkpoint"]["as_of"]) > moment
     ):
         raise BundleError("unsupported_experience_compatibility")
@@ -114,9 +118,12 @@ def import_experience(store, content, moment, binding, expected_identity, *, int
     # The working-memory JSON must obey the same normative runtime contract.
     source_working = next(body for meta, body in records if meta["part"] == "working_memory")
     store.contracts.validate("working-memory", loads(source_working))
-    return store.clone(
+    report = store.clone(
         records, bundle.manifest, moment, binding, expected_identity, interrupt=interrupt
     )
+    if compatibility["prompt_version"] != PROMPT_VERSION:
+        report["transformations"].append("legacy_context_retrieval_rebuilt")
+    return report
 
 
 def write_private(path, content):

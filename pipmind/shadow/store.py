@@ -541,6 +541,7 @@ class SqlMind:
                 "trader_id": manifest["trader_id"],
                 "lineage_id": manifest["lineage_id"],
                 "checkpoint": manifest["checkpoint"],
+                "compatibility": manifest["compatibility"],
             }
             cur.execute(
                 "INSERT pm_minds VALUES(%s,%s,%s,0,1,%s,%s,%s,%s)",

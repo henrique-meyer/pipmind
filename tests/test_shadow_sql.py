@@ -357,6 +357,56 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
         import_experience(clone, data, MOMENT, digest("new"), "Different mandate")
 
 
+def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind):
+    import io
+    import json
+    import zipfile
+
+    original = validate_bundle(export_experience(mind, MOMENT))
+    manifest = deepcopy(original.manifest)
+    manifest["compatibility"].update(
+        prompt_version="shadow-context-v1", retrieval_version="sql-memory-v1"
+    )
+
+    def archive():
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as target:
+            for name, content in original.files.items():
+                target.writestr(
+                    name, json.dumps(manifest).encode() if name == "manifest.json" else content
+                )
+        return output.getvalue()
+
+    clone = SqlMind(mind.connect, "legacy-clone-" + uuid4().hex)
+    report = import_experience(
+        clone,
+        archive(),
+        MOMENT + timedelta(seconds=1),
+        digest("legacy-clone"),
+        "Immutable identity\nnaïve ≠ unsafe\n",
+    )
+    assert "legacy_context_retrieval_rebuilt" in report["transformations"]
+    assert clone.head()["parent"]["compatibility"] == manifest["compatibility"]
+    source = {
+        meta["record_id"]: (meta, body)
+        for meta, body in mind.retained()[1]
+        if meta["part"] != "working_memory"
+    }
+    destination = {meta["record_id"]: (meta, body) for meta, body in clone.retained()[1]}
+    assert all(destination[key] == value for key, value in source.items())
+    current = validate_bundle(export_experience(clone, MOMENT + timedelta(seconds=2)))
+    assert current.manifest["compatibility"]["retrieval_version"] == "sql-memory-v2"
+    manifest["compatibility"]["prompt_version"] = "unknown-context"
+    with pytest.raises(BundleError, match="unsupported_experience_compatibility"):
+        import_experience(
+            SqlMind(mind.connect, "unknown-" + uuid4().hex),
+            archive(),
+            MOMENT,
+            digest("unknown"),
+            "Immutable identity\nnaïve ≠ unsafe\n",
+        )
+
+
 def test_sql_search_filters_future_and_other_traders(mind):
     with mind.transaction() as cur:
         mind._insert(

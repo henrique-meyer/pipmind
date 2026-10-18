@@ -11,6 +11,7 @@ The [roadmap](roadmap.md) defines the application milestones and rollout order. 
 - Boundaries: no history deletion/rewrite, event dropping, deterministic trading strategy, new provider/resource purchase, broker execution or M7 playbook mutation. Full-day qualification remains PIP-14.
 - Memory continuity: every decision retains current views, all position theses and waiting conditions. Search the whole retained archive without an age cutoff; preserve month-old relevant and contrary evidence amid unrelated recent traces, with dates/provenance and explicit retrieval limits. A recent window is not a replacement for the persistent market state.
 - Implementation checks: phase-specific prompt views and exact request audit, structured journal projections, query-aware source passages, whole-archive/source-ID retrieval and separate source/journal candidate pools. Eight new offline regressions cover recursion, continuing state, long articles, unstructured archive content, wire context, tool projection and oversized mandatory-state refusal. The real SQL suite adds month-old/contrary evidence, legacy-noise, time/trader isolation and unchanged-audit checks. Hosted paired measurement follows the authorized release; complete-day quality/cost remain PIP-14.
+- Portability: record the new prompt/retrieval pair and explicitly support known v1 bundles through a retrieval rebuild that retains source compatibility and exact historical records; reject unknown pairs.
 
 ## PIP-12 — M4 shadow runtime and persistent mind
 

@@ -90,6 +90,8 @@ python -m pipmind.shadow status
 
 Import validates the entire bundle before staging records and the synchronous retrieval index in one SQL transaction. Interruption rolls everything back. Existing destinations are refused, preserving active state. Expected identity must match exactly. Source working memory is archived as history, current working memory is cleared, a new lineage/parent checkpoint is recorded and the destination starts paused. Account snapshots, operational cursors/outcomes, permissions, stops/overrides and broker credentials are not imported. Exact historical event redelivery is recognized as retained experience without generating a new active decision; changed facts under its ID are refused. No source order or authority can become active.
 
+Context/retrieval versions are explicit. The current pair is `shadow-context-v2` / `sql-memory-v2`; known v1 experience bundles remain importable through a declared retrieval rebuild, with the source compatibility metadata retained in destination lineage and a transformation in the import report. Historical record bodies remain exact. Unknown version pairs are refused; this is not permission to silently migrate arbitrary future formats.
+
 Exports are exclusively created, private files. In-repository outputs must be under ignored `.data/` or `evals/reports/`; use protected transport/storage outside the ZIP format. Clone reports list transformations without private contents. This is experience cloning, not same-account recovery, a backup of broker execution state, model-weight transfer or a guarantee of identical decisions.
 
 ## Hosted M4 approval and live qualification
