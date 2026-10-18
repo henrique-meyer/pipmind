@@ -26,6 +26,8 @@ def validate(config):
             raise ValueError
         identities = set()
         for mapping in config["macro"]:
+            if "bootstrap_latest" in mapping and type(mapping["bootstrap_latest"]) is not bool:
+                raise ValueError
             if not re.fullmatch(r"[A-Z]{3}", mapping["currency"]) or not re.fullmatch(
                 r"[a-z_0-9]+", mapping["indicator"]
             ):
@@ -34,9 +36,13 @@ def validate(config):
             if key in identities:
                 raise ValueError
             identities.add(key)
-            for field in ("name", "unit", "ff_title"):
+            for field in ("name", "unit"):
                 if not isinstance(mapping[field], str) or not mapping[field]:
                     raise ValueError
+            if mapping["ff_title"] is not None and (
+                not isinstance(mapping["ff_title"], str) or not mapping["ff_title"]
+            ):
+                raise ValueError
             if mapping["value_field"] not in {
                 "val",
                 "change",
@@ -69,6 +75,8 @@ def validate(config):
                 raise ValueError
         identities = set()
         for role in config["roles"]:
+            if role.get("official_profile_url"):
+                url(role["official_profile_url"])
             if "primary_allow_summary" in role and type(role["primary_allow_summary"]) is not bool:
                 raise ValueError
             if not re.fullmatch(r"[a-z0-9_-]{1,64}", role["id"]) or role["id"] in identities:

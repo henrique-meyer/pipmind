@@ -140,7 +140,10 @@ def app(connect):
     local_only()
     # Exercise the real SDK import footprint within the demo memory allocation,
     # without constructing a provider client or making a model request.
-    __import__("agent_framework.foundry")
+    from agent_framework import Agent
+    from agent_framework.foundry import FoundryChatClient
+
+    assert callable(Agent) and callable(FoundryChatClient)
     from pipmind.shadow.service import create_app
 
     store = SqlMind(connect, os.environ["PIPMIND_SHADOW_TRADER"])

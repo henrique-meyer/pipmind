@@ -85,6 +85,72 @@ def test_canonical_page_restart_keeps_raw_capture_and_cursor_together(tmp_path):
     assert len(raw) == 2 and all("known_source_gap" in row[0] for row in raw)
 
 
+def test_latest_observation_seeds_older_context_once_without_rewinding_stream(tmp_path):
+    store = FeedStore(tmp_path / "feeds.db")
+    store.save("fxmd:last_event_id", "retained-stream-checkpoint")
+    calls = []
+
+    class Reads:
+        def get(self, target, **kwargs):
+            calls.append(target)
+            payload = page()
+            payload["data"][0]["date"] = "2026-03-31"
+            return SimpleNamespace(status=200, body=encoded(payload).encode(), headers={})
+
+    b = CanonicalBackfill(
+        store,
+        Reads(),
+        "https://provider.invalid",
+        "synthetic",
+        SimpleNamespace(match=lambda *a: None),
+        lambda: MOMENT,
+    )
+    assert b.latest(MAPPING)
+    assert not b.latest(MAPPING)
+    assert len(calls) == 1 and "limit=1" in calls[0]
+    assert all(e["event"]["payload"]["period"] == "2026-03-31" for e in store.events())
+    assert store.state("fxmd:last_event_id") == "retained-stream-checkpoint"
+    with store.transaction() as db:
+        marker = db.execute(
+            "SELECT value FROM state WHERE key LIKE 'canonical:bootstrap:%'"
+        ).fetchone()
+    assert '"complete_history_proven":false' in marker[0]
+
+
+def test_second_precision_source_keeps_timestamp_and_raw_evidence(tmp_path):
+    store = FeedStore(tmp_path / "feeds.db")
+    payload = page()
+    row = payload["data"][0]
+    row.update(
+        announcement_datetime=1791280834,
+        publication_time_status="confirmed",
+        publication_time_precision="second",
+    )
+    row["revisions"] = []
+    reads = SimpleNamespace(
+        get=lambda *a, **kw: SimpleNamespace(
+            status=200,
+            body=encoded(payload).encode(),
+            headers={},
+        )
+    )
+    b = CanonicalBackfill(
+        store,
+        reads,
+        "https://provider.invalid",
+        "synthetic",
+        SimpleNamespace(match=lambda *a: None),
+        lambda: MOMENT,
+    )
+    assert b.latest(MAPPING)
+    event = store.events()[0]["event"]["payload"]
+    assert event["publication_time_precision"] == "minute"
+    assert event["released_at"] == "2026-10-06T10:00:34Z"
+    with store.transaction() as db:
+        raw = db.execute("SELECT raw FROM inbox").fetchone()[0]
+    assert '"publication_time_precision":"second"' in raw
+
+
 def test_canonical_metadata_and_pagination_fail_closed(tmp_path):
     store = FeedStore(tmp_path / "feeds.db")
     calendar = SimpleNamespace(match=lambda *a: None)

@@ -37,9 +37,39 @@ def main():
     fixture = sub.add_parser("serve-fixture")
     fixture.add_argument("--host", default="127.0.0.1")
     fixture.add_argument("--port", type=int, default=8084)
+    evaluation = sub.add_parser("evaluate")
+    evaluation.add_argument("--dataset", required=True)
+    evaluation.add_argument("--cases")
+    evaluation.add_argument("--repetitions", type=int, default=3)
+    evaluation.add_argument("--manifest")
+    evaluation.add_argument("--output", required=True)
     args = parser.parse_args()
     try:
         connect = connector()
+        if args.command == "evaluate":
+            from pipmind.dataset import load_cases
+            from pipmind.shadow.evaluations import CASES, evaluate
+
+            cases = load_cases(args.dataset)
+            selected = set(args.cases.split(",")) if args.cases else CASES
+            if not selected or not selected <= CASES:
+                raise ShadowError("unsupported_shadow_evaluation_case")
+            if selected - {c["case_id"] for c in cases}:
+                raise ShadowError("missing_shadow_evaluation_case")
+            report = asyncio.run(
+                evaluate(
+                    connect,
+                    [c for c in cases if c["case_id"] in selected],
+                    FoundryModel.environment(),
+                    repetitions=args.repetitions,
+                    manifest=bounded_json(read_private(args.manifest, 65536))
+                    if args.manifest
+                    else None,
+                )
+            )
+            write_private(args.output, encoded(report).encode())
+            print(encoded(report["summary"]))
+            return
         if args.command == "replay":
             from pipmind.shadow.fixtures import replay
 

@@ -281,14 +281,17 @@ def main():
             )
             command("docker", "restart", "--time", "10", app)
             wait(lambda: request("/healthz", auth=False))
-            assert request("/status")["body"]["outcomes"] == before
+            wait(lambda: request("/status")["body"].get("outcomes") == before)
             command("docker", "stop", "--time", "10", sql)
             packet["events"][0]["sequence"] = 2
             assert request("/inputs", body=packet)["status"] == 503
             assert request("/healthz", auth=False)["status"] == 200
             command("docker", "start", sql)
             wait(lambda: sqlcmd("SELECT 1;"))
-            assert request("/status")["body"]["outcomes"] == before
+            # SQL accepting server-level queries does not imply that the
+            # application database has completed recovery. Verify the actual
+            # authenticated state within the same bounded readiness window.
+            wait(lambda: request("/status")["body"].get("outcomes") == before)
             wait(
                 lambda: all(
                     row["alive"] for row in request("/feeds/status")["body"]["workers"].values()
