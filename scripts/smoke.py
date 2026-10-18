@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import struct
 import time
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
@@ -22,10 +23,14 @@ class Page(HTMLParser):
         self.canonicals = []
         self.jsonld = []
         self.in_jsonld = False
+        self.in_title = False
+        self.title = ""
         self.h1_count = 0
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == "title":
+            self.in_title = True
         if "id" in attrs:
             self.ids.add(attrs["id"])
         if tag == "a":
@@ -48,10 +53,14 @@ class Page(HTMLParser):
                 self.assets.add(value)
 
     def handle_data(self, data):
+        if self.in_title:
+            self.title += data
         if self.in_jsonld:
             self.jsonld[-1] += data
 
     def handle_endtag(self, tag):
+        if tag == "title":
+            self.in_title = False
         if tag == "script":
             self.in_jsonld = False
 
@@ -103,12 +112,34 @@ def main():
         assert page.meta["robots"] == "index,follow"
         assert page.meta["og:url"] == origin + "/"
         assert page.meta["og:image"] == page.meta["twitter:image"] == origin + "/assets/logo.png"
+        head = Page()
+        head.feed(html.split("</head>", 1)[0])
+        assert head.canonicals == page.canonicals
+        assert head.meta["og:title"] == head.meta["twitter:title"] == head.title
+        assert head.title
+        assert (
+            head.meta["og:description"]
+            == head.meta["twitter:description"]
+            == head.meta["description"]
+        )
+        assert head.meta["og:url"] == head.canonicals[0]
+        assert head.meta["og:type"] == "website"
+        assert head.meta["og:image"] == head.meta["twitter:image"] == page.meta["og:image"]
+        assert head.meta["og:image:type"] == "image/png"
+        assert head.meta["og:image:alt"] == "PipMind"
+        assert head.meta["twitter:card"] == "summary"
         data = json.loads(page.jsonld[0])
         assert data["@type"] == "WebSite" and data["url"] == origin + "/"
         assert data["name"] == "PipMind"
         status, image_headers, image = fetch(args.url, "/assets/logo.png")
         assert status == 200 and image_headers["Content-Type"] == "image/png"
         assert image.startswith(b"\x89PNG\r\n\x1a\n")
+        width, height = struct.unpack(">II", image[16:24])
+        assert width >= 300 and height >= 300, "Share image is too small"
+        assert (int(head.meta["og:image:width"]), int(head.meta["og:image:height"])) == (
+            width,
+            height,
+        ), "Share image dimensions differ from metadata"
         assert f"Sitemap: {origin}/sitemap.xml" in robots.decode()
         _, sitemap_headers, sitemap = fetch(args.url, "/sitemap.xml")
         assert "application/xml" in sitemap_headers["Content-Type"]

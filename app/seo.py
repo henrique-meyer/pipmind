@@ -8,8 +8,8 @@ from html import escape
 
 TITLE = "PipMind — Open-source AI Forex Trading Experiment"
 DESCRIPTION = (
-    "Explore PipMind, an open-source AI forex experiment with a persistent mind, "
-    "an evolving playbook and a planned public decision record. In development; no trading yet."
+    "Explore the design and source of PipMind, an open-source AI forex experiment "
+    "with persistent memory and a planned public decision record. In development; no trading yet."
 )
 
 
@@ -66,7 +66,7 @@ def metadata(origin: str) -> str:
             "og:image:type": "image/png",
             "og:image:width": "1024",
             "og:image:height": "1024",
-            "og:image:alt": "PipMind cream brain and mint market trace on a navy tile",
+            "og:image:alt": "PipMind",
         }
         tags.append(f'<link rel="canonical" href="{origin}/">')
         tags.extend(
