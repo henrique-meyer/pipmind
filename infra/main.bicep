@@ -27,6 +27,9 @@ param customDomains array = []
 @description('Optional GA4 measurement ID for the public landing page. Empty disables analytics.')
 param googleAnalyticsId string = ''
 
+@description('Public HTTPS origin for canonical metadata and sitemap; blank keeps previews noindex.')
+param publicSiteUrl string = ''
+
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName
   location: location
@@ -83,6 +86,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
           image: containerImage
           env: [
             { name: 'GOOGLE_ANALYTICS_ID', value: googleAnalyticsId }
+            { name: 'PUBLIC_SITE_URL', value: publicSiteUrl }
           ]
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
           probes: [

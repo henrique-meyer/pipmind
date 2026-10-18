@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import time
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
@@ -17,6 +18,11 @@ class Page(HTMLParser):
         self.links = []
         self.ids = set()
         self.scripts = []
+        self.meta = {}
+        self.canonicals = []
+        self.jsonld = []
+        self.in_jsonld = False
+        self.h1_count = 0
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -24,12 +30,30 @@ class Page(HTMLParser):
             self.ids.add(attrs["id"])
         if tag == "a":
             self.links.append(attrs.get("href", ""))
+        if tag == "h1":
+            self.h1_count += 1
+        if tag == "meta":
+            self.meta[attrs.get("name", attrs.get("property", ""))] = attrs.get("content", "")
+        if tag == "link" and attrs.get("rel") == "canonical":
+            self.canonicals.append(attrs.get("href"))
         if tag == "script":
-            self.scripts.append(attrs)
+            self.in_jsonld = attrs.get("type") == "application/ld+json"
+            if self.in_jsonld:
+                self.jsonld.append("")
+            else:
+                self.scripts.append(attrs)
         for attr in ("src", "href"):
             value = attrs.get(attr, "")
             if value.startswith(("/assets/", "/static/")):
                 self.assets.add(value)
+
+    def handle_data(self, data):
+        if self.in_jsonld:
+            self.jsonld[-1] += data
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self.in_jsonld = False
 
 
 def fetch(base, path, method="GET"):
@@ -43,6 +67,7 @@ def main():
     parser.add_argument("--url", default="http://127.0.0.1:8080")
     parser.add_argument("--build")
     parser.add_argument("--analytics-id", default=os.environ.get("GOOGLE_ANALYTICS_ID", ""))
+    parser.add_argument("--site-url", default=os.environ.get("PUBLIC_SITE_URL", ""))
     args = parser.parse_args()
     for attempt in range(30):
         try:
@@ -68,6 +93,38 @@ def main():
     page = Page()
     page.feed(html)
     assert page.assets and page.links
+    assert page.h1_count == 1 and page.meta["description"]
+    assert "<!-- seo -->" not in html
+    _, robots_headers, robots = fetch(args.url, "/robots.txt")
+    assert "text/plain" in robots_headers["Content-Type"]
+    if args.site_url:
+        origin = args.site_url.rstrip("/").lower()
+        assert page.canonicals == [origin + "/"], "Wrong canonical URL"
+        assert page.meta["robots"] == "index,follow"
+        assert page.meta["og:url"] == origin + "/"
+        assert page.meta["og:image"] == page.meta["twitter:image"] == origin + "/assets/logo.png"
+        data = json.loads(page.jsonld[0])
+        assert data["@type"] == "WebSite" and data["url"] == origin + "/"
+        assert data["name"] == "PipMind"
+        status, image_headers, image = fetch(args.url, "/assets/logo.png")
+        assert status == 200 and image_headers["Content-Type"] == "image/png"
+        assert image.startswith(b"\x89PNG\r\n\x1a\n")
+        assert f"Sitemap: {origin}/sitemap.xml" in robots.decode()
+        _, sitemap_headers, sitemap = fetch(args.url, "/sitemap.xml")
+        assert "application/xml" in sitemap_headers["Content-Type"]
+        root = ET.fromstring(sitemap)
+        assert [element.text for element in root.findall(".//{*}loc")] == [origin + "/"]
+    else:
+        assert not page.canonicals and not page.jsonld
+        assert page.meta["robots"] == "noindex,nofollow"
+        assert headers["X-Robots-Tag"] == "noindex"
+        assert robots == b"User-agent: *\nDisallow: /\n"
+        try:
+            fetch(args.url, "/sitemap.xml")
+        except HTTPError as error:
+            assert error.code == 404
+        else:
+            raise AssertionError("Unconfigured preview must not publish a sitemap")
     if args.analytics_id:
         assert page.scripts == [
             {"defer": None, "src": "/static/analytics.js", "data-measurement-id": args.analytics_id}
@@ -109,7 +166,7 @@ def main():
             assert error.code == 404, f"Unexpected private route status: {error.code}"
         else:
             raise AssertionError(f"Private or nonexistent route exposed: {private_path}")
-    print("PASS: build, health, page, analytics configuration, assets, anchors and route isolation")
+    print("PASS: build, health, page, SEO, analytics, assets, anchors and route isolation")
 
 
 if __name__ == "__main__":

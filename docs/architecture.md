@@ -4,6 +4,8 @@ PipMind is four logical services around one core. The core is the trader. The se
 
 The current public landing page supports optional runtime-configured GA4 analytics, disabled when no measurement ID is supplied. Analytics runs in the visitor's browser, separately from feed, broker, model and trader telemetry. Configuration and collection controls are described in the [landing deployment guide](../infra/README.md#google-analytics); enabling it on the hosted instance requires the deployment's own configuration and approval.
 
+Landing search metadata is server-rendered from a validated public origin supplied privately at runtime, with canonical/social URLs, WebSite structured data and a public-page sitemap. Unconfigured previews are noindex; operational/private routes are never public content. See [search metadata and discovery](../infra/README.md#search-metadata-and-discovery). This does not establish Search Console ownership, indexing or a ranking result.
+
 | Service | Talks to | Emits | Accepts |
 | --- | --- | --- | --- |
 | `macro-feed` | FXMacroData, ForexFactory | `ReleaseEvent` | — |
