@@ -504,3 +504,22 @@ def test_configuration_defaults_have_no_broker_calls(gateway, monkeypatch):
         from_env()
     with pytest.raises(GatewayError, match="gateway_token_minimum"):
         create_app(gateway, "short")
+
+
+def test_unconfigured_sidecar_refuses_commands_and_live_reads(monkeypatch):
+    monkeypatch.setenv("PIPMIND_GATEWAY_UNCONFIGURED", "true")
+    monkeypatch.setenv("PIPMIND_GATEWAY_TOKEN", "s" * 32)
+    monkeypatch.delenv("PIPMIND_GATEWAY_SYMBOLS", raising=False)
+    monkeypatch.delenv("PIPMIND_BROKER_READS", raising=False)
+    with TestClient(from_env()) as client:
+        assert client.get("/state").status_code == 401
+        headers = {"Authorization": "Bearer " + "s" * 32}
+        state = client.get("/state", headers=headers).json()
+        assert state["snapshots"] is None and state["prices"] == []
+        assert state["dispatch_enabled"] is False
+        response = client.post("/orders", json=command(), headers=headers)
+        assert response.status_code == 422
+        assert response.json()["error"] == "broker_configuration_pending"
+    monkeypatch.setenv("PIPMIND_BROKER_READS", "true")
+    with pytest.raises(GatewayError, match="broker_configuration_pending"):
+        from_env()

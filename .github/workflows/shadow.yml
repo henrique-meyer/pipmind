@@ -1,0 +1,106 @@
+name: Publish and deploy demo shadow
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full main commit to build and deploy (landing is preserved)
+        required: true
+        type: string
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+concurrency:
+  group: deploy-shadow
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    environment: demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      SHADOW_APP_PARAMETERS: ${{ secrets.SHADOW_APP_PARAMETERS }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate source and private deployment input
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
+          test -n "$AZURE_RESOURCE_GROUP"
+          test -n "$SHADOW_APP_PARAMETERS"
+          git checkout --detach "$SOURCE_SHA"
+      - name: Build and publish private-runtime images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker build --target shadow --build-arg BUILD_SHA="$SOURCE_SHA" -t "$IMAGE:shadow-$SOURCE_SHA" .
+          docker build --target gateway --build-arg BUILD_SHA="$SOURCE_SHA" -t "$IMAGE:gateway-$SOURCE_SHA" .
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:shadow-$SOURCE_SHA"
+          docker push "$IMAGE:gateway-$SOURCE_SHA"
+          for TARGET in shadow gateway; do
+            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$TARGET-$SOURCE_SHA" --format '{{json .}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["digest"])')
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "${TARGET^^}_IMAGE=$IMAGE@$DIGEST" >> "$GITHUB_ENV"
+          done
+      - uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy only the shadow Container App and verify its revision
+        run: |
+          python3 - "$RUNNER_TEMP/shadow.json" <<'PY'
+          import json, os, sys
+          data = json.loads(os.environ["SHADOW_APP_PARAMETERS"])
+          def mask(value):
+              if isinstance(value, dict):
+                  for child in value.values():
+                      mask(child)
+              elif isinstance(value, list):
+                  for child in value:
+                      mask(child)
+              elif isinstance(value, str) and len(value) > 3:
+                  print("::add-mask::" + value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
+          mask(data)
+          parameters = data["parameters"]
+          parameters["engineImage"] = {"value": os.environ["SHADOW_IMAGE"]}
+          parameters["gatewayImage"] = {"value": os.environ["GATEWAY_IMAGE"]}
+          with open(sys.argv[1], "w") as f:
+              json.dump(data, f)
+          PY
+          az deployment group create -g "$AZURE_RESOURCE_GROUP" -n "shadow-$GITHUB_RUN_ID" --template-file infra/shadow-app.bicep --parameters @"$RUNNER_TEMP/shadow.json" --only-show-errors -o none
+          python3 - "$RUNNER_TEMP/shadow.json" "$RUNNER_TEMP/app-name" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as f:
+              name = json.load(f)["parameters"]["appName"]["value"]
+          print("::add-mask::" + name)
+          with open(sys.argv[2], "w") as f:
+              f.write(name)
+          PY
+          APP=$(cat "$RUNNER_TEMP/app-name")
+          az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$APP" -o json > "$RUNNER_TEMP/shadow-app.json"
+          python3 - "$RUNNER_TEMP/shadow-app.json" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1]) as f:
+              app = json.load(f)["properties"]
+          assert app["latestReadyRevisionName"] == app["latestRevisionName"]
+          template = app["template"]
+          assert template["scale"]["minReplicas"] == template["scale"]["maxReplicas"] == 1
+          assert not app["configuration"]["ingress"]["external"]
+          images = {c["name"]: c["image"] for c in template["containers"]}
+          assert images == {"engine": os.environ["SHADOW_IMAGE"], "gateway": os.environ["GATEWAY_IMAGE"]}
+          print("PASS: immutable shadow images, ready revision, internal ingress and always-on replica")
+          PY
+      - name: Remove private runner files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/shadow.json" "$RUNNER_TEMP/shadow-app.json" "$RUNNER_TEMP/app-name"
+          docker logout ghcr.io
