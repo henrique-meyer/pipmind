@@ -225,6 +225,15 @@ def test_time_conversion_and_rejection(clock):
         broker_time("2026-10-05T09:00:00")
 
 
+@pytest.mark.parametrize("escapes", [0, 1, 2])
+def test_stream_escaped_date_keeps_the_exact_venue_instant(clock, escapes):
+    wrapper = "\\" * escapes
+    raw = wrapper + "/Date(1791190800123)" + wrapper + "/"
+    assert broker_time(raw) == clock.now() + timedelta(milliseconds=123)
+    with pytest.raises(GatewayError):
+        broker_time("\\\\\\/Date(1791190800123)\\\\\\/")
+
+
 def test_transport_read_allowlist_and_bounded_retries(clock):
     transport = Mock()
     transport.request.side_effect = [
