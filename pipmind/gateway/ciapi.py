@@ -35,7 +35,9 @@ def fields(data):
 
 
 def broker_time(value):
-    match = re.fullmatch(r"/Date\((-?\d+)(?:[+-]0000)?\)/", str(value))
+    # Lightstreamer can retain one or two layers of escaped slash wrappers.
+    # Match only that known encoding; never apply a general escape decoder.
+    match = re.fullmatch(r"\\{0,2}/Date\((-?\d+)(?:[+-]0000)?\)\\{0,2}/", str(value))
     try:
         if match:
             return datetime(1970, 1, 1, tzinfo=UTC) + timedelta(milliseconds=int(match[1]))
