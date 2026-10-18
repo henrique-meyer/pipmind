@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "calendar_url": "https://calendar.invalid/week.json",
+  "macro": [
+    {"currency": "USD", "indicator": "synthetic_cpi", "name": "Synthetic CPI y/y", "unit": "%y/y", "ff_title": "Synthetic CPI y/y", "value_field": "val", "forecast_field": "val", "previous_field": "previous", "value_scale": 1, "ff_scale": 1}
+  ],
+  "news": [
+    {"id": "synthetic-press", "url": "https://news.invalid/press.rss", "kind": "breaking", "allow_summary": false, "interval_seconds": 300}
+  ],
+  "roles": [
+    {"id": "synthetic_chair", "priority": 1, "holder": "Alex Example", "role_words": ["chair"], "institutional_words": ["central bank"],
+      "profile_url": "https://institution.invalid/chair",
+      "lookups": [{"url": "https://institution.invalid/leadership", "start": "Chair: ", "end": " End"}],
+      "accounts": [
+        {"handle": "ExampleBank", "kind": "institutional", "poll": "full_timeline"},
+        {"handle": "ExampleAlex", "kind": "personal", "poll": "full_timeline"}
+      ]
+    }
+  ]
+}

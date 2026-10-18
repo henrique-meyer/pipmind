@@ -74,12 +74,18 @@
       "description": "The period the print covers, when known."
     },
     "scheduled_at": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time",
       "pattern": "(Z|\\+00:00)$"
     },
     "released_at": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time",
       "pattern": "(Z|\\+00:00)$"
     },
@@ -102,6 +108,68 @@
     "revision_of": {
       "type": "string",
       "minLength": 1
+    },
+    "publication_time_status": {
+      "enum": [
+        "confirmed",
+        "unverified",
+        "assumed_historical",
+        "unknown"
+      ]
+    },
+    "publication_time_precision": {
+      "enum": [
+        "minute",
+        "day",
+        "unknown"
+      ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "publication_time_status"
+        ],
+        "properties": {
+          "publication_time_status": {
+            "const": "unknown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "released_at": {
+            "type": "null"
+          },
+          "publication_time_precision": {
+            "const": "unknown"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "publication_time_status"
+        ],
+        "properties": {
+          "publication_time_status": {
+            "enum": [
+              "confirmed",
+              "unverified",
+              "assumed_historical"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "released_at": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
 }

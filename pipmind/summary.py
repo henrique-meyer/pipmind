@@ -30,6 +30,8 @@ def render(path):
         f"Dry gateway: {'passed' if report['gateway']['passed'] else 'FAILED'} "
         f"({sum(report['gateway']['checks'].values())}/{len(report['gateway']['checks'])}); "
         f"dispatches: {report['gateway']['dispatches']}.",
+        f"Information feeds: {'passed' if report['feeds']['passed'] else 'FAILED'} "
+        f"({sum(report['feeds']['checks'].values())}/{len(report['feeds']['checks'])}).",
         "Baseline differences: " + (", ".join(report["baseline_differences"]) or "none") + ".",
         "",
         "### Deferred real-path coverage",

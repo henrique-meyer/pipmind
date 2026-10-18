@@ -6,6 +6,8 @@ Feeds have to be reachable from an ordinary cloud host. The design does not depe
 
 ## macro-feed
 
+M3 implements the [local information feeds](feeds.md), including an opt-in stream/webhook adapter and durable hourly calendar cache. All source validation so far uses original synthetic inputs; real provider connectivity, entitlements, timing/scale mappings and endpoint recipes still need M4 live-read validation.
+
 | Source | Use | Cost | Why this one |
 | --- | --- | --- | --- |
 | FXMacroData, SSE | Actuals, primary | About $50/mo, or $500/yr (~$42) | Fast structured prints, replay via `Last-Event-ID`, 22 currencies |

@@ -25,6 +25,7 @@ def report():
         fixture_week_sha256=dataset_digest(week),
         portability_fixture_sha256=dataset_digest(ROOT / "evals" / "portability" / "cases.json"),
         gateway_fixture_sha256=dataset_digest(ROOT / "evals" / "gateway" / "session-v1.json"),
+        feed_fixture_sha256=dataset_digest(ROOT / "evals" / "feeds" / "scenario-v1.json"),
     )
     return result
 
@@ -47,6 +48,22 @@ def test_safety_failure_cannot_be_averaged_away(report):
     changed = deepcopy(report)
     changed["counts"].update(passed=9999, failed=1)
     assert not successful(changed)
+
+
+@pytest.mark.parametrize("mutation", ["drop", "fail", "dispatch"])
+def test_feed_checks_are_mandatory_and_cannot_hide_failures(report, mutation):
+    baseline = baseline_snapshot(report)
+    changed = deepcopy(report)
+    if mutation == "drop":
+        changed["feeds"]["checks"].pop("holder_change")
+        assert "baseline_feed_coverage_changed" in compare(changed, baseline)
+    else:
+        if mutation == "fail":
+            changed["feeds"]["checks"]["holder_change"] = False
+        else:
+            changed["feeds"]["dispatches"] = 1
+        assert not successful(changed)
+        assert "baseline_feed_regression" in compare(changed, baseline)
 
 
 @pytest.mark.parametrize("mutation", ["drop", "fail", "dispatch"])
@@ -96,6 +113,7 @@ def test_public_summary_excludes_reasoning_inputs_memory_and_tools(report):
     candidate = deepcopy(report)
     candidate["private_trace"] = {"reasoning": "DO-NOT-UPLOAD-SENTINEL"}
     candidate["gateway"]["private_account"] = "DO-NOT-UPLOAD-SENTINEL"
+    candidate["feeds"]["private_post"] = "DO-NOT-UPLOAD-SENTINEL"
     summary = sanitized_summary(candidate)
     import json
 

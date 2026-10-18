@@ -1,6 +1,6 @@
 # Roadmap
 
-Status of the repo today: **M2 dry gateway delivered.** The core runs with scripted models; the gateway has no order submission path. Synthetic broker sessions and durable dry acknowledgements are tested offline; real broker connectivity is unverified. The deployed container remains the landing page; there are no orders or public track record.
+Status of the repo today: **M3 information feeds delivered.** The core runs with scripted models; the gateway has no order submission path. Synthetic broker sessions and durable dry acknowledgements are tested offline; real broker connectivity is unverified. The deployed container remains the landing page; there are no orders or public track record.
 
 The rollout order is fixed even where the milestone numbers have groundwork in between:
 
@@ -45,6 +45,8 @@ Forex.com CIAPI implementation: Trading API v2 session, Lightstreamer prices, RE
 Done when a recorded session shows a quiet stream flipping to REST and back, and a repeated command id producing a single acknowledgement. Activate the corresponding M1 gateway/recovery cases against the real adapter in dry mode.
 
 ## M3 — Information feeds
+
+**Delivered by [PIP-9](plan.md#pip-9--m3-information-feeds).** The [feed guide](feeds.md) covers the isolated worker/container runtime, durable local inbox/cursors, FXMacroData stream/webhook, hourly ForexFactory cache, RSS/Atom/relay and read-only role-based social inputs. Fourteen synthetic logic gates and actual kill/restart checks pass offline. Live provider compatibility and hosted SQL/delivery wiring remain M4 validation work; no vendor or Azure account was changed.
 
 `macro-feed`, `news-feed` and `social-feed` emit only their own event type and run as independently supervised engine workers in the demo. X supports post reads and necessary account/role lookups only, with no write features or permissions.
 

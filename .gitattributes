@@ -6,3 +6,4 @@
 *.lock text eol=lf
 *.yml text eol=lf
 .gitattributes text eol=lf
+.env.example text eol=lf
