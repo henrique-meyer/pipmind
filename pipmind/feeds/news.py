@@ -1,6 +1,6 @@
 """RSS/Atom and broker relay normalization. Linked articles are never fetched."""
 
-from datetime import UTC
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 from defusedxml import ElementTree
@@ -20,7 +20,10 @@ def date(value):
         return utc(value)
     except ValueError:
         try:
-            result = parsedate_to_datetime(value)
+            try:
+                result = datetime.fromisoformat(value)
+            except ValueError:
+                result = parsedate_to_datetime(value)
             if result.utcoffset() is None:
                 raise ValueError
             return result.astimezone(UTC)
@@ -49,9 +52,14 @@ def parse_feed(body, source, now):
                 ),
                 "",
             )
-        url(link)
+        # Publisher article links are retained evidence, never network targets.
+        # Some official RSS feeds still publish HTTP links; keep them exact.
+        url("https://" + link[7:] if link.startswith("http://") else link)
         published = date(
-            text(entry, "pubDate") or text(entry, "published") or text(entry, "updated")
+            text(entry, "pubDate")
+            or text(entry, "published")
+            or text(entry, "updated")
+            or text(entry, "date")
         )
         headline = markup(text(entry, "title"))[0]
         if not headline or published > now:

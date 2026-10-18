@@ -186,6 +186,11 @@ class Macro:
         status = row.get(
             "publication_time_status", "unverified" if publication is not None else "unknown"
         )
+        precision = row.get("publication_time_precision", "unknown")
+        if precision == "second":
+            # v1 exposes at most minute precision. Keep the exact timestamp;
+            # the original, finer source declaration remains in the raw audit.
+            precision = "minute"
         if status == "unknown":
             publication = None
         scheduled = row.get("official_planned_release_datetime")
@@ -218,7 +223,7 @@ class Macro:
             "scheduled_at": stamp(scheduled) if scheduled else None,
             "released_at": stamp(instant(publication)) if publication is not None else None,
             "publication_time_status": status,
-            "publication_time_precision": row.get("publication_time_precision", "unknown"),
+            "publication_time_precision": precision,
             "received_at": received,
         }
         if forecast_source:

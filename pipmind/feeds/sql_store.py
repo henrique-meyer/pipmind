@@ -33,6 +33,7 @@ class SqlFeedStore:
         if mode != "local-read":
             raise FeedError("sql_feed_requires_read_profile")
         self.connect = connect
+        self.profile = None
         with self.transaction() as db:
             for statement in DDL:
                 db.execute(statement)
@@ -47,14 +48,25 @@ class SqlFeedStore:
                     ("source", str(uuid4())),
                 ):
                     db.execute("INSERT pf_meta VALUES(%s,%s)", (key, value))
+        self.profile = identity(profile)
 
     @contextmanager
     def transaction(self):
         try:
             with transaction(self.connect, "pipmind-feed-store") as cur:
+                if self.profile is not None:
+                    cur.execute("SELECT v FROM pf_meta WHERE k='profile'")
+                    row = cur.fetchone()
+                    if not row or row[0] != self.profile:
+                        raise ShadowError("feed_store_profile_changed")
                 yield cur
-        except ShadowError:
-            raise FeedError("feed_store_unavailable") from None
+        except ShadowError as error:
+            code = (
+                "feed_store_profile_changed"
+                if str(error) == "feed_store_profile_changed"
+                else "feed_store_unavailable"
+            )
+            raise FeedError(code) from None
 
     def source_id(self):
         with self.transaction() as db:
@@ -226,3 +238,44 @@ def configured_store(path, *, mode="local-read", profile="synthetic"):
     if backend != "sqlite":
         raise FeedError("unknown_feed_backend")
     return FeedStore(path, mode=mode, profile=profile)
+
+
+def reconfigure(connect, previous, replacement, moment):
+    """Explicit owner operation; stale processes lose write access atomically."""
+    from pipmind.feeds.config import validate
+
+    validate(previous)
+    validate(replacement)
+    if previous["calendar_url"] != replacement["calendar_url"]:
+        raise FeedError("feed_reconfiguration_must_be_additive")
+    for channel in ("macro", "news", "roles"):
+        if any(row not in replacement[channel] for row in previous[channel]):
+            raise FeedError("feed_reconfiguration_must_be_additive")
+    before, after = [identity(identity(encoded(c))) for c in (previous, replacement)]
+    if before == after:
+        raise FeedError("feed_configuration_unchanged")
+    try:
+        with transaction(connect, "pipmind-feed-store") as db:
+            db.execute("SELECT v FROM pf_meta WHERE k='profile'")
+            row = db.fetchone()
+            if not row or row[0] != before:
+                raise ShadowError("feed_store_profile_mismatch")
+            # Keep the source ID, every input/event and every source cursor exact.
+            db.execute("UPDATE pf_meta SET v=%s WHERE k='profile'", (after,))
+            db.execute(
+                "INSERT pf_state(k,v) VALUES(%s,%s)",
+                (
+                    "configuration:" + after,
+                    encoded(
+                        {"at": stamp(moment), "previous": previous, "replacement": replacement}
+                    ),
+                ),
+            )
+    except ShadowError as error:
+        code = (
+            "feed_store_profile_mismatch"
+            if str(error) == "feed_store_profile_mismatch"
+            else "feed_store_unavailable"
+        )
+        raise FeedError(code) from None
+    return {"changed": True, "source_and_cursors_preserved": True}

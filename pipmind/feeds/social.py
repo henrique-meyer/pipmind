@@ -46,7 +46,9 @@ class XReads:
             "/2/users/by",
             {
                 "usernames": ",".join(handles),
-                "user.fields": "name,description,verified,verified_type,parody,protected",
+                # Parody metadata is not included in the app's field entitlement.
+                # Missing metadata is handled by independent official-link proof.
+                "user.fields": "name,description,verified,verified_type,protected",
             },
         ).get("data", [])
 
@@ -54,7 +56,7 @@ class XReads:
         query = {
             "max_results": 100,
             "exclude": "replies,retweets",
-            "post.fields": "created_at,author_id,referenced_posts,note_post",
+            "tweet.fields": "created_at,author_id,referenced_tweets,note_tweet",
         }
         if since:
             query["since_id"] = since
@@ -85,17 +87,52 @@ def holder_lookup(reads, recipe):
         raise FeedError("holder_parse_failed") from None
 
 
-def verified(user, holder, role, *, institutional=False):
+def official_account(reads, role, handle):
+    """An exact outgoing link on an owner-configured official HTTPS page."""
+    target = role.get("official_profile_url") or role.get("profile_url")
+    if not target:
+        return False
+    try:
+        response = reads.get(target)
+        if response.status != 200:
+            return False
+        _, links = markup(response.body.decode("utf-8"))
+        for link in links:
+            p = urlsplit(link)
+            if (
+                p.scheme == "https"
+                and p.hostname in {"x.com", "twitter.com", "www.x.com", "www.twitter.com"}
+                and p.path.strip("/").casefold() == handle.casefold()
+                and not p.username
+                and not p.password
+                and p.port in (None, 443)
+            ):
+                return True
+    except (FeedError, UnicodeError, ValueError):
+        pass
+    return False
+
+
+def verified(user, holder, role, *, institutional=False, officially_linked=False):
     return (
         isinstance(user, dict)
         and re.fullmatch(r"\d{1,19}", str(user.get("id", "")))
         and user.get("protected") is False
-        and user.get("parody") is False
+        and (
+            user.get("parody") is False
+            or (user.get("parody") is None and officially_linked is True)
+        )
         and user.get("verified") is True
         and isinstance(user.get("name"), str)
         and isinstance(user.get("description"), str)
         and user.get("verified_type")
-        in ({"government", "business"} if institutional else {"blue", "government"})
+        in (
+            {"government", "business", "blue"}
+            if institutional and officially_linked
+            else {"government", "business"}
+            if institutional
+            else {"blue", "government"}
+        )
         and (institutional or name(user.get("name", "")) == name(holder))
         and all(
             word.casefold() in user.get("description", "").casefold()
@@ -155,7 +192,7 @@ class Social:
                 choices = [
                     user
                     for user in users
-                    if verified(user, holder, role)
+                    if verified(user, holder, role, officially_linked=True)
                     and user["username"].casefold() in {c.casefold() for c in candidates}
                 ]
                 if len(choices) > 1:
@@ -179,13 +216,33 @@ class Social:
             by_handle = {u["username"].casefold(): u for u in users}
             for account in accounts:
                 user = by_handle.get(account["handle"].casefold())
+                needs_link = role.get("official_profile_url") or (
+                    isinstance(user, dict)
+                    and (
+                        user.get("parody") is not False
+                        or (
+                            account["kind"] == "institutional"
+                            and user.get("verified_type") == "blue"
+                        )
+                    )
+                )
+                linked = (
+                    official_account(self.reads, role, account["handle"]) if needs_link else False
+                )
                 if not verified(
-                    user, holder, role, institutional=account["kind"] == "institutional"
+                    user,
+                    holder,
+                    role,
+                    institutional=account["kind"] == "institutional",
+                    officially_linked=linked,
                 ):
                     account["unverified"] = True
                     self.store.alert("social", "account_identity_unverified", now)
                 else:
                     account["user_id"], account["unverified"] = user["id"], False
+                    account["identity_evidence"] = (
+                        "official_profile_link" if linked else "api_fields"
+                    )
             self.store.save(
                 "role:" + role["id"],
                 {"holder": holder, "accounts": accounts, "checked_at": stamp(now)},

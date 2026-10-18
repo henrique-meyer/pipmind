@@ -27,7 +27,7 @@ from pipmind.feeds.fixtures import (
 from pipmind.feeds.macro import Calendar, Macro, accept, numeric, webhook
 from pipmind.feeds.news import News, parse_feed
 from pipmind.feeds.service import create_app
-from pipmind.feeds.social import Social, XReads, holder_lookup, verified
+from pipmind.feeds.social import Social, XReads, holder_lookup, official_account, verified
 from pipmind.feeds.store import FeedStore
 from pipmind.feeds.stream import SSE
 
@@ -524,3 +524,73 @@ def test_privacy_policy_flags_cannot_be_truthy_strings(field):
     ]
     with pytest.raises(FeedError, match="invalid_feed_configuration"):
         validate(config)
+
+
+def test_missing_parody_metadata_needs_independent_official_association(data):
+    user = {**data["institution"], "verified_type": "blue"}
+    user.pop("parody")
+    assert not verified(user, None, role(), institutional=True)
+    assert verified(user, None, role(), institutional=True, officially_linked=True)
+    for key, value in (
+        ("parody", True),
+        ("parody", "false"),
+        ("protected", True),
+        ("verified", False),
+    ):
+        assert not verified(
+            {**user, key: value}, None, role(), institutional=True, officially_linked=True
+        )
+
+
+@pytest.mark.parametrize(
+    "link,accepted",
+    [
+        ("https://x.com/ExampleBank", True),
+        ("https://twitter.com/ExampleBank/", True),
+        ("https://x.com/ExampleBankFake", False),
+        ("https://x.com.attacker.invalid/ExampleBank", False),
+        ("https://x.com:8443/ExampleBank", False),
+    ],
+)
+def test_official_profile_requires_exact_account_link(link, accepted):
+    reads = FakeReads([response(f'<a href="{link}">Account</a>')])
+    r = {**role(), "official_profile_url": "https://institution.invalid/social"}
+    assert official_account(reads, r, "ExampleBank") is accepted
+
+
+def test_x_wire_fields_match_endpoint_and_existing_field_entitlements():
+    from urllib.parse import parse_qs, urlsplit
+
+    reads = FakeReads([response({"data": []}), response({"data": []})])
+    client = XReads(reads, "synthetic")
+    client.users(["ExampleBank"])
+    client.timeline("11")
+    user_query, post_query = [parse_qs(urlsplit(target).query) for target in reads.calls]
+    assert "parody" not in user_query["user.fields"][0]
+    assert set(post_query["tweet.fields"][0].split(",")) == {
+        "created_at",
+        "author_id",
+        "referenced_tweets",
+        "note_tweet",
+    }
+    assert "post.fields" not in post_query
+
+
+def test_rdf_publication_offset_and_http_article_link_are_preserved_without_fetch(clock):
+    raw = """<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+        xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <item><title>Official release</title><link>http://publisher.invalid/release</link>
+        <dc:date>2026-10-05T14:00:00+11:00</dc:date></item></rdf:RDF>"""
+    rows = parse_feed(raw, {"id": "official", "kind": "breaking"}, clock.now())
+    assert rows[0]["published_at"] == "2026-10-05T03:00:00Z"
+    assert rows[0]["url"] == "http://publisher.invalid/release"
+    # Network reads still require HTTPS, independently of retained citations.
+    with pytest.raises(FeedError):
+        Reads().get(rows[0]["url"])
+
+
+def test_unverified_consensus_crosswalk_is_explicitly_disabled(clock, calendar):
+    config = configuration()
+    config["macro"][0]["ff_title"] = None
+    assert validate(config)
+    assert calendar.match(config["macro"][0], clock.now()) is None

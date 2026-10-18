@@ -92,6 +92,18 @@ The original 80 immutable SQL audit records match their predeployment fingerprin
 
 This is a small controlled input-token comparison plus an actual clock smoke flow. It does not establish full-day reasoning quality, source coverage, sustained capacity, caching savings or a monthly bill. Model output, call volume, retries and evaluation usage still need PIP-14 qualification. Older relevant facts remain available; the optimization changes the selected view, not the retained history.
 
+## Repeated real-model starter evaluations
+
+The opt-in owner command runs the twelve applicable M4 starter cases in fresh SQL validation minds, with two to five repetitions. Each episode restores its synthetic initial views and account observations, processes events at their recorded availability times through the actual engine, retains complete model/tool/usage traces, and ends paused. The operational trader, its cursors and broker binding are untouched. Later-capability starter cases remain deferred.
+
+```sh
+python -m pipmind.shadow evaluate --dataset evals/fixtures/starter-v1.jsonl --repetitions 3 --manifest .data/config/model-manifest.json --output evals/reports/live-shadow.json
+```
+
+Real calls require the existing SQL/Foundry configuration and explicit `PIPMIND_MODEL_CALLS=true`. The private manifest records verified deployments, versions/settings and reference rates. Reports identify the dataset digest, prompt and grader version, fresh lineage IDs, per-phase token usage, unknown usage and refusals. Full outputs stay private in SQL and the requested ignored report; CI exercises the runner with scripted responses and actual SQL, without cloud credentials.
+
+Integrity checks cover original input retention, unchanged mandate, paused isolation and zero dispatches. Wake/action/citation and literal-view alignment against fixture expectations are reported separately; literal wording differences are not an automatic reasoning-quality score. Invalid or refused responses remain visible. Human calibration against the versioned quality rubric remains required, and no uncalibrated model judge is invoked. Known token counts and reference rates do not establish a provider invoice or monthly cost.
+
 ## Experience bundles and cloning
 
 Runtime exports use manifest version 2 / `shadow-runtime-v1`, retaining the v1 Markdown/front-matter contracts. The v1 synthetic archive profile remains supported by its validator, but cannot activate a shadow clone. A single SQL checkpoint captures all retained records and metadata, with exact identity/playbook text, provenance, evidence, history and override tags. Checksums, inventory, chronology, compatibility and all references are validated; archives are never extracted as files.

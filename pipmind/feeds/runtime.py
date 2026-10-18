@@ -97,6 +97,8 @@ def _worker(producer, path, config, mode, profile, stop_path):
                             if stop.is_set():
                                 return
                             try:
+                                if mapping.get("bootstrap_latest", False):
+                                    source.latest(mapping)
                                 source.page(
                                     mapping,
                                     os.environ["PIPMIND_MACRO_BACKFILL_START"],

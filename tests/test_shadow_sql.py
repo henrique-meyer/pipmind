@@ -456,6 +456,72 @@ def test_sql_feed_inbox_outbox_cursor_atomicity_and_reprocessing(mind):
     assert mind.checkpoint(store.source_id()) == rows[-1]["sequence"]
 
 
+def test_feed_configuration_cutover_preserves_history_and_fences_stale_workers(mind):
+    from pipmind.feeds.common import FeedError, identity
+    from pipmind.feeds.fixtures import configuration
+    from pipmind.feeds.sql_store import SqlFeedStore, reconfigure
+    from pipmind.feeds.store import encoded
+    from pipmind.shadow.sql import transaction
+
+    original = SqlFeedStore(mind.connect)
+    source, events = original.source_id(), original.events()
+    previous = configuration()
+    replacement = deepcopy(previous)
+    replacement["news"].append(
+        {"id": "test-" + uuid4().hex, "url": "https://news.invalid/feed", "kind": "analysis"}
+    )
+    cursor = "test-cursor:" + uuid4().hex
+    original.save(cursor, {"since": "123", "next": "retained-page"})
+    with original.transaction() as db:
+        db.execute("SELECT v FROM pf_meta WHERE k='profile'")
+        saved = db.fetchone()[0]
+        # Isolate this test's configuration binding in the synthetic SQL database.
+        db.execute(
+            "UPDATE pf_meta SET v=%s WHERE k='profile'", (identity(identity(encoded(previous))),)
+        )
+    try:
+        old = SqlFeedStore(mind.connect, profile=identity(encoded(previous)))
+        reconfigure(mind.connect, previous, replacement, MOMENT)
+        fresh = SqlFeedStore(mind.connect, profile=identity(encoded(replacement)))
+        assert fresh.source_id() == source and fresh.events() == events
+        assert fresh.state(cursor) == {"since": "123", "next": "retained-page"}
+        with pytest.raises(FeedError, match="profile_changed"):
+            old.save(cursor, {"since": "0"})
+        assert fresh.state(cursor)["since"] == "123"
+        with pytest.raises(FeedError, match="profile_mismatch"):
+            reconfigure(mind.connect, previous, replacement, MOMENT)
+        altered = deepcopy(replacement)
+        altered["macro"][0]["value_scale"] = 1000
+        with pytest.raises(FeedError, match="must_be_additive"):
+            reconfigure(mind.connect, replacement, altered, MOMENT)
+        assert fresh.events() == events
+    finally:
+        with transaction(mind.connect, "pipmind-feed-store") as db:
+            db.execute("UPDATE pf_meta SET v=%s WHERE k='profile'", (saved,))
+
+
+def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primary(mind):
+    from pipmind.shadow.evaluations import evaluate
+
+    baseline = mind.status()
+    case = deepcopy(CASE)
+    report = asyncio.run(
+        evaluate(
+            mind.connect,
+            [case],
+            FixtureModel(case["model_responses"]),
+            repetitions=2,
+        )
+    )
+    assert report["summary"]["episodes"] == 2
+    assert report["summary"]["hard_check_failures"] == 0
+    assert report["summary"]["model_refusals"] == 0
+    assert len({r["trader"] for r in report["results"]}) == 2
+    assert all(SqlMind(mind.connect, r["trader"]).head()["paused"] for r in report["results"])
+    assert mind.status() == baseline
+    assert report["human_review"].startswith("pending")
+
+
 def test_many_retained_records_use_runtime_bundle_and_keep_override_provenance(mind):
     with mind.transaction() as cur:
         for i in range(150):

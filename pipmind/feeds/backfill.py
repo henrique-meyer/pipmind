@@ -4,6 +4,7 @@ import re
 from datetime import date
 from urllib.parse import urlencode
 
+from pipmind.contracts import ContractError
 from pipmind.feeds.common import FeedError, identity, json_body, url
 from pipmind.feeds.macro import Macro
 from pipmind.feeds.store import encoded
@@ -55,6 +56,75 @@ class CanonicalBackfill:
     def __init__(self, store, reads, root, api_key, calendar, now):
         self.store, self.reads, self.root = store, reads, url(root).rstrip("/")
         self.api_key, self.calendar, self.now = api_key, calendar, now
+
+    def latest(self, mapping):
+        """Seed the latest published observation even outside the replay window.
+
+        This is one retained row, never a claim of complete history. Normal
+        window paging and live delivery continue independently.
+        """
+        if not re.fullmatch(r"[A-Z]{3}", mapping["currency"]) or not re.fullmatch(
+            r"[a-zA-Z0-9_-]{1,100}", mapping["indicator"]
+        ):
+            raise FeedError("invalid_canonical_mapping")
+        marker = "canonical:bootstrap:" + identity(mapping["currency"], mapping["indicator"])
+        if self.store.state(marker) is not None:
+            return False
+        target = (
+            self.root
+            + "/v1/announcements/"
+            + mapping["currency"].lower()
+            + "/"
+            + mapping["indicator"]
+        )
+        payload = json_body(
+            self.reads.get(
+                target + "?" + urlencode({"limit": 1, "revisions": "latest"}),
+                headers={"X-API-Key": self.api_key},
+            )
+        )
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("data"), list)
+            or len(payload["data"]) > 1
+        ):
+            raise FeedError("invalid_latest_observation")
+        moment = self.now()
+        key = "rest-page:" + identity(marker, encoded(payload))
+        self.store.ingest(
+            "macro", key, {"canonical_page": payload}, identity(encoded(payload)), moment
+        )
+        try:
+            events = normalize_page(
+                payload,
+                mapping,
+                Macro(
+                    self.store,
+                    self.calendar,
+                    [mapping],
+                    self.now,
+                ),
+                moment.isoformat(),
+            )
+            self.store.complete_batch(
+                "macro",
+                key,
+                events,
+                moment,
+                cursor=(
+                    marker,
+                    {
+                        "captured_at": moment.isoformat(),
+                        "status": "latest_retained_row_only" if events else "latest_unavailable",
+                        "rows": len(events),
+                        "complete_history_proven": False,
+                    },
+                ),
+            )
+        except (ContractError, KeyError, TypeError):
+            self.store.quarantine(key)
+            raise
+        return bool(events)
 
     def page(self, mapping, start, end):
         if not re.fullmatch(r"[A-Z]{3}", mapping["currency"]) or not re.fullmatch(
@@ -141,7 +211,7 @@ class CanonicalBackfill:
                     "complete_history_proven": False,
                 }
                 self.store.save("canonical:quality", quality, db=db)
-        except (FeedError, KeyError, TypeError):
+        except (ContractError, KeyError, TypeError):
             self.store.quarantine(capture_key)
             self.store.alert("macro", "canonical_page_quarantined", moment)
             raise

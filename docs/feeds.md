@@ -2,6 +2,22 @@
 
 The `macro`, `news` and `social` workers normalize external inputs into `ReleaseEvent`, `NewsEvent` and `PostEvent` respectively. They run as separate supervised processes in the engine/feed container, with independent retries and restarts. They cannot invoke a model, submit broker orders or write to X. The deployed landing application is unchanged; no vendor account, subscription or Azure resource was touched by M3.
 
+## Hosted coverage and configuration changes
+
+Private recipes are validated against the provider catalogue and real responses before enabling them. Preserve each series' native units: a GDP level is not a quarterly growth rate, and a payroll employment level is not its monthly change. `ff_title: null` explicitly disables an unverified consensus crosswalk. Calendar matches still require the exact currency, title and scheduled instant; missing consensus remains unknown.
+
+`bootstrap_latest: true` retains one latest published observation when a series falls outside the configured backfill window, then continues normal window paging and live ingestion. It has a separate durable marker, preserves stream/page cursors and never claims complete history. Original pages and publication evidence remain retained. A provider's second-level precision is conservatively exposed as `minute` in the existing v1 precision enum; the exact timestamp and original precision remain retained. News parsing supports RDF publication dates and explicit timezone offsets. HTTP article citations are retained exactly but never fetched; network targets still require HTTPS.
+
+The X app's current field entitlement does not expose `parody`. Reads request supported user fields and the timeline's `tweet.fields`. An account with missing parody metadata requires an exact outgoing account link from its owner-configured official institution/profile page, alongside verified/public identity and matching role description. Explicit parody/protected/unverified flags remain refusals; a blue institutional badge alone is insufficient. Successful official-link evidence is recorded with the weekly role check. Lookup failures alert and do not invent identity or permission. Selected feeds remain read-only, without additional field purchases.
+
+SQL recipe changes use an explicit additive owner cutover:
+
+```sh
+python -m pipmind.feeds reconfigure --previous-config .data/config/previous.json --config .data/config/replacement.json
+```
+
+First deploy the profile-fencing implementation with the previous recipe. The owner operation checks the exact previous binding, records both recipes privately, atomically changes the binding and preserves every source ID, input, event and cursor. Old workers then refuse access. Deploy the replacement recipe through the existing secret/Bicep workflow and verify new workers, handoff and retained checkpoints. Never reset the store to accept new configuration. Changing/removing existing mappings requires a separately reviewed migration; this additive path refuses it.
+
 ## Run and validate offline
 
 ```sh

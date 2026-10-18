@@ -11,14 +11,31 @@ from pipmind.feeds.fixtures import process_checks, run_fixtures
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["replay", "serve", "reprocess"])
+    parser.add_argument("command", choices=["replay", "serve", "reprocess", "reconfigure"])
     parser.add_argument("--key")
+    parser.add_argument("--previous-config")
+    parser.add_argument("--config")
     parser.add_argument("--process-checks", action="store_true")
     parser.add_argument("--output", type=Path, default=ROOT / ".data" / "feed-replay")
     parser.add_argument("--host", choices=["127.0.0.1", "0.0.0.0"], default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8082)
     args = parser.parse_args(argv)
     try:
+        if args.command == "reconfigure":
+            import os
+
+            from pipmind.feeds.config import load
+            from pipmind.feeds.sql_store import reconfigure
+            from pipmind.shadow.common import now
+            from pipmind.shadow.sql import connector
+
+            if os.environ.get("PIPMIND_FEED_BACKEND") != "sql":
+                raise ContractError("feed_reconfiguration_requires_sql")
+            if not args.previous_config or not args.config:
+                raise ContractError("previous_and_replacement_configuration_required")
+            reconfigure(connector(), load(args.previous_config), load(args.config), now())
+            print("Feed configuration changed; source and cursors preserved. Restart workers.")
+            return 0
         if args.command == "reprocess":
             import os
 
