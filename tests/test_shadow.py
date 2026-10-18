@@ -92,12 +92,12 @@ def test_only_local_read_tools_are_registered_and_they_are_bounded():
     store = SimpleNamespace(search=lambda query, ts: [{"body": "bounded memory"}])
     asyncio.run(model(factory).decide({}, {"identity": "mandate"}, {}, store, now()))
     tools = {fn.__name__: fn for fn in captured["tools"]}
-    assert set(tools) == {"read_mind", "search_memory"}
-    assert "mandate" in tools["read_mind"]()
-    for _ in range(7):
+    assert set(tools) == {"search_memory"}
+    assert "mandate" in captured["instructions"]
+    for _ in range(8):
         tools["search_memory"]("test")
     with pytest.raises(ShadowError, match="shadow_tool_limit"):
-        tools["read_mind"]()
+        tools["search_memory"]("test")
 
 
 def test_private_service_auth_limits_and_no_order_routes():

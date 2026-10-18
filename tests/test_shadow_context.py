@@ -153,7 +153,8 @@ def test_wire_context_is_compact_audited_and_tools_cannot_reinflate_old_traces()
 
     async def decide(message, *, options):
         tools = {fn.__name__: fn for fn in captured["tools"]}
-        assert "AUDIT_ONLY_" not in tools["read_mind"]()
+        assert set(tools) == {"search_memory"}
+        assert "Month-old inflation shift" in message
         assert "AUDIT_ONLY_" not in tools["search_memory"]("inflation")
         return SimpleNamespace(
             text=encoded(
@@ -183,6 +184,31 @@ def test_oversized_mandatory_state_is_refused_without_truncation_or_model_reques
         factory=lambda **kw: called.append(kw),
     )
     with pytest.raises(ModelFailure) as error:
-        asyncio.run(model.triage({}, {"identity": "x" * 11000}, None, now()))
+        asyncio.run(model.triage({}, {"identity": "x" * 17000}, None, now()))
     assert not called and error.value.trace["attempted"] is False
-    assert error.value.trace["request"]["instructions"].endswith("x" * 11000 + "\n")
+    assert error.value.trace["request"]["instructions"].endswith("x" * 17000 + "\n")
+
+
+def test_larger_continuing_state_remains_complete_and_does_not_hit_the_old_guard():
+    captured = {}
+
+    class Agent:
+        async def run(self, message, *, options):
+            captured["message"] = message
+            return SimpleNamespace(text='{"wake":false,"summary":"Observed"}')
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kw: Agent(),
+    )
+    state = {
+        "views": ["Continuing view " * 750],
+        "position_theses": [],
+        "waiting_for": ["New evidence"],
+    }
+    _, usage = asyncio.run(model.triage({}, {"working_memory": state}, None, now()))
+    assert state["views"][0] in captured["message"]
+    assert 10000 < usage["prompt_bytes"] < 16000
