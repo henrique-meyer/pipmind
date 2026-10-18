@@ -306,6 +306,11 @@ def test_sql_feed_inbox_outbox_cursor_atomicity_and_reprocessing(mind):
     )
     assert store.ingest("macro", key, {"synthetic": True}, identity(key), MOMENT)
     assert store.state(key) == "accepted"
+    capture = "rest-page:" + uuid4().hex
+    store.ingest("macro", capture, {"canonical_page": {}}, identity(capture), MOMENT)
+    pending = {row["key"]: row for row in store.pending("macro")}
+    assert pending[key]["raw"] == {"synthetic": True}
+    assert capture not in pending  # Canonical batches have their own normalization path.
     store.quarantine(key)
     assert store.reprocess(key)
     good = pulse("macro", MOMENT)
