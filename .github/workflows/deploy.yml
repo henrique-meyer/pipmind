@@ -25,6 +25,7 @@ jobs:
       AZURE_CONTAINER_APP: ${{ secrets.AZURE_CONTAINER_APP }}
       AZURE_CONTAINER_ENVIRONMENT: ${{ secrets.AZURE_CONTAINER_ENVIRONMENT }}
       AZURE_LOG_WORKSPACE: ${{ secrets.AZURE_LOG_WORKSPACE }}
+      GOOGLE_ANALYTICS_ID: ${{ vars.GOOGLE_ANALYTICS_ID }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -55,6 +56,7 @@ jobs:
           with open(sys.argv[1]) as f:
               domains = json.load(f).get("customDomains") or []
           values = {"location": os.environ["AZURE_LOCATION"], "appName": os.environ["AZURE_CONTAINER_APP"], "environmentName": os.environ["AZURE_CONTAINER_ENVIRONMENT"], "workspaceName": os.environ["AZURE_LOG_WORKSPACE"], "containerImage": os.environ["CONTAINER_IMAGE"], "customDomains": domains}
+          values["googleAnalyticsId"] = os.environ.get("GOOGLE_ANALYTICS_ID", "")
           with open(sys.argv[2], "w") as f:
               json.dump({"parameters": {k: {"value": v} for k, v in values.items()}}, f)
           PY

@@ -10,7 +10,17 @@ python scripts/smoke.py --url http://127.0.0.1:8080 --build development
 docker compose down
 ```
 
-Open the local address to review desktop and mobile layouts. The page has working source/roadmap links and internal navigation, no form, no analytics and no external font/script dependency. `/healthz` identifies the application, landing mode and source build.
+Open the local address to review desktop and mobile layouts. The page has working source/roadmap links and internal navigation and no form or external fonts. Optional Google Analytics is disabled by default. `/healthz` identifies the application, landing mode and source build.
+
+## Google Analytics
+
+Create a GA4 property and web stream for the public site, then supply its measurement ID through `GOOGLE_ANALYTICS_ID`. This is a public browser identifier, not an API credential; keep the actual value in environment configuration rather than source or image layers. Blank disables all analytics scripts and Google CSP permissions; an invalid nonblank ID prevents startup. No Python analytics package, Google credentials, paid infrastructure or backend event transport is required.
+
+For local Compose, use the ignored `.env` or existing process environment (the process value takes precedence). Leave it empty for routine development. For hosted deployment, set the GitHub **demo environment variable** `GOOGLE_ANALYTICS_ID`; the manually triggered deployment passes it to Bicep's `googleAnalyticsId` parameter and the landing container. Local Bicep deployment uses the same parameter in an ignored parameter file. Removing the value and redeploying disables tracking. Changing hosted configuration requires owner approval; merging this support alone does not enable tracking or deploy Azure changes.
+
+The local loader initializes the Google tag once per document. Its config sends the default page view with query strings/fragments removed from page and referrer URLs, and disables Google signals and ad personalization. It does not add user IDs, custom trading events or backend/private-route instrumentation. GA4 may use analytics cookies and its web-stream Enhanced Measurement settings control additional automatic events; disable Enhanced Measurement in the property if only page views are wanted. Do not enable Ads-linked features without reviewing collection and CSP requirements. The [Google config reference](https://developers.google.com/analytics/devguides/collection/ga4/reference/config) and [CSP guide](https://developers.google.com/tag-platform/security/guides/csp) describe these settings. The landing CSP permits the documented non-Ads endpoints without unsafe inline/eval execution; health and error routes retain the original restrictive policy.
+
+CI verifies disabled and configured HTTP behavior using a synthetic ID, without contacting Google. After an approved deployment, verify the immutable image/ready revision, `/healthz`, page/assets/navigation and matching tag ID through the custom domain, then confirm `page_view` in GA4 Realtime or DebugView using an actual browser. A successful HTTP smoke check alone does not prove Google received an event. Browser blockers can prevent collection without affecting the page.
 
 ## Delivery
 

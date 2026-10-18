@@ -2,6 +2,8 @@
 
 PipMind is four logical services around one core. The core is the trader. The services are replaceable. The hosted demo groups these components into two containers in one Azure Container App; their contracts also support separate production deployments.
 
+The current public landing page supports optional runtime-configured GA4 analytics, disabled when no measurement ID is supplied. Analytics runs in the visitor's browser, separately from feed, broker, model and trader telemetry. Configuration and collection controls are described in the [landing deployment guide](../infra/README.md#google-analytics); enabling it on the hosted instance requires the deployment's own configuration and approval.
+
 | Service | Talks to | Emits | Accepts |
 | --- | --- | --- | --- |
 | `macro-feed` | FXMacroData, ForexFactory | `ReleaseEvent` | — |
