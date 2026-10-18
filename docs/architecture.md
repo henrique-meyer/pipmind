@@ -2,7 +2,7 @@
 
 PipMind is four logical services around one core. The core is the trader. The services are replaceable. The hosted demo groups these components into two containers in one Azure Container App; their contracts also support separate production deployments.
 
-**Implementation checkpoint (M4 / PIP-12):** the [shadow runtime](shadow.md) now supplies the SQL-backed mind/full-text retrieval, durable feed delivery and consumer checkpoints, project-backed Agent Framework Foundry adapter, private integrated engine/feed container and atomic paused experience-clone operations. It cannot send orders. Actual Foundry/provider calls, hosted deployment, capacity/cost validation, full retained-day export and a full live shadow day remain pending approval/qualification. The public hosted instance remains the landing page; M5 safety/recovery, M6 demo execution and M7 review are not implemented by shadow.
+**Implementation checkpoint (M4):** the [shadow runtime](shadow.md) supplies the SQL-backed mind/retrieval, durable feed delivery, project-backed Agent Framework Foundry adapter and atomic paused experience clones. PIP-13 deployed the approved private always-on SQL/Foundry/backend alongside the preserved public landing and verified initial real model/feed/journal/clone flows. It cannot send orders. PIP-15 compacts model context; complete provider/broker coverage, full-day capacity/cost/evaluations and retained-day export remain PIP-14 qualification gates. M5 safety/recovery, M6 demo execution and M7 review are not implemented by shadow.
 
 The current public landing page supports optional runtime-configured GA4 analytics, disabled when no measurement ID is supplied. Analytics runs in the visitor's browser, separately from feed, broker, model and trader telemetry. Configuration and collection controls are described in the [landing deployment guide](../infra/README.md#google-analytics); enabling it on the hosted instance requires the deployment's own configuration and approval.
 
@@ -231,6 +231,8 @@ Identity and the playbook are placed first and kept byte-stable between playbook
 Hosted long-term memory starts with Azure SQL full-text search. Store access and retrieval sit behind adapters so replacing the index or changing deployment capacity does not change the five-part shape. A local replay adapter is not evidence that Azure SQL transactions, search, or concurrency have been validated; database integration checks must exercise the SQL Server adapter.
 
 The mind is operational data. It is not committed into this source repository.
+
+Model context and audit retention are separate. [Phase-specific views](shadow.md#processing-and-persistence) keep triage compact and supply decisions with complete current working views/theses/waiting conditions plus selected source evidence. Retrieval can reach older material events and opposing evidence; age alone does not invalidate a view. Structured journal projections prevent previous prompts from being recursively copied forward. Full original events and model-visible traces remain in SQL. The [Markdown knowledge discussion](shadow.md#markdown-knowledge-and-continuing-memory) describes how readable standing policy and durable briefs fit this persistent mind without treating a file repository as free model memory.
 
 ### Markdown mind export and import
 

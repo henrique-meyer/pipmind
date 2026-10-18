@@ -199,6 +199,82 @@ def test_stale_revision_and_pause_do_not_commit_model_results(mind):
     assert mind.pending() == events[0]
 
 
+def test_archive_relevance_preserves_month_old_and_contrary_evidence_amid_legacy_traces(mind):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.context import phase_context
+
+    old = "2026-09-15T00:00:00Z"
+    with mind.transaction() as cur:
+        for identifier, text in (
+            ("older-inflation", "USD inflation rose; previous outlook"),
+            ("contrary-inflation", "USD inflation fell; contrary evidence"),
+        ):
+            mind._insert(cur, metadata(identifier, "memory", old, mind.trader), text)
+        for number in range(60):
+            mind._insert(
+                cur,
+                metadata(f"noise-{number}", "journal", "2026-10-17T00:00:00Z", mind.trader),
+                encoded(
+                    {
+                        "context": {"old_article": "USD inflation " * 100},
+                        "triage": {"wake": False, "summary": "An unrelated bank application"},
+                    }
+                ),
+            )
+            # Simulate a legacy index that includes recursively copied context.
+            cur.execute(
+                "SELECT pk FROM pm_records WHERE trader=%s AND id=%s",
+                (mind.trader, f"noise-{number}"),
+            )
+            pk = cur.fetchone()[0]
+            for term in ("usd", "inflation"):
+                cur.execute("INSERT pm_terms VALUES(%s,%s)", (term, pk))
+        mind._insert(
+            cur,
+            metadata("future-inflation", "memory", "2026-10-19T00:00:00Z", mind.trader),
+            "USD inflation future",
+        )
+        cur.execute(
+            "UPDATE pm_minds SET working=%s WHERE trader=%s",
+            (
+                encoded(
+                    {
+                        "views": ["USD inflation outlook remains unresolved"],
+                        "position_theses": [],
+                        "waiting_for": ["Contrary evidence"],
+                    }
+                ),
+                mind.trader,
+            ),
+        )
+    other = SqlMind(mind.connect, "other-" + uuid4().hex)
+    other.initialize(
+        "Other mandate",
+        {"version": "v1", "text": "Other rules"},
+        old,
+        binding=digest("other"),
+        records=[(metadata("private-other", "memory", old, other.trader), "USD inflation private")],
+    )
+    before = mind.retained()
+    found = mind.search("USD inflation", MOMENT)
+    ids = {row["metadata"]["record_id"] for row in found}
+    assert {"older-inflation", "contrary-inflation"} <= ids
+    assert not {"future-inflation", "private-other"} & ids
+    assert all(not identifier.startswith("noise-") for identifier in ids)
+    assert "old_article" not in mind.search("noise-0", MOMENT)[0]["body"]
+    assert "future-inflation" not in {
+        row["metadata"]["record_id"] for row in mind.search("future-inflation", MOMENT)
+    }
+    context = mind.context(MOMENT, "unrelated current headline")
+    selected = phase_context(context, "decision")
+    assert "USD inflation outlook" in selected["working_memory"]["views"][0]
+    assert {"older-inflation", "contrary-inflation"} <= {
+        row["metadata"]["record_id"] for row in selected["retrieved_memories"]
+    }
+    assert mind.retained() == before  # No audit rewrite/deletion during retrieval.
+    assert "old_article" in dict((meta["record_id"], body) for meta, body in before[1])["noise-0"]
+
+
 def test_clock_wake_checkpoint_survives_restart_without_duplicate_inputs(mind):
     from pipmind.shadow.service import clock_wake
 
@@ -281,6 +357,56 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
     assert before == mind.retained()
     with pytest.raises(ShadowError, match="clone_identity_policy_mismatch"):
         import_experience(clone, data, MOMENT, digest("new"), "Different mandate")
+
+
+def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind):
+    import io
+    import json
+    import zipfile
+
+    original = validate_bundle(export_experience(mind, MOMENT))
+    manifest = deepcopy(original.manifest)
+    manifest["compatibility"].update(
+        prompt_version="shadow-context-v1", retrieval_version="sql-memory-v1"
+    )
+
+    def archive():
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as target:
+            for name, content in original.files.items():
+                target.writestr(
+                    name, json.dumps(manifest).encode() if name == "manifest.json" else content
+                )
+        return output.getvalue()
+
+    clone = SqlMind(mind.connect, "legacy-clone-" + uuid4().hex)
+    report = import_experience(
+        clone,
+        archive(),
+        MOMENT + timedelta(seconds=1),
+        digest("legacy-clone"),
+        "Immutable identity\nnaïve ≠ unsafe\n",
+    )
+    assert "legacy_context_retrieval_rebuilt" in report["transformations"]
+    assert clone.head()["parent"]["compatibility"] == manifest["compatibility"]
+    source = {
+        meta["record_id"]: (meta, body)
+        for meta, body in mind.retained()[1]
+        if meta["part"] != "working_memory"
+    }
+    destination = {meta["record_id"]: (meta, body) for meta, body in clone.retained()[1]}
+    assert all(destination[key] == value for key, value in source.items())
+    current = validate_bundle(export_experience(clone, MOMENT + timedelta(seconds=2)))
+    assert current.manifest["compatibility"]["retrieval_version"] == "sql-memory-v2"
+    manifest["compatibility"]["prompt_version"] = "unknown-context"
+    with pytest.raises(BundleError, match="unsupported_experience_compatibility"):
+        import_experience(
+            SqlMind(mind.connect, "unknown-" + uuid4().hex),
+            archive(),
+            MOMENT,
+            digest("unknown"),
+            "Immutable identity\nnaïve ≠ unsafe\n",
+        )
 
 
 def test_sql_search_filters_future_and_other_traders(mind):

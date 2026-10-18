@@ -1,6 +1,6 @@
 # Roadmap
 
-Status of the repo today: **M3 information feeds delivered.** The core runs with scripted models; the gateway has no order submission path. Synthetic broker sessions and durable dry acknowledgements are tested offline; real broker connectivity is unverified. The deployed container remains the landing page; there are no orders or public track record.
+Status of the repo today: **hosted M4 shadow foundation.** Initial real SQL/Foundry/feed/journal/clone flows are verified alongside the preserved landing. Full provider/broker coverage, a complete FX day and model-quality/capacity/cost qualification remain open. The gateway has no order submission path; there are no orders or public track record.
 
 The rollout order is fixed even where the milestone numbers have groundwork in between:
 
@@ -54,7 +54,7 @@ Done when each feed can be killed without silencing the other two; the ForexFact
 
 ## M4 — Shadow mode
 
-**Application foundation delivered by [PIP-12](plan.md#pip-12--m4-shadow-runtime-and-persistent-mind).** See the [shadow guide](shadow.md) for the SQL adapter, Foundry connector, private engine/feed container, mandatory offline/SQL checks and paused experience-clone operations. The hosted deployment is pending owner approval. M4 remains open until actual inference, provider coverage/capacity/cost validation, full retained-day export and a full trading day of live events with independently verified zero orders pass.
+**Application foundation delivered by [PIP-12](plan.md#pip-12--m4-shadow-runtime-and-persistent-mind), initial hosted deployment by PIP-13.** See the [shadow guide](shadow.md) for the SQL adapter, Foundry connector, private engine/feed container, mandatory checks and paused experience clones. PIP-15 separates compact model context from full audit retention; PIP-14 still owns complete provider/broker coverage, model quality, full-day capacity/cost/export and independent zero-order evidence. A successful initial deployment does not close M4.
 
 Wake filter, `gpt-6-luna` triage, `gpt-6.1-sol` decisions, persistent mind. The core logs `enter`, `add`, `exit` and `hold` with reasoning and updates the mind. It sends no `OrderRequest`.
 

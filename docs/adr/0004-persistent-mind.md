@@ -11,7 +11,7 @@ PipMind is meant to be one entity that runs all week and is still that entity ne
 
 ## Decision
 
-Every model call reads the mind. Every decision writes it back.
+Every model call reads an appropriate view of the mind. Every decision writes it back.
 
 The mind has five parts:
 
@@ -22,6 +22,8 @@ The mind has five parts:
 5. **Long-term memory.** Older journal, reviews and suggestion outcomes, searchable. A call receives retrieved passages, not the whole archive.
 
 Identity and the current playbook are the leading prompt prefix, so provider prompt caching can reuse them across calls. Working memory, the journal tail, retrieved passages and the new events follow the prefix, because they change after each decision.
+
+PIP-15 refines these views: triage reads current state and the new event without historical prompt traces; decisions retain all current views, position theses and waiting conditions plus selected journal/source evidence. Retrieval searches retained history without an age cutoff, including older relevant and contrary facts. A short recent tail alone cannot stand in for continuing memory. Full SQL audit history remains separate from bounded model projections. See [context and Markdown knowledge](../shadow.md#markdown-knowledge-and-continuing-memory).
 
 The hosted demo uses Azure SQL Database Standard S0, with full-text search for the long-term part. Local SQL Server integration checks exercise the same adapter; SQLite may support isolated replay fixtures but is not the hosted mind or lease store. The shape of the mind does not depend on that engine. This storage choice was revised on 2026-10-17 with the [demo deployment profile](../architecture.md#demo-instance); the five-part persistent-mind decision is unchanged.
 
