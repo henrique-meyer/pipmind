@@ -2,7 +2,7 @@
 
 An autonomous AI forex trader that reads economic data, news and social posts 24/5, writes and evolves its own trading rules, and publishes every trade, its P&L and its reasoning live.
 
-**Status: M3 information feeds.** The replay/evaluation foundation, dry broker gateway and independently supervised information feeds are implemented. Models are scripted, broker connectivity is opt-in and unverified against a real account, and no order submission exists. There is no track record; the deployed container still serves the landing page only.
+**Status: M4 shadow application foundation.** The replay/evaluation foundation, dry broker gateway, information feeds and SQL-backed shadow runtime are implemented. The Foundry adapter is opt-in; hosted inference, provider/capacity/cost validation and a full live shadow day are pending resource approval. No order submission exists. There is no track record; the deployed container still serves the landing page only.
 
 PipMind is a public portfolio project by [Henrique Meyer](https://github.com/henrique-meyer), a senior software engineer and architect at Nitrosoft Technology Inc. It will run on one Forex.com account (StoneX / GAIN Capital, via CIAPI) and keep a public page of what it did and why.
 
@@ -12,7 +12,7 @@ The model is the trader. Deterministic code does not encode a strategy. The mode
 
 It is also one continuous trader, not a fresh prompt on every tick. A persistent mind holds its identity, a playbook of rules it wrote itself, its current views, and a journal. A nightly review adds, sharpens or retires those rules, and the diff is public.
 
-The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. M1 includes the bundle contracts and synthetic validator/round-trip fixtures; SQL-backed export/import and operational recovery remain planned.
+The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. M4 implements consistent SQL-backed experience export and paused atomic clone import; original-trader operational recovery remains M5 work.
 
 Losses stay on the page next to the reasoning that produced them. The project makes no claim about returns.
 
@@ -71,6 +71,7 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 | [Roadmap](docs/roadmap.md) | Milestones M0–M8, from this design to a public launch |
 | [Landing deployment](infra/README.md) | Local container, CI, GHCR, Azure delivery and custom-domain handoff |
 | [Information feeds](docs/feeds.md) | M3 macro/news/social workers, durable input state, read-only policy and offline validation |
+| [Shadow runtime](docs/shadow.md) | M4 SQL mind, Foundry adapter, private engine/feed container, clone operations and pending hosted/live gates |
 | [Dry broker gateway](docs/gateway.md) | M2 sessions, streaming/fallback, durable dry commands, internal service and offline validation |
 | [ADRs](docs/adr/0001-ai-makes-the-decisions.md) | Why the model decides, why the services are swappable, where macro data comes from, why the mind persists, and how suggestions differ from overrides |
 
@@ -85,7 +86,7 @@ uv run --all-extras python -m pytest -q
 uv run python -m pipmind.replay run --ci
 ```
 
-The 30-case dataset currently has 14 passing cases and 16 explicit later-capability deferrals. The fixture week emits 15 scripted decisions, five unsent proposals and zero dispatches. M2 adds a synthetic gateway session with 15 mandatory checks, including stream/REST recovery and durable dry acknowledgements. M3 adds 14 deterministic feed checks and actual worker/container kill-and-restart checks. Generated decisions, full traces and reports go to ignored `evals/reports/latest/`; only the sanitized baseline is tracked. No provider credentials or network calls are needed after dependency installation. See [the replay/evaluation guide](docs/replay.md) for candidate comparisons, output, baseline review and deferred coverage.
+The 30-case dataset currently has 14 passing cases and 16 explicit later-capability deferrals. The fixture week emits 15 scripted decisions, five unsent proposals and zero dispatches. M2 adds 15 mandatory gateway checks; M3 adds 14 feed checks and actual worker/container kill-and-restart checks. M4 separately requires real SQL integration, twelve starter scenarios through the shadow engine, eight SQL replay gates and container/database restart checks. Generated decisions, full traces and reports stay ignored; CI uploads bounded synthetic summaries only. No provider credentials or external calls are needed after dependency installation. See [the replay/evaluation guide](docs/replay.md) and [SQL shadow checks](docs/shadow.md#local-sql-and-mandatory-checks).
 
 ## Stack
 

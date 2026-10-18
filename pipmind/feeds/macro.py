@@ -231,6 +231,8 @@ class Macro:
 
     def drain(self):
         for pending in self.store.pending("macro"):
+            if "canonical_page" in pending["raw"]:
+                continue  # Canonical pages commit with their own pagination cursor.
             try:
                 result = self.normalize(pending["raw"], pending["received_at"])
                 self.store.complete("macro", pending["key"], result, self.now())

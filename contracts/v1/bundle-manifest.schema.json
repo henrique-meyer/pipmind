@@ -22,7 +22,7 @@
       "const": "pipmind"
     },
     "schema_version": {
-      "const": 1
+      "enum": [1, 2]
     },
     "mind_schema_version": {
       "const": 1
@@ -216,7 +216,7 @@
           }
         },
         "compatibility_decision": {
-          "const": "synthetic-contract-only"
+          "enum": ["synthetic-contract-only", "shadow-runtime-v1"]
         },
         "application_version": {
           "type": "string",
@@ -227,7 +227,7 @@
     "files": {
       "type": "array",
       "minItems": 3,
-      "maxItems": 127,
+      "maxItems": 9999,
       "items": {
         "type": "object",
         "additionalProperties": false,

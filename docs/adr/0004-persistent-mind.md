@@ -40,6 +40,8 @@ Both modes validate integrity, completeness, compatibility and archive safety be
 
 ## Consequences
 
+Implementation checkpoint, 2026-10-18: [M4 shadow](../shadow.md) implements consistent SQL experience export and paused atomic clone import using runtime manifest v2, including provenance/history and retrieval rebuild tests. Original-trader operational recovery remains M5. The hosted day/capacity/coverage gates remain pending; this checkpoint does not authorize Azure resources or trading.
+
 - A decision can cite Thursday's thesis on Monday.
 - Cache savings depend on the prefix staying byte-stable. Editors of the identity and playbook have to treat that prefix as a contract.
 - Working memory can drift away from the broker. Reconciliation overwrites positions and P&L from gateway snapshots before the next decision.

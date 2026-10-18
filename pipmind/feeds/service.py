@@ -15,7 +15,8 @@ from pipmind.feeds.common import FeedError, identity
 from pipmind.feeds.macro import webhook
 from pipmind.feeds.news import relay
 from pipmind.feeds.runtime import Supervisor
-from pipmind.feeds.store import FeedStore, encoded
+from pipmind.feeds.sql_store import configured_store
+from pipmind.feeds.store import encoded
 
 
 def create_app(store, token, *, secret="", supervisor=None, now=None):
@@ -38,10 +39,12 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
         openapi_url=None,
         lifespan=lifespan,
     )
+    app.state.store = store
 
     @app.middleware("http")
     async def auth(request, call_next):
-        if request.url.path not in {"/healthz", "/webhooks/fxmacrodata"}:
+        route_path = request.url.path.removeprefix(request.scope.get("root_path", ""))
+        if route_path not in {"/healthz", "/webhooks/fxmacrodata"}:
             if not hmac.compare_digest(
                 request.headers.get("authorization", "").encode(), ("Bearer " + token).encode()
             ):
@@ -92,11 +95,17 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
     def events(after: int = 0, limit: int = 100):
         if after < 0 or not 1 <= limit <= 500:
             raise HTTPException(422, "invalid_event_page")
-        return {"events": store.events(after, limit)}
+        return {
+            "source_id": store.source_id(),
+            "events": store.events(after, limit),
+            "coverage": store.state("canonical:quality", {"status": "unverified"}),
+            "quarantined": store.status()["quarantined"],
+        }
 
     @app.get("/status")
     def status():
         return {
+            "source_id": store.source_id(),
             **store.status(),
             "workers": supervisor.status() if supervisor else {},
             "worker_heartbeats": {
@@ -115,9 +124,14 @@ def from_env():
         config = configuration()
     else:
         config = recipes.load(os.environ["PIPMIND_FEED_CONFIG"])
-    path = os.environ.get("PIPMIND_FEED_STORE", ".data/feeds/events.sqlite3")
+    default_path = (
+        "/tmp/pipmind-feeds/runtime"
+        if os.environ.get("PIPMIND_FEED_BACKEND") == "sql"
+        else ".data/feeds/events.sqlite3"
+    )
+    path = os.environ.get("PIPMIND_FEED_STORE", default_path)
     profile = identity(encoded(config))
-    store = FeedStore(path, mode=mode, profile=profile)
+    store = configured_store(path, mode=mode, profile=profile)
     supervisor = Supervisor(path, config, mode=mode, profile=profile)
     return create_app(
         store,

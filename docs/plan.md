@@ -2,6 +2,23 @@
 
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
+## PIP-12 — M4 shadow runtime and persistent mind
+
+- Story: [PIP-12](https://nitro.atlassian.net/browse/PIP-12)
+- Status: Complete (application portion); hosted/live M4 qualification is PIP-13
+- Scope: shadow-only wake/triage/decision loop, project-backed Agent Framework Foundry adapter, SQL-backed five-part mind and bounded retrieval, durable input/consumer checkpoints, consistent Markdown export and staged atomic experience-clone import. Close feed delivery/reprocessing prerequisites and add private CLI/container operation and CI.
+- Acceptance: actual local SQL Server persistence/restart/transaction and clone round trips; replay/injected model contract checks; schema/chronology/evidence validation; failures preserve durable state and prevent dispatch. No order transport or trading authority is registered. Keep real configuration and operational data private.
+- Deployment boundary: prepare the hosted configuration and validation procedure without provisioning Azure resources or enabling paid/provider calls. Resource approval, live Foundry inference, provider coverage/capacity/cost validation and a full trading day of live shadow journaling remain explicit M4 completion gates. M5 ownership/recovery and M6 orders remain separate.
+- Validation: mandatory CI combines the offline suite and twelve starter scenarios through actual SQL, full-text/transaction/clone tests, eight SQL replay gates, authenticated integrated feed handoff, non-root container allocation, app/SQL restart and outage refusal checks. Existing 14/16 replay coverage, 28 portability, 15 gateway and 14 feed gates remain intact. Lint/format, Bicep compilation, dependency-license review, local documentation/JSON checks and secret scanning cover the release. No live model/provider/broker call or cloud deployment is claimed.
+
+## PIP-13 — Hosted M4 shadow qualification
+
+- Story: [PIP-13](https://nitro.atlassian.net/browse/PIP-13)
+- Status: To Do; pending owner resource/cost approval
+- Prerequisite: PIP-12 application implementation; this story covers the separate hosted/live milestone gates, not duplicate implementation work.
+- Proposal: preserve the current public landing; add the private always-on engine/feed and read-only dry-gateway backend, SQL S0 and Microsoft Foundry resource/project/deployments. Verify actual offer/region/quota/API/pricing and explicit SQL firewall/identity/bootstrap policy before approval, then represent only the approved change in Bicep and deploy through existing OIDC. The temporary extra landing is a disclosed layout/cost difference. No paid network isolation, hosted agent runtime, provider purchase or order capability is implicit.
+- Acceptance: pinned ready images and actual SQL/Foundry/private flows; approved provider/broker reads and outage/coverage checks; a full declared FX trading day with independent evidence of zero orders; measured shared capacity, SQL/lag/freshness/quarantine and actual call costs; complete retained-day export/paused clone/retrieval/provenance round trip; repeated real-model evals and human review. The [shadow guide](shadow.md#hosted-m4-approval-and-live-qualification) defines the procedure. Unknown prices/versions/coverage remain explicit; M4 stays open until these gates pass.
+
 ## PIP-6 — Portable Markdown mind export/import design
 
 - Story: [PIP-6](https://nitro.atlassian.net/browse/PIP-6)

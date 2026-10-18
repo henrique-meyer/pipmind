@@ -2,6 +2,8 @@
 
 PipMind is four logical services around one core. The core is the trader. The services are replaceable. The hosted demo groups these components into two containers in one Azure Container App; their contracts also support separate production deployments.
 
+**Implementation checkpoint (M4 / PIP-12):** the [shadow runtime](shadow.md) now supplies the SQL-backed mind/full-text retrieval, durable feed delivery and consumer checkpoints, project-backed Agent Framework Foundry adapter, private integrated engine/feed container and atomic paused experience-clone operations. It cannot send orders. Actual Foundry/provider calls, hosted deployment, capacity/cost validation, full retained-day export and a full live shadow day remain pending approval/qualification. The public hosted instance remains the landing page; M5 safety/recovery, M6 demo execution and M7 review are not implemented by shadow.
+
 The current public landing page supports optional runtime-configured GA4 analytics, disabled when no measurement ID is supplied. Analytics runs in the visitor's browser, separately from feed, broker, model and trader telemetry. Configuration and collection controls are described in the [landing deployment guide](../infra/README.md#google-analytics); enabling it on the hosted instance requires the deployment's own configuration and approval.
 
 Landing search metadata is server-rendered from a validated public origin supplied privately at runtime, with canonical/social URLs, WebSite structured data and a public-page sitemap. Unconfigured previews are noindex; operational/private routes are never public content. See [search metadata and discovery](../infra/README.md#search-metadata-and-discovery). This does not establish Search Console ownership, indexing or a ranking result.
@@ -56,7 +58,7 @@ The core is a single Python 3.12 process built on the Microsoft Agent Framework.
 
 ## macro-feed
 
-M3 implements the [information feed runtime](feeds.md), with independently supervised macro/news/social processes, durable isolated development inbox/cursors and offline provider fixtures. Its separate local container has authenticated private event/relay routes and signed webhook acceptance. Vendor polling is opt-in; no real source or Azure deployment is verified by these fixtures. Hosted SQL/outbox/consumer wiring and live smoke checks remain M4 work.
+M3 implements the [information feed runtime](feeds.md), with independently supervised macro/news/social processes, durable development inbox/cursors and offline provider fixtures. M4 adds the SQL inbox/outbox adapter, canonical page capture/reprocessing and durable shadow consumption. Feeds can run inside the shadow engine container or through the authenticated standalone handoff API. Vendor polling remains opt-in; hosted ingress, live provider coverage and actual Azure operation require qualification.
 
 Emits one `ReleaseEvent` per release. The core never calls a macro vendor.
 
@@ -232,7 +234,7 @@ The mind is operational data. It is not committed into this source repository.
 
 ### Markdown mind export and import
 
-PipMind supports a portable saved mind: another environment can import the same identity, playbook and retained experience at an identified checkpoint. This preserves saved state, not the underlying model weights or identical future decisions. Model availability, application behavior, retrieved context, new events and account conditions can change subsequent decisions. Learning here updates durable experience and playbook data; it does not fine-tune the model. M1 supplies the versioned bundle contracts and synthetic archive validation/round-trip fixtures. SQL-backed export/import, experience cloning and operational recovery remain planned for M4/M5; contract validation does not activate an imported mind.
+PipMind supports a portable saved mind: another environment can import the same identity, playbook and retained experience at an identified checkpoint. This preserves saved state, not the underlying model weights or identical future decisions. Model availability, application behavior, retrieved context, new events and account conditions can change subsequent decisions. Learning here updates durable experience and playbook data; it does not fine-tune the model. M1 supplies the versioned contracts and synthetic validation fixtures. M4 implements [SQL-backed consistent export and paused experience-clone import](shadow.md#experience-bundles-and-cloning), with explicit bounded runtime format and actual SQL rollback tests. Original-trader operational recovery remains M5 work; contract validation alone never activates a mind.
 
 SQL remains the transactional runtime store. Export/import is an explicit owner operation over that store, rather than live editing a directory of Markdown files. All durable context used by the agent must be exportable; provider-side conversation/session IDs cannot be the sole copy of memory.
 
