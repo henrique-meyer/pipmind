@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 
@@ -38,6 +39,8 @@ def test_analytics_is_optional_and_landing_only(monkeypatch, measurement_id, ori
             private = client.get(path)
             assert "google" not in private.headers["Content-Security-Policy"]
             assert "analytics.js" not in private.text
+            assert 'property="og:' not in private.text
+            assert 'name="twitter:' not in private.text
             assert private.headers["X-Robots-Tag"] == "noindex"
         assert client.get("/orders").status_code == 404
 
@@ -54,6 +57,28 @@ def test_seo_uses_configured_origin_not_request_headers(monkeypatch):
         assert page.canonicals == ["https://site.example/"]
         assert page.meta["og:url"] == page.canonicals[0]
         assert page.meta["og:image"] == "https://site.example/assets/logo.png"
+        head = Page()
+        head.feed(response.text.split("</head>", 1)[0])
+        assert head.meta["og:title"] == head.meta["twitter:title"] == head.title
+        assert (
+            head.meta["og:description"]
+            == head.meta["twitter:description"]
+            == head.meta["description"]
+        )
+        assert head.meta["og:type"] == "website"
+        assert head.meta["twitter:card"] == "summary"
+        assert head.meta["og:image"] == head.meta["twitter:image"] == page.meta["og:image"]
+        assert head.meta["og:image:type"] == "image/png"
+        assert head.meta["og:image:alt"] == "PipMind"
+        image = client.get(head.meta["og:image"])
+        assert image.status_code == 200 and image.headers["content-type"] == "image/png"
+        assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
+        width, height = struct.unpack(">II", image.content[16:24])
+        assert width >= 300 and height >= 300
+        assert (int(head.meta["og:image:width"]), int(head.meta["og:image:height"])) == (
+            width,
+            height,
+        )
         assert page.meta["robots"] == "index,follow"
         assert "X-Robots-Tag" not in response.headers
         assert "attacker.example" not in response.text and "ignored=secret" not in response.text

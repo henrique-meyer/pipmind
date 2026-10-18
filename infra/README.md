@@ -22,6 +22,8 @@ With `PUBLIC_SITE_URL` unset, the landing is `noindex`, robots disallows crawlin
 
 CI exercises both unconfigured and configured containers with a synthetic origin. The HTTP smoke validates metadata, JSON-LD, image availability, robots, sitemap, HEAD behavior and private-route isolation. Recheck visible copy against the current milestone so planned trading features are not presented as a current track record. Search Console setup, sitemap submission and indexing verification are separate owner-authorized operations; GA4 configuration does not establish them. Runtime configuration or a merged PR alone does not confirm deployment or search indexing.
 
+WhatsApp and other link previews use the existing `/assets/logo.png` (1024 by 1024), independently of the SVG favicon. Public-page head metadata uses an absolute HTTPS image URL, PNG content type and dimensions, page-specific title/description/canonical, and the Twitter summary card. Release smoke checks compare the declared dimensions with the actual PNG and enforce a minimum of 300 by 300. After deployment, request the absolute production image URL without authentication and confirm HTTP 200 with `image/png`. Re-share the canonical page URL; an earlier WhatsApp card can persist until its cache refreshes.
+
 ## Google Analytics
 
 Create a GA4 property and web stream for the public site, then supply its measurement ID through `GOOGLE_ANALYTICS_ID`. This is a public browser identifier, not an API credential; keep the actual value in environment configuration rather than source or image layers. Blank disables all analytics scripts and Google CSP permissions; an invalid nonblank ID prevents startup. No Python analytics package, Google credentials, paid infrastructure or backend event transport is required.
