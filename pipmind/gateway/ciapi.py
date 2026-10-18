@@ -15,6 +15,25 @@ from pipmind.gateway.config import GatewayError, number
 MAX_BODY = 2_000_000
 
 
+def fields(data):
+    """Accept documented PascalCase and current lower-camel DTO fields.
+
+    Refuse ambiguous aliases rather than choosing an authentication/account value.
+    Nested DTOs are normalized explicitly by their consuming operation.
+    """
+    if not isinstance(data, dict):
+        raise GatewayError("invalid_broker_response")
+    result = {}
+    for key, value in data.items():
+        if not isinstance(key, str) or not key:
+            raise GatewayError("invalid_broker_response")
+        name = key[0].upper() + key[1:]
+        if name in result:
+            raise GatewayError("ambiguous_broker_fields")
+        result[name] = value
+    return result
+
+
 def broker_time(value):
     match = re.fullmatch(r"/Date\((-?\d+)(?:[+-]0000)?\)/", str(value))
     try:
@@ -41,13 +60,16 @@ class HttpTransport:
     def __init__(self):
         self.opener = build_opener(NoRedirect)
 
-    def request(self, method, url, *, query=None, body=None):
-        # Never log URLs: CIAPI requires authentication in query strings.
+    def request(self, method, url, *, query=None, body=None, headers=None):
         url += ("?" + urlencode(query)) if query else ""
         request = Request(
             url,
             data=json.dumps(body).encode() if body is not None else None,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                **(headers or {}),
+            },
             method=method,
         )
         try:
@@ -94,13 +116,16 @@ class Ciapi:
         )
         if response.status != 200 or not isinstance(response.body, dict):
             raise GatewayError("broker_login_failed")
-        data = response.body
+        data = fields(response.body)
         if (
             not isinstance(data.get("Session"), str)
             or not 36 <= len(data["Session"]) <= 100
-            or data.get("PasswordChangeRequired") is True
-            or data.get("AllowedAccountOperator") is False
-            or data.get("Is2FAEnabled") is True
+            or data.get("StatusCode", 0) != 0
+            or type(data.get("StatusCode", 0)) is not int
+            or data.get("PasswordChangeRequired", False) is not False
+            or data.get("Is2FAEnabled", False) is not False
+            or (data.get("AllowedAccountOperator") is False and cfg.environment != "demo")
+            or type(data.get("AllowedAccountOperator", True)) is not bool
         ):
             raise GatewayError("broker_login_requires_attention")
         self._session = data["Session"]
@@ -128,8 +153,8 @@ class Ciapi:
                 response = self.transport.request(
                     "GET",
                     root.rstrip("/") + path,
-                    query={
-                        **(query or {}),
+                    query=query,
+                    headers={
                         "UserName": self.config.username,
                         "Session": self.session(),
                     },
@@ -158,10 +183,14 @@ class Ciapi:
     def verify_symbols(self):
         for item in self.symbols.by_symbol.values():
             try:
-                info = self.read(
-                    f"/v2/market/{item.market_id}/information",
-                    query={"clientAccountId": self.config.client_account_id},
-                )["MarketInformation"]
+                info = fields(
+                    fields(
+                        self.read(
+                            f"/v2/market/{item.market_id}/information",
+                            query={"clientAccountId": self.config.client_account_id},
+                        )
+                    )["MarketInformation"]
+                )
                 if info["MarketId"] != item.market_id or info["Name"] != item.instrument:
                     raise GatewayError("broker_symbol_mismatch")
                 if number(info["IncrementSize"], positive=True) != item.increment:
@@ -173,16 +202,35 @@ class Ciapi:
 
     def verify_account(self):
         try:
-            result = self.read("/v2/userAccount/ClientAndTradingAccount")["AccountResult"]
+            result = fields(self.read("/v2/userAccount/ClientAndTradingAccount"))
+            result = fields(result.get("AccountResult", result))
             matches = [
                 row
-                for row in result["TradingAccounts"]
+                for row in map(fields, result["TradingAccounts"])
                 if row["TradingAccountId"] == self.config.trading_account_id
                 and row["ClientAccountId"] == self.config.client_account_id
                 and row["TradingAccountStatus"] == "Open"
             ]
             if len(matches) != 1:
                 raise GatewayError("broker_account_mismatch")
+            clients = [
+                row
+                for row in map(fields, result["ClientAccounts"])
+                if row["ClientAccountId"] == self.config.client_account_id
+            ]
+            if len(clients) != 1:
+                raise GatewayError("broker_account_mismatch")
+            if self.config.environment == "demo":
+                operators = [
+                    row
+                    for row in map(fields, result["AccountOperators"])
+                    if row["AccountOperatorId"] == clients[0]["AccountOperatorId"]
+                ]
+                if (
+                    len(operators) != 1
+                    or number(operators[0].get("DaysUntilExpiryForDemo", 0)) <= 0
+                ):
+                    raise GatewayError("broker_demo_account_required")
         except (KeyError, TypeError):
             raise GatewayError("incomplete_broker_account") from None
 
@@ -191,17 +239,19 @@ class Ciapi:
         # Separate sides are usable only at the same tick; never invent a timestamp.
         sides = []
         for side in ("BID", "ASK"):
-            data = self.read(
-                f"/market/{item.market_id}/tickhistory",
-                query={
-                    "PriceTicks": 1,
-                    "priceType": side,
-                    "ClientAccountId": self.config.client_account_id,
-                },
-                legacy=True,
+            data = fields(
+                self.read(
+                    f"/market/{item.market_id}/tickhistory",
+                    query={
+                        "PriceTicks": 1,
+                        "priceType": side,
+                        "ClientAccountId": self.config.client_account_id,
+                    },
+                    legacy=True,
+                )
             )
             try:
-                tick = data["PriceTicks"][-1]
+                tick = fields(data["PriceTicks"][-1])
                 sides.append((number(tick["Price"], positive=True), broker_time(tick["TickDate"])))
             except (KeyError, IndexError, TypeError):
                 raise GatewayError("incomplete_rest_quote") from None
@@ -217,14 +267,18 @@ class Ciapi:
 
     def snapshots(self):
         as_of = stamp(self.now())  # Conservative request-start time, not last price time.
-        margin = self.read(
-            "/v2/margin/clientAccountMargin",
-            query={"clientAccountId": self.config.client_account_id},
+        margin = fields(
+            self.read(
+                "/v2/margin/clientAccountMargin",
+                query={"clientAccountId": self.config.client_account_id},
+            )
         )
-        data = self.read(
-            "/order/openpositions",
-            legacy=True,
-            query={"TradingAccountId": self.config.trading_account_id},
+        data = fields(
+            self.read(
+                "/order/openpositions",
+                legacy=True,
+                query={"TradingAccountId": self.config.trading_account_id},
+            )
         )
         try:
             account = {
@@ -239,7 +293,7 @@ class Ciapi:
             if not re.fullmatch(r"[A-Z]{3}", account["currency"]):
                 raise GatewayError("invalid_broker_currency")
             positions, identifiers = [], set()
-            for row in data["OpenPositions"]:
+            for row in map(fields, data["OpenPositions"]):
                 item = self.symbols.market(row["MarketId"])
                 if row["TradingAccountId"] != self.config.trading_account_id:
                     raise GatewayError("broker_account_mismatch")

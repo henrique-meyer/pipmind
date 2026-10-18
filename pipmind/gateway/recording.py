@@ -19,7 +19,7 @@ class RecordedTransport:
     def __init__(self, exchanges):
         self.exchanges, self.calls = deepcopy(exchanges), []
 
-    def request(self, method, url, *, query=None, body=None):
+    def request(self, method, url, *, query=None, body=None, headers=None):
         path = urlsplit(url).path
         self.calls.append((method, path))  # Auth/query/body are deliberately absent.
         if not self.exchanges:

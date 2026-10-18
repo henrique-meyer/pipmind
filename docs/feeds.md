@@ -16,7 +16,7 @@ SQL recipe changes use an explicit additive owner cutover:
 python -m pipmind.feeds reconfigure --previous-config .data/config/previous.json --config .data/config/replacement.json
 ```
 
-First deploy the profile-fencing implementation with the previous recipe. The owner operation checks the exact previous binding, records both recipes privately, atomically changes the binding and preserves every source ID, input, event and cursor. Old workers then refuse access. Deploy the replacement recipe through the existing secret/Bicep workflow and verify new workers, handoff and retained checkpoints. Never reset the store to accept new configuration. Changing/removing existing mappings requires a separately reviewed migration; this additive path refuses it.
+First deploy the profile-fencing implementation with the previous recipe. The owner operation checks the exact previous binding, records both recipes privately, atomically changes the binding and preserves every source ID, input, event and cursor. The active binding uses the existing writable state table; original metadata stays immutable and runtime SQL permissions do not expand. Old workers then refuse access. Deploy the replacement recipe through the existing secret/Bicep workflow, with an explicit recipe revision environment value to force a rollout when changing only a secret, and verify new workers, handoff and retained checkpoints. Never reset the store to accept new configuration. Changing/removing existing mappings requires a separately reviewed migration; this additive path refuses it.
 
 ## Run and validate offline
 

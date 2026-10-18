@@ -471,6 +471,7 @@ def test_feed_configuration_cutover_preserves_history_and_fences_stale_workers(m
         {"id": "test-" + uuid4().hex, "url": "https://news.invalid/feed", "kind": "analysis"}
     )
     cursor = "test-cursor:" + uuid4().hex
+    user = "fixture_migration_" + uuid4().hex
     original.save(cursor, {"since": "123", "next": "retained-page"})
     with original.transaction() as db:
         db.execute("SELECT v FROM pf_meta WHERE k='profile'")
@@ -479,15 +480,29 @@ def test_feed_configuration_cutover_preserves_history_and_fences_stale_workers(m
         db.execute(
             "UPDATE pf_meta SET v=%s WHERE k='profile'", (identity(identity(encoded(previous))),)
         )
+        db.execute(f"CREATE USER [{user}] WITHOUT LOGIN")
+        db.execute(f"GRANT SELECT ON dbo.pf_meta TO [{user}]")
+        db.execute(f"DENY UPDATE ON dbo.pf_meta TO [{user}]")
+        db.execute(f"GRANT SELECT,INSERT,UPDATE ON dbo.pf_state TO [{user}]")
+
+    def limited_connect():
+        db = mind.connect()
+        with db.cursor() as cur:
+            cur.execute(f"EXECUTE AS USER = '{user}'")
+        return db
+
     try:
         old = SqlFeedStore(mind.connect, profile=identity(encoded(previous)))
-        reconfigure(mind.connect, previous, replacement, MOMENT)
+        reconfigure(limited_connect, previous, replacement, MOMENT)
         fresh = SqlFeedStore(mind.connect, profile=identity(encoded(replacement)))
         assert fresh.source_id() == source and fresh.events() == events
         assert fresh.state(cursor) == {"since": "123", "next": "retained-page"}
         with pytest.raises(FeedError, match="profile_changed"):
             old.save(cursor, {"since": "0"})
         assert fresh.state(cursor)["since"] == "123"
+        with fresh.transaction() as db:
+            db.execute("SELECT v FROM pf_meta WHERE k='profile'")
+            assert db.fetchone()[0] == identity(identity(encoded(previous)))
         with pytest.raises(FeedError, match="profile_mismatch"):
             reconfigure(mind.connect, previous, replacement, MOMENT)
         altered = deepcopy(replacement)
@@ -497,7 +512,9 @@ def test_feed_configuration_cutover_preserves_history_and_fences_stale_workers(m
         assert fresh.events() == events
     finally:
         with transaction(mind.connect, "pipmind-feed-store") as db:
+            db.execute("DELETE pf_state WHERE k='configuration:active'")
             db.execute("UPDATE pf_meta SET v=%s WHERE k='profile'", (saved,))
+            db.execute(f"DROP USER [{user}]")
 
 
 def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primary(mind):
