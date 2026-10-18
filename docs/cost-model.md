@@ -45,6 +45,8 @@ The $35 line remains a usage allowance, supported by the revised $34.44 planning
 
 The first PIP-13 live context reached about 44,000 input tokens because journal excerpts recursively included previous prompts. Those observations do not support the small-input assumptions below. PIP-15 replaces that assembly with compact triage/current state and selected decision evidence, preserving full SQL history. Its byte bounds are not tokenizer measurements or a spending cap. Re-measure actual model counters, tool use, latency, refusals and wake frequency after deployment; the $35 allowance remains unqualified until a representative workload passes PIP-14.
 
+PIP-15's refined hosted comparison measures three retained cases per role: mean triage input falls from 44,563.7 to 2,416.7 tokens, and decision input from 44,896.7 to 5,452. All six responses are valid; an actual deployed clock wake uses 1,980 input / 134 output tokens. See [the measurement protocol and limits](shadow.md#hosted-context-measurement-pip-15). These are SDK/provider token counters, not a verified invoice or full-day volume. Keep the $35 line as a planning allowance: output/reasoning, wake frequency, retries, cache hits and separate evaluation usage still determine the monthly charge. The original 1,500/8,000 input assumptions below are planning examples rather than measured workload averages.
+
 ### Unit cost, uncached
 
 Planning assumptions for the size of a call:

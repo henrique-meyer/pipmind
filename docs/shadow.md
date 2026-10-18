@@ -75,6 +75,21 @@ The existing owner initialization reads identity and playbook from private Markd
 
 A curated private Markdown knowledge library could organize durable topic briefs, rules and lessons. A useful brief would carry an as-of date, supporting and contrary source IDs, unresolved questions and conditions that invalidate its current view. Current working views/theses/waiting conditions provide continuing state now, while archive retrieval supplies dated evidence. Automatic thematic brief maintenance and self-written playbook revisions require their own reviewed writer/evaluation workflow; M7 remains the self-review milestone. This release does not introduce a second mutable file store or automatic Git synchronization. Raw articles and private experience stay out of the public source repository; article storage still follows provider retention rights.
 
+### Hosted context measurement (PIP-15)
+
+The refined `shadow-context-v3` release was deployed and verified through [workflow 39148772345](https://github.com/henrique-meyer/pipmind/actions/runs/39148772345). Required CI passes 309 offline and 27 actual SQL tests, including older/contrary evidence amid unrelated legacy traces, exact audit retention and known v1/v2 bundle imports. Actual backend images/build/readiness, existing allocation/configuration/identity/egress, current error-free worker heartbeats and the preserved public landing are independently checked.
+
+Three retained cases (one release, two news items) were re-run through real Foundry deployments. They use the same source events and original historical working/broker/feed state, with retrieval limited to evidence available at each original step. Paired decisions use the original triage result and are explicitly forced for measurement; this is not a measured live wake frequency. All six refined responses pass local contracts and evidence checks, with no tool round trips in this sample:
+
+| Phase | Mean original input tokens | Mean refined input tokens | Reduction | Maximum refined input |
+| --- | ---: | ---: | ---: | ---: |
+| Triage | 44,563.7 | 2,416.7 | 94.58% | 2,688 |
+| Decision | 44,896.7 | 5,452 | 87.86% | 5,854 |
+
+The original 80 immutable SQL audit records match their predeployment fingerprint. New comparison requests/responses/usage, including the initial guarded trial, remain in separate paused SQL validation minds and ignored private reports. A real owner-triggered clock event also completes through the deployed engine with 1,980 input / 134 output tokens, resumed state, no pending input/current runtime error and zero dispatches. No extra resource, model quota, provider access or landing change was needed.
+
+This is a small controlled input-token comparison plus an actual clock smoke flow. It does not establish full-day reasoning quality, source coverage, sustained capacity, caching savings or a monthly bill. Model output, call volume, retries and evaluation usage still need PIP-14 qualification. Older relevant facts remain available; the optimization changes the selected view, not the retained history.
+
 ## Experience bundles and cloning
 
 Runtime exports use manifest version 2 / `shadow-runtime-v1`, retaining the v1 Markdown/front-matter contracts. The v1 synthetic archive profile remains supported by its validator, but cannot activate a shadow clone. A single SQL checkpoint captures all retained records and metadata, with exact identity/playbook text, provenance, evidence, history and override tags. Checksums, inventory, chronology, compatibility and all references are validated; archives are never extracted as files.
