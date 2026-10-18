@@ -61,8 +61,8 @@ jobs:
           docker build --build-arg BUILD_SHA="$GITHUB_SHA" -t pipmind:ci .
           docker run -d --name pipmind-ci --read-only --cap-drop ALL --security-opt no-new-privileges -p 127.0.0.1:8080:8080 pipmind:ci
           python3 scripts/smoke.py --url http://127.0.0.1:8080 --build "$GITHUB_SHA"
-          docker run -d --name pipmind-analytics-ci --read-only --cap-drop ALL --security-opt no-new-privileges -e GOOGLE_ANALYTICS_ID=G-TEST123456 -p 127.0.0.1:8083:8080 pipmind:ci
-          python3 scripts/smoke.py --url http://127.0.0.1:8083 --build "$GITHUB_SHA" --analytics-id G-TEST123456
+          docker run -d --name pipmind-analytics-ci --read-only --cap-drop ALL --security-opt no-new-privileges -e GOOGLE_ANALYTICS_ID=G-TEST123456 -e PUBLIC_SITE_URL=https://site.example -p 127.0.0.1:8083:8080 pipmind:ci
+          python3 scripts/smoke.py --url http://127.0.0.1:8083 --build "$GITHUB_SHA" --analytics-id G-TEST123456 --site-url https://site.example
       - name: Remove test container
         if: always()
         run: docker rm -f pipmind-ci pipmind-analytics-ci || true

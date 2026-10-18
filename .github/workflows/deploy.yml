@@ -26,6 +26,7 @@ jobs:
       AZURE_CONTAINER_ENVIRONMENT: ${{ secrets.AZURE_CONTAINER_ENVIRONMENT }}
       AZURE_LOG_WORKSPACE: ${{ secrets.AZURE_LOG_WORKSPACE }}
       GOOGLE_ANALYTICS_ID: ${{ vars.GOOGLE_ANALYTICS_ID }}
+      PUBLIC_SITE_URL: ${{ secrets.PUBLIC_SITE_URL }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -38,6 +39,8 @@ jobs:
           for value in "$AZURE_RESOURCE_GROUP" "$AZURE_LOCATION" "$AZURE_CONTAINER_APP" "$AZURE_CONTAINER_ENVIRONMENT" "$AZURE_LOG_WORKSPACE"; do
             test -n "$value" || exit 1
           done
+          test -n "$PUBLIC_SITE_URL" || { echo 'Configure the public site origin before deploying.'; exit 1; }
+          python3 -c 'import os; from app.seo import public_site_url; public_site_url(os.environ["PUBLIC_SITE_URL"])'
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
           DIGEST=$(docker buildx imagetools inspect "$IMAGE:$SOURCE_SHA" --format '{{json .}}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["manifest"]["digest"])')
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
@@ -57,6 +60,7 @@ jobs:
               domains = json.load(f).get("customDomains") or []
           values = {"location": os.environ["AZURE_LOCATION"], "appName": os.environ["AZURE_CONTAINER_APP"], "environmentName": os.environ["AZURE_CONTAINER_ENVIRONMENT"], "workspaceName": os.environ["AZURE_LOG_WORKSPACE"], "containerImage": os.environ["CONTAINER_IMAGE"], "customDomains": domains}
           values["googleAnalyticsId"] = os.environ.get("GOOGLE_ANALYTICS_ID", "")
+          values["publicSiteUrl"] = os.environ["PUBLIC_SITE_URL"]
           with open(sys.argv[2], "w") as f:
               json.dump({"parameters": {k: {"value": v} for k, v in values.items()}}, f)
           PY
@@ -66,6 +70,7 @@ jobs:
           FQDN=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.configuration.ingress.fqdn' -o tsv)
           echo "::add-mask::$FQDN"
           python3 scripts/smoke.py --url "https://$FQDN" --build "$SOURCE_SHA"
+          python3 scripts/smoke.py --url "$PUBLIC_SITE_URL" --build "$SOURCE_SHA"
           READY_REVISION=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.latestReadyRevisionName' -o tsv)
           test -n "$READY_REVISION"
           REVISION_IMAGE=$(az containerapp revision show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --revision "$READY_REVISION" --query 'properties.template.containers[0].image' -o tsv)

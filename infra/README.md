@@ -12,6 +12,16 @@ docker compose down
 
 Open the local address to review desktop and mobile layouts. The page has working source/roadmap links and internal navigation and no form or external fonts. Optional Google Analytics is disabled by default. `/healthz` identifies the application, landing mode and source build.
 
+## Search metadata and discovery
+
+`PUBLIC_SITE_URL` is the public HTTPS origin (no path, query, fragment, credentials or port). Supply the actual custom hostname only through private configuration. The server validates it at startup and never builds canonical URLs from request or forwarded Host headers. It renders a descriptive title/description, canonical link, Open Graph/social-card tags and truthful WebSite JSON-LD in the initial HTML. The social image reuses the approved PNG logo. The structured-data content has a matching CSP hash; inline/eval script permissions are not relaxed.
+
+Configured deployments serve `/robots.txt` and `/sitemap.xml` with the canonical landing URL only. Equivalent cloud-host copies advertise that same canonical URL; this is a consolidation signal, not a redirect or guarantee of Google's canonical selection. Missing routes remain 404, and operational/error responses carry `X-Robots-Tag: noindex`. Public assets stay crawlable. Future distinct content pages need their own metadata and sitemap entries.
+
+With `PUBLIC_SITE_URL` unset, the landing is `noindex`, robots disallows crawling, and the sitemap is absent (404). This protects unconfigured previews from accidental indexing; it is not an access control. Keep all private routes isolated independently. Local Compose reads the value from process environment or an ignored `.env` without overriding existing process values. For an approved hosted release, configure the GitHub **demo environment secret** `PUBLIC_SITE_URL`; the manual workflow requires a nonblank valid origin, passes it as Bicep's `publicSiteUrl`, and smoke-tests both default and custom hosts. The secret classification keeps this project's real custom hostname out of public workflow logs; the resulting canonical URL is intentionally public HTML.
+
+CI exercises both unconfigured and configured containers with a synthetic origin. The HTTP smoke validates metadata, JSON-LD, image availability, robots, sitemap, HEAD behavior and private-route isolation. Recheck visible copy against the current milestone so planned trading features are not presented as a current track record. Search Console setup, sitemap submission and indexing verification are separate owner-authorized operations; GA4 configuration does not establish them. Runtime configuration or a merged PR alone does not confirm deployment or search indexing.
+
 ## Google Analytics
 
 Create a GA4 property and web stream for the public site, then supply its measurement ID through `GOOGLE_ANALYTICS_ID`. This is a public browser identifier, not an API credential; keep the actual value in environment configuration rather than source or image layers. Blank disables all analytics scripts and Google CSP permissions; an invalid nonblank ID prevents startup. No Python analytics package, Google credentials, paid infrastructure or backend event transport is required.
