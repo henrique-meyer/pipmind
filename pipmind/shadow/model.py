@@ -36,6 +36,7 @@ class FoundryModel:
         decision,
         *,
         credential_mode="managed-identity",
+        managed_identity_client_id=None,
         enabled=False,
         timeout=90,
         factory=None,
@@ -57,6 +58,7 @@ class FoundryModel:
             raise ShadowError("foundry_explicit_configuration_required")
         self.endpoint, self.triage_model, self.decision_model = endpoint, triage, decision
         self.credential_mode, self.timeout, self.factory = credential_mode, timeout, factory
+        self.managed_identity_client_id = managed_identity_client_id
         self.contracts = Contracts()
 
     @classmethod
@@ -67,6 +69,7 @@ class FoundryModel:
             os.environ.get("PIPMIND_FOUNDRY_DECISION_DEPLOYMENT", ""),
             enabled=os.environ.get("PIPMIND_MODEL_CALLS") == "true",
             credential_mode=os.environ.get("PIPMIND_FOUNDRY_CREDENTIAL", "managed-identity"),
+            managed_identity_client_id=os.environ.get("PIPMIND_MANAGED_IDENTITY_CLIENT_ID"),
         )
 
     async def _call(self, phase, event, context, store, moment, triage=None):
@@ -127,7 +130,13 @@ class FoundryModel:
                 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 
                 credential = (
-                    ManagedIdentityCredential()
+                    ManagedIdentityCredential(
+                        **(
+                            {"client_id": self.managed_identity_client_id}
+                            if self.managed_identity_client_id
+                            else {}
+                        )
+                    )
                     if self.credential_mode == "managed-identity"
                     else AzureCliCredential()
                 )

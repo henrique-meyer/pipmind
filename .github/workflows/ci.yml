@@ -44,6 +44,8 @@ jobs:
         run: |
           az bicep build --file infra/main.bicep --outfile "$RUNNER_TEMP/main.json"
           az bicep build --file infra/domain.bicep --outfile "$RUNNER_TEMP/domain.json"
+          az bicep build --file infra/shadow-foundation.bicep --outfile "$RUNNER_TEMP/shadow-foundation.json"
+          az bicep build --file infra/shadow-app.bicep --outfile "$RUNNER_TEMP/shadow-app.json"
       - name: Verify browser analytics initialization offline
         run: node --test tests/analytics.test.mjs
       - name: Build and exercise isolated dry gateway container

@@ -79,10 +79,15 @@ def connector(env=None):
     else:
         from azure.identity import ManagedIdentityCredential
 
+        from pipmind.shadow.tls import configure_tls
+
+        configure_tls()
+
         ca = env.get("PIPMIND_SQL_CA_FILE") or ssl.get_default_verify_paths().cafile
         if not ca:
             raise ShadowError("sql_trust_store_required")
-        credential = ManagedIdentityCredential()
+        identity = env.get("PIPMIND_MANAGED_IDENTITY_CLIENT_ID")
+        credential = ManagedIdentityCredential(**({"client_id": identity} if identity else {}))
         options.update(
             cafile=ca,
             validate_host=True,

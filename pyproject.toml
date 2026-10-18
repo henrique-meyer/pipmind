@@ -14,6 +14,7 @@ shadow = [
     "agent-framework-foundry==1.15.0",
     "azure-identity==1.26.0",
     "python-tds==1.17.1",
+    "service-identity==26.1.0",
     "pyOpenSSL==26.4.0",
 ]
 

@@ -2,7 +2,9 @@
 
 The hosted demo uses the [demo deployment profile](architecture.md#demo-instance): one Azure Container App containing two containers, Azure SQL S0, default managed networking, Blob Storage, a free static frontend, built-in app secrets, and essential monitoring. The application also supports separately sized production deployments.
 
-M4 application code does not provision this profile or validate its allowances. The [hosted shadow proposal](shadow.md#hosted-m4-approval-and-live-qualification) preserves the existing landing while adding a private backend temporarily; its extra landing usage and actual model/provider offer must be priced and approved before deployment. No new charges or updated Azure quote are claimed by PIP-12.
+PIP-13 deploys the approved [hosted shadow layout](shadow.md#hosted-m4-approval-and-live-qualification), preserving the existing landing alongside a private backend. The owner selected **monthly** FXMacroData billing to validate the service first. Annual billing below remains a comparison, not the selected subscription.
+
+The temporary M4 layout omits the $2 Blob allowance until publishing/archive storage is deployed: approximately **$157.64/month plus landing usage and inter-region SQL traffic**, before tax, at the same compute/model/provider allowances. A landing active for all 730 hours would add about $19.71; ordinary scale-to-zero usage is lower. This leaves little margin below $180 at that upper scenario. SQL is in Central US because subscription capability checks blocked provisioning in East US regions; the backend and Foundry stay in the existing region. Measure latency and inter-region traffic rather than assuming those transfers are free. No VNet, NAT, private endpoints or separately billed load balancer/IPs are added.
 
 **Planning estimate: $59.14/month hosting, $151.31/month total with annual FXMacroData billing, or $159.64/month total with monthly FXMacroData billing. Planning budget: $180/month before tax.** This supersedes the initial under-$100 estimate. It is a planning budget with alerts, not an enforced runtime spending cap or approval to buy resources/subscriptions.
 
@@ -34,12 +36,12 @@ Sources: [Azure retail pricing API](https://learn.microsoft.com/en-us/rest/api/c
 
 | Model | Role | Input, per million | Output, per million |
 | --- | --- | ---: | ---: |
-| `gpt-6.1-sol` | Decisions, nightly self-review | $2 | $10 |
+| `gpt-6.1-sol` (US Data Zone Standard) | Decisions, future nightly self-review | $2.20 | $11 |
 | `gpt-6-luna` | Triage and summaries | $0.10 | $0.50 |
 
-Both model roles use deployments in a Microsoft Foundry resource/project. The table retains the previous token-rate planning assumptions, originally based on [OpenAI's published model prices](https://developers.openai.com/api/docs/models); it is not a verified Foundry price or confirmation that these model versions are available in the selected region. Before provisioning, verify Foundry model availability/quota, deployment type, input/output/reasoning and cached-input rates, and replace the assumptions with the actual deployment quote. Reasoning tokens on the strong model count as output.
+On 2026-10-18, subscription catalog/capacity and Azure retail API checks confirmed GA versions `2026-09-29` (Sol) and `2026-09-22` (Luna), Responses support, and these deployment rates. Sol's Global quota was exhausted, so the approved deployment uses available US Data Zone Standard capacity (40k TPM within 50k remaining); Luna uses Global Standard (50k TPM within 250k remaining). Both deployments belong to a Microsoft Foundry resource/project. Cached input is $0.11/million for Sol and $0.01/million for Luna. Sol long-context input/output is $4.40/$16.50; the calculations here assume short context. Reasoning tokens count as output. Recheck offers and quota before any future deployment change. [Azure retail pricing API](https://prices.azure.com/api/retail/prices), [Foundry GA model announcement](https://devblogs.microsoft.com/foundry/whats-new-in-microsoft-foundry-september-2026/).
 
-The $35 line remains a model-usage allowance. This platform correction does not validate or change the numerical estimate. Foundry-hosted agent compute, managed memory/search, paid platform tools and cloud evaluation services are outside the base profile; add their charges explicitly if selected. Agent Framework orchestration and the persistent mind stay in Container Apps and SQL. Optional judge runs are additional usage. The current landing deployment has no Foundry resource or model deployment.
+The $35 line remains a usage allowance, supported by the revised $34.44 planning scenario below. Actual context sizes, reasoning and wake counts still need hosted measurement. Foundry-hosted agent compute, managed memory/search, paid tools and cloud evaluation services are outside this profile. Agent Framework and the persistent mind stay in Container Apps and SQL. Optional judge runs are additional usage; M7 self-review is not implemented by M4.
 
 ### Unit cost, uncached
 
@@ -51,20 +53,20 @@ Planning assumptions for the size of a call:
 
 | Call | Input | Output | Uncached cost |
 | --- | ---: | ---: | ---: |
-| Decision (`gpt-6.1-sol`) | 8,000 × $2 / 1e6 = $0.016 | 2,800 × $10 / 1e6 = $0.028 | **$0.044** |
+| Decision (`gpt-6.1-sol`) | 8,000 × $2.20 / 1e6 = $0.0176 | 2,800 × $11 / 1e6 = $0.0308 | **$0.0484** |
 | Triage (`gpt-6-luna`) | 1,500 × $0.10 / 1e6 = $0.00015 | 150 × $0.50 / 1e6 = $0.000075 | **$0.000225** |
-| Nightly review | 30,000 × $2 / 1e6 = $0.06 | 8,000 × $10 / 1e6 = $0.08 | **$0.14** per night |
+| Nightly review | 30,000 × $2.20 / 1e6 = $0.066 | 8,000 × $11 / 1e6 = $0.088 | **$0.154** per night |
 
-A month is about 22 trading days. Budget 30 nightly reviews plus $1 for weekly deeper review: `30 × $0.14 + $1 = $5.20`. This conservatively allows review every calendar night.
+A month is about 22 trading days. Budget 30 future nightly reviews plus $1.10 for weekly deeper review: `30 × $0.154 + $1.10 = $5.72`.
 
 | Scenario | Decisions / trading day | Triage items / trading day | Review / month | Uncached model month |
 | --- | ---: | ---: | ---: | ---: |
-| Quiet | 15 | 500 | $5.20 | $22.20 |
-| **Planning** | **20** | **1,500** | **$5.20** | **$31.99** |
-| Busy | 40 | 1,500 | $5.20 | $51.35 |
-| Stress | 150 | 4,000 | $8.00 | $173.00 |
+| Quiet | 15 | 500 | $5.72 | $24.17 |
+| **Planning** | **20** | **1,500** | **$5.72** | **$34.44** |
+| Busy | 40 | 1,500 | $5.72 | $55.74 |
+| Stress | 150 | 4,000 | $8.80 | $188.32 |
 
-Planning arithmetic: `440 × $0.044 + 33,000 × $0.000225 + $5.20 = $31.985`, rounded to $31.99. The total uses a **$35 model allowance**, with a little room above that scenario. Decision and triage frequencies are assumptions, not runtime caps. A busy month adds about $16.35 to the base total before any other change.
+Planning arithmetic: `440 × $0.0484 + 33,000 × $0.000225 + $5.72 = $34.441`, rounded to $34.44. The total uses a **$35 allowance**. Decision and triage frequencies are assumptions, not runtime caps. A busy month adds about $20.74 to the base total before other changes.
 
 ### Cached input
 

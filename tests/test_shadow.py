@@ -166,25 +166,33 @@ def test_private_file_bounds_and_export_destination(tmp_path):
         write_private(ROOT / "public-mind.pipmind", b"private")
 
 
-def test_hosted_sql_requires_tls_identity_and_refuses_plaintext_public_hosts(monkeypatch):
+@pytest.mark.parametrize("identity", [None, "synthetic-user-assigned-identity"])
+def test_hosted_sql_requires_tls_identity_and_refuses_plaintext_public_hosts(monkeypatch, identity):
     import azure.identity
     import pytds
 
     from pipmind.shadow.sql import connector
 
     captured = {}
+    credentials = {}
     monkeypatch.setattr(pytds, "connect", lambda **kw: captured.update(kw))
     monkeypatch.setattr(
         azure.identity,
         "ManagedIdentityCredential",
-        lambda: SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="synthetic-only")),
+        lambda **kw: (
+            credentials.update(kw)
+            or SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="synthetic-only"))
+        ),
     )
     env = {
         "PIPMIND_SQL_SERVER": "sql.example",
         "PIPMIND_SQL_DATABASE": "synthetic",
         "PIPMIND_SQL_CA_FILE": "/synthetic/ca.pem",
     }
+    if identity:
+        env["PIPMIND_MANAGED_IDENTITY_CLIENT_ID"] = identity
     connector(env)()
+    assert credentials == ({"client_id": identity} if identity else {})
     assert captured["validate_host"] and captured["enc_login_only"] is False
     assert captured["cafile"] == "/synthetic/ca.pem"
     assert captured["access_token_callable"]() == "synthetic-only"

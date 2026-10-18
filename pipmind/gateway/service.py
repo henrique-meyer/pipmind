@@ -137,6 +137,8 @@ def create_app(gateway, token, *, worker=None):
 
     @app.post("/orders")
     async def orders(request: Request):
+        if gateway is None:
+            raise GatewayError("broker_configuration_pending")
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
@@ -164,6 +166,12 @@ def create_app(gateway, token, *, worker=None):
 def from_env():
     if os.environ.get("PIPMIND_GATEWAY_MODE", "dry") != "dry":
         raise GatewayError("only_dry_mode_is_implemented")
+    if os.environ.get("PIPMIND_GATEWAY_UNCONFIGURED") == "true":
+        if os.environ.get("PIPMIND_BROKER_READS") == "true":
+            raise GatewayError("broker_configuration_pending")
+        # Provision a healthy, authenticated sidecar without inventing venue IDs.
+        # No ledger or command acceptance exists until real mapping is supplied.
+        return create_app(None, os.environ.get("PIPMIND_GATEWAY_TOKEN", ""))
     symbols = symbols_from_env()
     config = BrokerConfig.from_env() if os.environ.get("PIPMIND_BROKER_READS") == "true" else None
     # Account/environment binding is private and cannot cross ledgers on restart.
