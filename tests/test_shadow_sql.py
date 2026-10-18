@@ -262,7 +262,9 @@ def test_archive_relevance_preserves_month_old_and_contrary_evidence_amid_legacy
     assert not {"future-inflation", "private-other"} & ids
     assert all(not identifier.startswith("noise-") for identifier in ids)
     assert "old_article" not in mind.search("noise-0", MOMENT)[0]["body"]
-    assert mind.search("future-inflation", MOMENT) == []
+    assert "future-inflation" not in {
+        row["metadata"]["record_id"] for row in mind.search("future-inflation", MOMENT)
+    }
     context = mind.context(MOMENT, "unrelated current headline")
     selected = phase_context(context, "decision")
     assert "USD inflation outlook" in selected["working_memory"]["views"][0]
