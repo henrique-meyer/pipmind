@@ -200,8 +200,8 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 
 ### WhatsApp logo preview follow-up (PIP-11)
 
-- Status: In Progress
+- Status: Complete (implementation); production release is verified separately after merge
 - Scope: reuse the approved logo PNG for every shareable public HTML page, with page-specific title/description/canonical and matching Open Graph website and Twitter summary metadata. Keep favicon and private/admin isolation; describe only visible content.
 - Acceptance: absolute HTTPS PNG URL, at least 300 by 300 pixels, declared image type/dimensions/alt, and unauthenticated HTTP 200 image/png. Export the existing SVG only if the approved raster is insufficient.
 - Release: owner requested deployment of this focused landing update through existing Bicep/OIDC; preserve resources, capacity, backend, domain and analytics. Verify production HTML/image, revision/build and complete affected browser flow. Return the public URL for re-sharing; WhatsApp cache refresh is outside application control.
-- Validation: the existing approved 1024-square PNG is sufficient and remains unchanged. Configured/unconfigured non-root container smoke checks pass, including head metadata consistency, PNG signature/type/dimensions, Host isolation, navigation and private routes. Focused regression checks cover public tags and exclude private responses. Production verification follows the approved release.
+- Validation: the existing approved 1024-square PNG is sufficient and remains unchanged. All 25 landing tests and configured/unconfigured non-root container smoke checks pass, including head metadata consistency, PNG signature/type/dimensions, Host isolation and private routes. Browser approach/home navigation, Ruff, Bicep compilation and secret scanning pass. The deployment workflow repeats the public HTTP smoke; independent absolute-URL image verification and ready-revision checks are retained in private release evidence.
