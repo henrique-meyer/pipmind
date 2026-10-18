@@ -172,9 +172,7 @@ class Supervisor:
             "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
         )
         if method == "forkserver":
-            multiprocessing.set_forkserver_preload(
-                ["pipmind.feeds.runtime", "azure.identity", "pytds", "OpenSSL", "service_identity"]
-            )
+            multiprocessing.set_forkserver_preload(["pipmind.feeds.preload"])
         self.context = multiprocessing.get_context(method)
         self.stop_paths = {}
         self.processes, self.restarts, self.next_start = {}, {}, {}
