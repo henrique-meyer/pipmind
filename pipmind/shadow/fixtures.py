@@ -138,6 +138,9 @@ class SyntheticModel:
 
 def app(connect):
     local_only()
+    # Exercise the real SDK import footprint within the demo memory allocation,
+    # without constructing a provider client or making a model request.
+    __import__("agent_framework.foundry")
     from pipmind.shadow.service import create_app
 
     store = SqlMind(connect, os.environ["PIPMIND_SHADOW_TRADER"])

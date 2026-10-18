@@ -1,4 +1,4 @@
-"""Three spawned workers with independent backoff, restarts and private heartbeats."""
+"""Three isolated workers with independent backoff, restarts and private heartbeats."""
 
 import multiprocessing
 import os
@@ -163,7 +163,17 @@ class Supervisor:
     def __init__(self, path, config, *, mode="local-read", profile="synthetic"):
         self.path, self.config, self.mode, self.profile = str(path), config, mode, profile
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.context = multiprocessing.get_context("spawn")
+        # A pristine fork server shares read-only dependency pages on Linux.
+        # Never fork this ASGI process: it already owns threads, SQL and HTTP
+        # clients. Preload imports only; workers create their own connections.
+        method = (
+            "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+        )
+        if method == "forkserver":
+            multiprocessing.set_forkserver_preload(
+                ["pipmind.feeds.runtime", "azure.identity", "pytds", "OpenSSL", "service_identity"]
+            )
+        self.context = multiprocessing.get_context(method)
         self.stop_paths = {}
         self.processes, self.restarts, self.next_start = {}, {}, {}
         self.closed = threading.Event()

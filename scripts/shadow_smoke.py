@@ -262,6 +262,23 @@ def main():
             wait(lambda: request("/status")["body"]["pending"] == 0)
             before = request("/status")["body"]["outcomes"]
             assert before >= 2
+            memory = []
+            memory_probe = (
+                "from pathlib import Path; "
+                "paths=['/sys/fs/cgroup/memory.current',"
+                "'/sys/fs/cgroup/memory/memory.usage_in_bytes']; "
+                "print(next(int(Path(p).read_text()) for p in paths if Path(p).exists()))"
+            )
+            for _ in range(6):
+                memory.append(int(command("docker", "exec", app, "python", "-c", memory_probe)))
+                assert request("/status")["body"]["pending"] == 0
+                time.sleep(5)
+            # Leave room for real inference/SQL bursts and diagnostic processes.
+            # This is a regression gate, not full-day capacity certification.
+            assert max(memory) < 448 * 1024 * 1024, "shadow_memory_headroom_exhausted"
+            print(
+                f"PASS: warm SDK and isolated workers peak {max(memory) // 1048576} MiB", flush=True
+            )
             command("docker", "restart", "--time", "10", app)
             wait(lambda: request("/healthz", auth=False))
             assert request("/status")["body"]["outcomes"] == before

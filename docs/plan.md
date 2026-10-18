@@ -39,10 +39,11 @@ The [roadmap](roadmap.md) defines the application milestones and rollout order. 
 ## PIP-14 — Complete M4 live qualification
 
 - Story: [PIP-14](https://nitro.atlassian.net/browse/PIP-14)
-- Status: Pending remaining provider coverage and full-day qualification
+- Status: In progress; restart remediation, feed/role coverage and repeated evaluations
 - Scope: remaining live milestone gates moved from PIP-13, without duplicating runtime implementation. The owner-approved PipMind X app-only credential now passes public account/timeline GETs; continuous polling still needs verified role recipes and a controlled configuration-binding migration. Resolve FOREX.com demo API enablement, verified indicator/unit/source coverage and approved signed callback delivery. Preserve explicit timing, revision, backfill and outage gaps.
 - Acceptance: a complete declared FX trading day with independent zero-order evidence; measured container/SQL capacity, lag, freshness, quarantine and actual model usage/cost; repeated real-model evaluations and owner human calibration; complete retained-day export and paused clone with retrieval/provenance and separate destination binding. See the [hosted qualification procedure](shadow.md#hosted-m4-approval-and-live-qualification). M4 remains open until these pass.
 - Boundaries: no additional provider purchase, public-route exposure or capacity/security change without specific approval; no X writes, live broker orders, M5 recovery/leases, M6 execution, M7 review engine or M8 publication. Internal ingress alone cannot receive a provider's public webhook callback.
+- Current pass: investigate and fix the two hosted engine exit-137 restarts before expanding reads; validate sustained behavior at the existing allocation, preserve the landing and retained SQL history/cursors, then complete feed mappings, controlled X role configuration and repeated real-model evaluations. Owner-supplied demo broker credentials authorize read-only authentication/price/account checks after endpoint and entitlement verification. Any Azure cost increase requires separate approval. Full-day capture, public webhook approval, human calibration and independent broker evidence remain explicit gates.
 
 ## PIP-6 — Portable Markdown mind export/import design
 
