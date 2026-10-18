@@ -150,10 +150,16 @@ def validate_event(envelope, contracts):
     if "event_id" in payload and payload["event_id"] != event_id(envelope):
         raise ContractError("event_identity_mismatch")
     for field in ("ts", "venue_ts", "released_at", "published_at", "observed_at", "as_of"):
-        if field in payload and utc(payload[field]) > received:
+        if field in payload and payload[field] is not None and utc(payload[field]) > received:
             raise ContractError("event_from_future")
     if envelope["kind"] == "PriceEvent" and payload["bid"] > payload["ask"]:
         raise ContractError("crossed_quote")
+    if envelope["kind"] == "ReleaseEvent" and "publication_time_status" in payload:
+        unknown = payload["publication_time_status"] == "unknown"
+        if unknown != (payload["released_at"] is None):
+            raise ContractError("inconsistent_publication_evidence")
+        if unknown and payload.get("publication_time_precision", "unknown") != "unknown":
+            raise ContractError("inconsistent_publication_precision")
     return available
 
 

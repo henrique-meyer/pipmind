@@ -22,6 +22,7 @@ from pipmind.core import (
     SimulatedClock,
 )
 from pipmind.dataset import IMPLEMENTED, dataset_digest, load_cases
+from pipmind.feeds.fixtures import run_fixtures as run_feed_fixtures
 from pipmind.gateway.recording import exercise_mapping_case, run_recording
 from pipmind.graders import GRADER_VERSION, grade
 from pipmind.portability_fixtures import FIXTURE_VERSION, run_fixtures
@@ -180,6 +181,7 @@ def run_suite(cases, week, *, repetitions=2, overrides=None, output=None, split=
         },
         "portability": portability,
         "gateway": run_recording(),
+        "feeds": run_feed_fixtures(),
         "usage": {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -236,8 +238,13 @@ def sanitized_summary(report):
             "fixture_week_sha256",
             "portability_fixture_sha256",
             "gateway_fixture_sha256",
+            "feed_fixture_sha256",
         )
     } | {
+        "feeds": {
+            key: deepcopy(report["feeds"][key])
+            for key in ("version", "network", "dispatches", "checks", "passed")
+        },
         "gateway": {
             key: deepcopy(report["gateway"][key])
             for key in ("version", "mode", "dispatches", "checks", "passed")
@@ -282,6 +289,7 @@ def compare(report, baseline):
         "grader_version",
         "dataset_version",
         "gateway_fixture_sha256",
+        "feed_fixture_sha256",
     ):
         if report[key] != baseline[key]:
             differences.append("baseline_metadata_changed")
@@ -307,6 +315,13 @@ def compare(report, baseline):
         not gateway["passed"] or not all(gateway["checks"].values()) or gateway["dispatches"] != 0
     ):
         differences.append("baseline_gateway_regression")
+    old_feeds, feeds = baseline.get("feeds"), report.get("feeds")
+    if old_feeds and (not feeds or old_feeds["checks"].keys() != feeds["checks"].keys()):
+        differences.append("baseline_feed_coverage_changed")
+    if feeds and (
+        not feeds["passed"] or not all(feeds["checks"].values()) or feeds["dispatches"] != 0
+    ):
+        differences.append("baseline_feed_regression")
     return sorted(set(differences))
 
 
@@ -319,6 +334,9 @@ def successful(report):
         and report["gateway"]["passed"]
         and all(report["gateway"]["checks"].values())
         and report["gateway"]["dispatches"] == 0
+        and report["feeds"]["passed"]
+        and all(report["feeds"]["checks"].values())
+        and report["feeds"]["dispatches"] == 0
     )
 
 
@@ -368,6 +386,7 @@ def main(argv=None):
                 ROOT / "evals" / "portability" / "cases.json"
             ),
             gateway_fixture_sha256=dataset_digest(ROOT / "evals" / "gateway" / "session-v1.json"),
+            feed_fixture_sha256=dataset_digest(ROOT / "evals" / "feeds" / "scenario-v1.json"),
         )
         if args.command == "record-baseline":
             if not successful(report) or args.split != "all" or overrides:

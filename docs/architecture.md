@@ -52,6 +52,8 @@ The core is a single Python 3.12 process built on the Microsoft Agent Framework.
 
 ## macro-feed
 
+M3 implements the [information feed runtime](feeds.md), with independently supervised macro/news/social processes, durable isolated development inbox/cursors and offline provider fixtures. Its separate local container has authenticated private event/relay routes and signed webhook acceptance. Vendor polling is opt-in; no real source or Azure deployment is verified by these fixtures. Hosted SQL/outbox/consumer wiring and live smoke checks remain M4 work.
+
 Emits one `ReleaseEvent` per release. The core never calls a macro vendor.
 
 - **Actuals.** FXMacroData over server-sent events is primary. Reconnect uses `Last-Event-ID` so a dropped connection replays what was missed. A signed webhook (HMAC, vendor retries) is the backup. SSE and webhook deliveries of the same print collapse to one `event_id`.

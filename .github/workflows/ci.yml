@@ -20,7 +20,7 @@ jobs:
           fetch-depth: 0
       - name: Lint and format
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 sh -c 'uv sync --locked --extra gateway && uv run --locked --extra gateway ruff check . && uv run --locked --extra gateway ruff format --check .'
+          docker run --rm -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 sh -c 'uv sync --locked --all-extras && uv run --locked --all-extras ruff check . && uv run --locked --all-extras ruff format --check .'
       - name: Test contracts, replay, graders and archive rejection offline
         run: |
           docker run --rm --network none --user "$(id -u):$(id -g)" --env PIPMIND_SOURCE_SHA="$GITHUB_SHA" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp -v "$PWD:/workspace" -w /workspace ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58 .venv/bin/python -m pytest -q
@@ -48,6 +48,10 @@ jobs:
         run: |
           docker build --target gateway -t pipmind-gateway:ci .
           python3 scripts/gateway_smoke.py
+      - name: Build and exercise isolated information feed container
+        run: |
+          docker build --target feeds -t pipmind-feeds:ci .
+          python3 scripts/feeds_smoke.py
       - name: Secret scan
         run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact --no-banner
       - name: Build and exercise actual container

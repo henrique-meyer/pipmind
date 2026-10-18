@@ -1,0 +1,13 @@
+{
+  "format": "synthetic-feeds-v1",
+  "provenance": "Original fictitious provider, calendar, news and role fixtures. No account data or real vendor captures.",
+  "clock_start": "2026-10-05T09:00:00Z",
+  "calendar": [{"title": "Synthetic CPI y/y", "country": "USD", "date": "2026-10-05T09:00:00+00:00", "impact": "High", "forecast": "2.5%", "previous": "2.0%"}],
+  "announcement": {"event_id": "synthetic-cpi-1", "currency": "usd", "indicator": "synthetic_cpi", "latest_announcement": {"date": "2026-09-30", "val": 3.0, "previous": 2.0, "forecast": 2.8, "forecast_available": true, "forecast_is_pre_release": true, "announcement_datetime": null, "publication_time_status": "unknown", "publication_time_precision": "unknown", "official_planned_release_datetime": 1791190800}},
+  "news_xml": "<rss><channel><item><guid>synthetic-news</guid><title>Central bank statement</title><link>https://news.invalid/statement</link><pubDate>Mon, 05 Oct 2026 09:00:00 GMT</pubDate><description>Feed-provided details only.</description></item></channel></rss>",
+  "new_holder_html": "<h1>Chair: Jordan Example End</h1>",
+  "profile_html": "<h1>Jordan Example</h1><a href=\"https://x.com/ExampleJordan\">Profile</a>",
+  "institution": {"id": "11", "username": "ExampleBank", "name": "Example Bank", "description": "Central bank", "verified": true, "verified_type": "government", "parody": false, "protected": false},
+  "new_personal": {"id": "12", "username": "ExampleJordan", "name": "Jordan Example", "description": "Chair", "verified": true, "verified_type": "blue", "parody": false, "protected": false},
+  "posts": [{"id": "102", "author_id": "11", "created_at": "2026-10-05T09:00:00Z", "text": "Synthetic statement."}, {"id": "101", "author_id": "11", "created_at": "2026-10-05T08:59:00Z", "text": "Synthetic earlier statement."}]
+}

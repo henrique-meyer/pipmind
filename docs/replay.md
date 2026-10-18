@@ -7,9 +7,9 @@ M1 implements an offline event-processing core, injected clock/model/store inter
 Use Python 3.12 and `uv`:
 
 ```sh
-uv sync --locked --extra gateway
+uv sync --locked --all-extras
 uv run python -m pipmind.replay validate
-uv run --extra gateway python -m pytest -q
+uv run --all-extras python -m pytest -q
 uv run python -m pipmind.replay run --ci
 ```
 
@@ -19,7 +19,7 @@ With the existing Docker setup instead of a host `uv` installation, PowerShell c
 
 ```powershell
 $replayImage = ((Get-Content Dockerfile -TotalCount 1) -split ' ')[1]
-docker run --rm -v "${PWD}:/workspace" -w /workspace $replayImage uv sync --locked --extra gateway
+docker run --rm -v "${PWD}:/workspace" -w /workspace $replayImage uv sync --locked --all-extras
 docker run --rm --network none -v "${PWD}:/workspace" -w /workspace $replayImage .venv/bin/python -m pipmind.replay run --ci
 ```
 
@@ -27,7 +27,7 @@ This prepares a Linux virtual environment in the ignored `.venv` directory. Re-s
 
 Generated output lives in ignored `evals/reports/latest/`: private per-case/repetition traces, fixture-week `decisions.jsonl`, full `report.json` and sanitized `summary.json`. A two-repetition run includes both week repetitions in the decisions file. Each case, repetition and variant receives fresh mind and simulated broker snapshot state. Full traces contain inputs, memory, tool results and reasoning; never upload them.
 
-The [tracked baseline](../evals/baseline-v1.json) contains sanitized synthetic outcomes, counts, deferrals and version/hash metadata. Source/contracts/fixtures use LF through `.gitattributes` so content hashes agree across Windows and Linux. Reports record source commit/dirty state, implementation content hash, dataset/week/portability/gateway-fixture hashes, context/grader/model versions, starting playbook hashes, repetitions, fake call counts and measured latency. Token/cost counts are explicitly synthetic zeros. Real-provider metering belongs with the M4 adapter; M1 cannot measure it.
+The [tracked baseline](../evals/baseline-v1.json) contains sanitized synthetic outcomes, counts, deferrals and version/hash metadata. Source/contracts/fixtures use LF through `.gitattributes` so content hashes agree across Windows and Linux. Reports record source commit/dirty state, implementation content hash, dataset/week/portability/gateway/feed-fixture hashes, context/grader/model versions, starting playbook hashes, repetitions, fake call counts and measured latency. Token/cost counts are explicitly synthetic zeros. Real-provider metering belongs with the M4 adapter; M1 cannot measure it.
 
 ## Delivered coverage
 
@@ -94,3 +94,7 @@ Real bundles/contents stay private, ignored, excluded from images/public snapsho
 CI runs unit/mutation/archive tests and full replay with networking disabled, compares the baseline, and renders per-area results and every deferral in the job summary. Only allowlisted `summary.json`, bounded to 64 KiB, is uploaded for seven days. Raw events, reasoning, mind, tool results and bundles are excluded.
 
 M2 activates S01 against durable mapping refusal and adds the [15-check dry gateway session](gateway.md). M5/M7/M8 must activate the remaining respective cases through their actual implementations. SQL behavior needs the SQL Server adapter/integration checks. Continue through live-event shadow mode and broker demo orders regardless of M1 scores; live trading and new resources remain separate owner decisions.
+
+## Information feed gates
+
+M3 adds the [14 synthetic feed checks](feeds.md#run-and-validate-offline) and a fixture digest to the reviewed replay baseline and sanitized summary. Their mandatory failures, missing check IDs or nonzero dispatch counts fail CI. The test suite and separate container smoke job also kill/restart each real worker while proving that both peers continue. These checks use no live provider requests; the 30 starter cases remain 14 passing / 16 deferred.
