@@ -7,3 +7,4 @@ param environmentName = ''
 param workspaceName = ''
 param containerImage = ''
 param minimumReplicas = 0
+param googleAnalyticsId = ''

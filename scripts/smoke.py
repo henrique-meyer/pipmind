@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import time
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
@@ -15,6 +16,7 @@ class Page(HTMLParser):
         self.assets = set()
         self.links = []
         self.ids = set()
+        self.scripts = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
@@ -22,6 +24,8 @@ class Page(HTMLParser):
             self.ids.add(attrs["id"])
         if tag == "a":
             self.links.append(attrs.get("href", ""))
+        if tag == "script":
+            self.scripts.append(attrs)
         for attr in ("src", "href"):
             value = attrs.get(attr, "")
             if value.startswith(("/assets/", "/static/")):
@@ -38,6 +42,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:8080")
     parser.add_argument("--build")
+    parser.add_argument("--analytics-id", default=os.environ.get("GOOGLE_ANALYTICS_ID", ""))
     args = parser.parse_args()
     for attempt in range(30):
         try:
@@ -63,6 +68,16 @@ def main():
     page = Page()
     page.feed(html)
     assert page.assets and page.links
+    if args.analytics_id:
+        assert page.scripts == [
+            {"defer": None, "src": "/static/analytics.js", "data-measurement-id": args.analytics_id}
+        ], "Unexpected analytics configuration"
+        assert "https://www.googletagmanager.com" in headers["Content-Security-Policy"]
+    else:
+        assert not page.scripts, "Analytics must be disabled when unset"
+        assert "google" not in headers["Content-Security-Policy"]
+    assert "'unsafe-inline'" not in headers["Content-Security-Policy"]
+    assert "'unsafe-eval'" not in headers["Content-Security-Policy"]
     for asset in page.assets:
         status, _, content = fetch(args.url, asset)
         assert status == 200 and len(content) > 100, f"Broken asset: {asset}"
@@ -94,7 +109,7 @@ def main():
             assert error.code == 404, f"Unexpected private route status: {error.code}"
         else:
             raise AssertionError(f"Private or nonexistent route exposed: {private_path}")
-    print("PASS: build, health, page, assets, anchors, headers and private-route isolation")
+    print("PASS: build, health, page, analytics configuration, assets, anchors and route isolation")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,9 @@ param minimumReplicas int = 0
 @description('Existing bindings, supplied from private deployment state to preserve custom domains.')
 param customDomains array = []
 
+@description('Optional GA4 measurement ID for the public landing page. Empty disables analytics.')
+param googleAnalyticsId string = ''
+
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName
   location: location
@@ -78,6 +81,9 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
         {
           name: 'landing'
           image: containerImage
+          env: [
+            { name: 'GOOGLE_ANALYTICS_ID', value: googleAnalyticsId }
+          ]
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
           probes: [
             { type: 'Startup', httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 1, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 }
