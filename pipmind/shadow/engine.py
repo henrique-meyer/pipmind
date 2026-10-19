@@ -130,7 +130,9 @@ class ShadowEngine:
                 if isinstance(error, ModelFailure)
                 else str(error)
             )
-            if code == "shadow_context_size" or code.startswith("working_memory_"):
+            if code in {"shadow_context_size", "shadow_context_projection"} or code.startswith(
+                "working_memory_"
+            ):
                 self.store.hold(event, context["revision"], result, moment, code)
                 return False
             result.update(status="model_refused", reply=None, error="model_unavailable_or_invalid")

@@ -1231,3 +1231,94 @@ def test_exact_checkpoint_focus_retrieves_old_condition_after_newer_revisions(mi
     assert result["partial"] and result["metadata"]["record_id"] == report["checkpoint"]
     assert old["waiting_for"][7] in result["body"]
     assert old["waiting_for"][7] in encoded(mind.retained()[1])
+
+
+def test_bounded_sql_retrieval_reaches_actual_request_compiler_and_native_tool_repeatedly(mind):
+    from types import SimpleNamespace
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.model import FoundryModel
+
+    activate_bounded(mind)
+    requests = []
+    reads = []
+    working = {
+        "views": ["USD CPI uncertainty remains"],
+        "waiting_for": ["Confirm CPI vintage"],
+        "position_theses": [],
+    }
+
+    def factory(phase, instructions, tools):
+        class Agent:
+            async def run(self, message, **kwargs):
+                request = loads(message)
+                requests.append(request)
+                if phase == "triage":
+                    result = {"wake": True, "summary": "USD CPI observation"}
+                else:
+                    policy = request["context"]["memory_policy"]
+                    reads.append(loads(tools[0](policy["checkpoint"] + " | w0 CPI")))
+                    result = {
+                        "action": "hold",
+                        "reasoning": "Preserve current CPI uncertainty",
+                        "evidence_ids": [request["event"]["message_id"]],
+                        "working_memory": working,
+                        "tool_calls": [],
+                    }
+                return SimpleNamespace(
+                    text=encoded(result),
+                    usage_details={"input_token_count": 10, "output_token_count": 5},
+                )
+
+        return Agent()
+
+    model = FoundryModel(
+        "https://synthetic.services.ai.azure.com/api/projects/shadow",
+        "t",
+        "d",
+        enabled=True,
+        factory=factory,
+    )
+    mind.set_paused(False)
+    for i in range(3):
+        event = deepcopy(CASE["events"][0])
+        event["message_id"] = event["payload"]["event_id"] = f"compiler-cpi-{i}"
+        mind.accept("compiler", [{"sequence": i + 1, "event": event}], MOMENT)
+        assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+        assert mind.outcome(event["message_id"])["status"] == "observed"
+    assert len(requests) == 6 and len(reads) == 3
+    assert reads[-1][0]["partial"]
+    assert "Confirm CPI vintage" in reads[-1][0]["body"]
+    assert any(
+        "working-memory-transition" in card["body"]
+        for request in requests
+        if request["phase"] == "decision"
+        for card in request["context"]["retrieved_memories"]
+    )
+    assert mind.head()["working"] == working
+
+
+def test_request_assembly_bug_holds_actual_input_without_claiming_an_rpc(mind, monkeypatch):
+    from pipmind.shadow.model import FoundryModel
+
+    events, _ = episode(mind)
+
+    def broken(*args):
+        raise KeyError("before")
+
+    monkeypatch.setattr("pipmind.shadow.model.phase_context", broken)
+    calls = []
+    model = FoundryModel(
+        "https://synthetic.services.ai.azure.com/api/projects/shadow",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kwargs: calls.append(kwargs),
+    )
+    assert not asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    assert calls == [] and mind.pending() == events[0]
+    assert mind.head()["paused"] and mind.outcome(events[0]["message_id"]) is None
+    held = [loads(body) for meta, body in mind.retained()[1] if meta["part"] == "journal"][-1]
+    assert held["usage"][0]["attempted"] is False
+    assert held["usage"][0]["usage_unknown"] is False
+    assert mind.status()["reasoning_hold"]["reason"] == "shadow_context_projection"

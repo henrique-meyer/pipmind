@@ -7,7 +7,7 @@ from pipmind.contracts import ContractError, loads
 from pipmind.shadow.common import ShadowError, encoded
 from pipmind.shadow.working import factor_working
 
-CONTEXT_VERSION = "selected-evidence-v4"
+CONTEXT_VERSION = "selected-evidence-v5"
 STOP = frozenset(
     (
         "a an and are as at be by for from has have in is it of on or "
@@ -171,7 +171,11 @@ def record_view(meta, body, query=""):
                 if key in data
             }
         )
-    elif isinstance(data, dict) and data.get("kind") == "working-memory-transition":
+    elif (
+        isinstance(data, dict)
+        and data.get("kind") == "working-memory-transition"
+        and isinstance(data.get("before"), dict)
+    ):
         rows = [
             {"key": f"{prefix}{i}", "before": value}
             for field, prefix in (("views", "v"), ("waiting_for", "w"))
@@ -197,6 +201,17 @@ def record_view(meta, body, query=""):
                 "previous_checkpoint": data.get("previous_checkpoint"),
                 "entries": selected,
                 "total_entries": len(rows),
+            }
+        )
+        partial = True
+    elif isinstance(data, dict) and data.get("kind") == "working-memory-transition":
+        # SQL search already returns selected cards. Request assembly and native
+        # tools may project them again; never interpret a card as the raw record.
+        text = encoded(
+            {
+                key: data[key]
+                for key in ("kind", "as_of", "previous_checkpoint", "entries", "total_entries")
+                if key in data
             }
         )
         partial = True
