@@ -679,6 +679,8 @@ class SqlMind:
             reply = result.get("reply")
             result["decision"] = None
             if reply:
+                if result.get("memory_repair"):
+                    self._evidence(cur, result["memory_repair"]["evidence_ids"], moment)
                 self.contracts.validate("model-reply", reply)
                 if len(reply["evidence_ids"]) > 256:
                     raise ShadowError("unavailable_shadow_evidence")

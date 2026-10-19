@@ -5,7 +5,7 @@ from copy import deepcopy
 from pipmind.contracts import ContractError, Contracts, event_id, stamp, utc, validate_event
 from pipmind.shadow.common import ShadowError, now
 from pipmind.shadow.context import event_query
-from pipmind.shadow.maintenance import POLICY, validate_working
+from pipmind.shadow.maintenance import POLICY, transition, validate_working, working_digest
 from pipmind.shadow.model import ModelFailure
 
 
@@ -16,6 +16,72 @@ class ShadowEngine:
         self.store, self.model, self.clock, self.contracts = store, model, clock, Contracts()
         self.price_interval = price_interval
         self.observer = observer or (lambda phase, facts: None)
+
+    async def _correct_memory(self, event, context, reply, result, moment):
+        """One compression-only RPC; preserve the rejected candidate and all usage."""
+        original = deepcopy(reply)
+        audit = result["memory_repair"] = {
+            "candidate": original,
+            "before_sha256": working_digest(context["working_memory"]),
+            "reason": "working_memory_bound",
+        }
+        result["usage"].append({"phase": "memory_repair", "attempted": True, "usage_unknown": True})
+        self.observer("memory_repair", {"event": event})
+        try:
+            correction, usage = await self.model.repair_memory(
+                deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
+            )
+            result["usage"][-1] = usage
+            audit["response"] = deepcopy(correction)
+            self.contracts.validate("memory-repair", correction)
+            after = correction["working_memory"]
+            if after["position_theses"] != original["working_memory"]["position_theses"]:
+                raise ShadowError("working_memory_repair_theses")
+            # Every candidate entry must survive, possibly in a same-kind merge.
+            if any(row["to"] is None for row in correction["candidate_dispositions"]):
+                raise ShadowError("working_memory_repair_dependency")
+            refs = transition(
+                original["working_memory"],
+                after,
+                correction["candidate_dispositions"],
+                moment,
+                initial=True,
+            )
+            refs |= transition(
+                context["working_memory"], after, correction["memory_dispositions"], moment
+            )
+            previous = {row["from"]: row for row in original.get("memory_dispositions", [])}
+            for row in correction["memory_dispositions"]:
+                if (
+                    row["from"].startswith("w")
+                    and row["to"] is None
+                    and row != previous.get(row["from"])
+                ):
+                    raise ShadowError("working_memory_repair_resolution")
+            allowed = set(original["evidence_ids"]) | {event_id(event)}
+            allowed.update(
+                ref
+                for row in original.get("memory_dispositions", [])
+                for ref in row["evidence_ids"]
+            )
+            allowed.update(
+                context["memory_policy"][key] for key in ("checkpoint", "origin_checkpoint")
+            )
+            if not refs <= allowed:
+                raise ShadowError("working_memory_repair_evidence")
+            audit["evidence_ids"] = sorted(refs)
+            # The model never receives permission to alter action/size/reasoning/
+            # evidence or other decision fields. Only these two fields change.
+            repaired = deepcopy(original)
+            repaired.update(
+                working_memory=after, memory_dispositions=correction["memory_dispositions"]
+            )
+            return repaired
+        except (ShadowError, ContractError, KeyError) as error:
+            if isinstance(error, ModelFailure):
+                result["usage"][-1] = error.trace
+            audit["error"] = str(error) if isinstance(error, ShadowError) else type(error).__name__
+            raise ShadowError("working_memory_repair_failed") from None
 
     async def step(self):
         moment = self.clock()
@@ -134,6 +200,16 @@ class ShadowEngine:
                     raise ShadowError("unusable_shadow_proposal")
                 if reply["action"] in {"enter", "add"} and not {"side", "size"} <= set(reply):
                     raise ShadowError("unusable_shadow_proposal")
+                if context.get("memory_policy"):
+                    try:
+                        validate_working(reply["working_memory"], moment)
+                    except ShadowError as error:
+                        if str(error) != "working_memory_bound" or not hasattr(
+                            self.model, "repair_memory"
+                        ):
+                            raise
+                        reply = await self._correct_memory(event, context, reply, result, moment)
+                        result["model_reply"] = deepcopy(reply)
                 result["reply"] = reply
             result["status"] = "analysis_retained" if analysis else "observed"
         except (ShadowError, ContractError, KeyError) as error:

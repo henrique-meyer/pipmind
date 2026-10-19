@@ -92,6 +92,8 @@ Planning arithmetic: `440 × $0.0484 + 33,000 × $0.000225 + $5.72 = $34.441`, r
 
 Identity and the current playbook form a stable prompt prefix ([architecture](architecture.md)). Keep them byte-stable to allow provider caching. Any savings depend on the selected Foundry deployment's cached-input price and measured hit rate; the $35 base allowance assumes no cache savings. Output and reasoning tokens remain billable. The first deployed month replaces token-size, reasoning-output, call-volume, and caching assumptions with measurements.
 
+Bounded working-state correction can add at most one tool-free decision-model call for an oversized candidate. Every original/correction usage counter remains recorded, including unknown usage on failure. This is additional inference usage to measure, not new fixed infrastructure capacity or a qualified monthly allowance.
+
 ## FXMacroData
 
 The Individual plan is **$50/month** or **$500/year** ($41.67/month equivalent, paid annually upfront). The base table uses annual billing; monthly billing adds $8.33 to its displayed total. Use the 14-day trial to measure release latency before committing. Raw data is an internal input to `macro-feed`, not a public feed.
