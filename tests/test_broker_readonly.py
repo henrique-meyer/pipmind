@@ -221,3 +221,35 @@ def test_stream_overflow_reports_loss_then_drains_retained_batch_despite_new_cal
     assert stream.queue.empty()
     stream._enqueue(3, {"sequence": "fresh"})
     assert stream.drain() == [{"sequence": "fresh"}]
+
+
+def test_live_gateway_handoff_uses_completion_clock_for_new_snapshot_facts(monkeypatch):
+    import io
+    import json
+
+    import pipmind.shadow.service as service
+
+    completed = MOMENT + timedelta(seconds=1)
+    snapshots = [
+        {"schema_version": 1, "as_of": completed.isoformat(), "currency": "USD", "balance": 100},
+        {"schema_version": 1, "as_of": completed.isoformat(), "positions": []},
+    ]
+    body = {"dispatch_enabled": False, "prices": [], "snapshots": snapshots}
+    monkeypatch.setattr(
+        service,
+        "build_opener",
+        lambda *a: SimpleNamespace(open=lambda *a, **kw: io.BytesIO(json.dumps(body).encode())),
+    )
+    store = Mock()
+    store.checkpoint.return_value = 0
+    consumer = service.GatewayConsumer(
+        store,
+        "http://127.0.0.1:8081",
+        "x" * 32,
+        "test",
+        handoff_interval=300,
+        completion_clock=lambda: completed,
+    )
+    assert consumer.poll(MOMENT) == 2
+    store.refresh_broker_facts.assert_called_once_with(*snapshots, completed)
+    assert store.accept.call_args.args[2] == completed

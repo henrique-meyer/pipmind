@@ -27,7 +27,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class FeedConsumer:
-    def __init__(self, store, url, token, source_id):
+    def __init__(self, store, url, token, source_id, *, completion_clock=None):
         target = urlsplit(url)
         if (
             not target.hostname
@@ -48,6 +48,7 @@ class FeedConsumer:
         ):
             raise ShadowError("invalid_shadow_source")
         self.store, self.url, self.token, self.source = store, url.rstrip("/"), token, source_id
+        self.completion_clock = completion_clock
 
     def poll(self, moment):
         after = self.store.checkpoint(self.source)
@@ -59,6 +60,7 @@ class FeedConsumer:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
                 raw = response.read(2_097_153)
             page = bounded_json(raw, 2_097_152)
+            moment = self.completion_clock() if self.completion_clock else moment
             if page["source_id"] != self.source or not isinstance(page["events"], list):
                 raise ValueError
             if page["events"]:
@@ -90,6 +92,7 @@ class GatewayConsumer(FeedConsumer):
         try:
             with build_opener(NoRedirect()).open(request, timeout=15) as response:
                 page = bounded_json(response.read(2_097_153), 2_097_152)
+            moment = self.completion_clock() if self.completion_clock else moment
             if page.get("dispatch_enabled") is not False:
                 raise ValueError
             if self.handoff_interval:
@@ -148,13 +151,15 @@ class GatewayConsumer(FeedConsumer):
 class LocalFeedConsumer:
     """Same durable handoff inside the engine/feed container, without an HTTP hop."""
 
-    def __init__(self, store, feeds):
+    def __init__(self, store, feeds, *, completion_clock=None):
         self.store, self.feeds = store, feeds
         self.source = feeds.source_id()
+        self.completion_clock = completion_clock
 
     def poll(self, moment):
         try:
             page = self.feeds.events(self.store.checkpoint(self.source), 100)
+            moment = self.completion_clock() if self.completion_clock else moment
             if page:
                 self.store.accept(self.source, page, moment)
             self.store.set_runtime(
@@ -554,7 +559,7 @@ def from_env():
         if os.environ.get("PIPMIND_FEED_BACKEND") != "sql":
             raise ShadowError("integrated_shadow_feeds_require_sql")
         feed_app = feeds_from_env()
-        consumer = LocalFeedConsumer(store, feed_app.state.store)
+        consumer = LocalFeedConsumer(store, feed_app.state.store, completion_clock=now)
     if os.environ.get("PIPMIND_SHADOW_FEED_URL"):
         if consumer:
             raise ShadowError("choose_one_feed_handoff")
@@ -563,6 +568,7 @@ def from_env():
             os.environ["PIPMIND_SHADOW_FEED_URL"],
             os.environ["PIPMIND_FEED_TOKEN"],
             os.environ["PIPMIND_SHADOW_SOURCE_ID"],
+            completion_clock=now,
         )
     gateway = None
     if os.environ.get("PIPMIND_SHADOW_GATEWAY_URL"):
@@ -572,6 +578,7 @@ def from_env():
             os.environ["PIPMIND_GATEWAY_TOKEN"],
             os.environ["PIPMIND_SHADOW_GATEWAY_SOURCE_ID"],
             handoff_interval=int(os.environ.get("PIPMIND_SHADOW_GATEWAY_INTERVAL", "0")),
+            completion_clock=now,
         )
     return create_app(
         store,
