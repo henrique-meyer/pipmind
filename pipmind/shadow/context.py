@@ -5,8 +5,9 @@ from copy import deepcopy
 
 from pipmind.contracts import ContractError, loads
 from pipmind.shadow.common import ShadowError, encoded
+from pipmind.shadow.working import factor_working
 
-CONTEXT_VERSION = "selected-evidence-v2"
+CONTEXT_VERSION = "selected-evidence-v3"
 STOP = frozenset(
     (
         "a an and are as at be by for from has have in is it of on or "
@@ -197,6 +198,8 @@ def phase_context(context, phase):
         "price_aggregate",
     )
     view = {key: deepcopy(context[key]) for key in keys if key in context}
+    if "working_memory" in view:
+        view["working_memory"] = factor_working(view["working_memory"])
     if isinstance(view.get("feed_status"), dict) and "coverage" in view["feed_status"]:
         view["feed_status"]["coverage"] = factor_coverage(view["feed_status"]["coverage"])
     view["context_version"] = CONTEXT_VERSION

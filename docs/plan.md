@@ -53,6 +53,7 @@ The [roadmap](roadmap.md) defines the application milestones and rollout order. 
 - Capture recovery follow-up: a manually reprocessed canonical capture must let the normal provider loop initialize its missing checkpoint without overwriting an existing or advanced cursor. Verify this recovery for both latest-row bootstrap and window pages before treating retained capture recovery as complete.
 - Expanded feed handoff: the original private SQL runtime-status bound was 16 KiB and rejected the complete 33-series facts before prompt factoring ran. Permit bounded raw SQL status up to 128 KiB, retain every source fact, and keep model prompt guards at 16/28 KiB with lossless factoring. Verify actual hosted handoff and current full-coverage inference.
 - Refusal accounting: retain a returned decision candidate and its known usage before semantic safety checks. A rejected proposal must keep its audit response and token evidence while leaving working memory and committed decisions unchanged; genuinely timed-out calls remain unknown.
+- Current-state projection: the expanded hosted probe exposes 7.2 KiB of repeated working-view/waiting prose, leaving little room for ordinary events within the existing triage guard. Factor shared literal phrases without dropping or rewriting any view, waiting condition or position thesis. Version and verify exact reconstruction and representative event sizes; do not raise guards or change stored working state.
 
 ## PIP-6 — Portable Markdown mind export/import design
 
