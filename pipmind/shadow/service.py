@@ -14,6 +14,7 @@ from fastapi import Request as WebRequest
 from fastapi.responses import JSONResponse
 
 from pipmind.contracts import ContractError, stamp
+from pipmind.feeds.common import FeedError
 from pipmind.shadow.common import ShadowError, bounded_json, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
 from pipmind.shadow.model import FoundryModel
@@ -137,18 +138,21 @@ class LocalFeedConsumer:
         self.source = feeds.source_id()
 
     def poll(self, moment):
-        page = self.feeds.events(self.store.checkpoint(self.source), 100)
-        if page:
-            self.store.accept(self.source, page, moment)
-        self.store.set_runtime(
-            "feed_status",
-            {
-                "coverage": self.feeds.state("canonical:quality", {"status": "unverified"}),
-                "quarantined": self.feeds.status()["quarantined"],
-                "checked_at": stamp(moment),
-            },
-        )
-        return len(page)
+        try:
+            page = self.feeds.events(self.store.checkpoint(self.source), 100)
+            if page:
+                self.store.accept(self.source, page, moment)
+            self.store.set_runtime(
+                "feed_status",
+                {
+                    "coverage": self.feeds.state("canonical:quality", {"status": "unverified"}),
+                    "quarantined": self.feeds.status()["quarantined"],
+                    "checked_at": stamp(moment),
+                },
+            )
+            return len(page)
+        except FeedError:
+            raise ShadowError("shadow_source_unavailable_or_changed") from None
 
 
 def clock_wake(store, moment, interval=900):
@@ -194,12 +198,13 @@ def create_app(
     runtime = {"last_progress": None, "last_error": None}
     phase = {"name": "idle", "since": None, "started": None, "error_type": None, "serial": 0}
     active = {}
-    lifecycle = {"task": None, "stopping": False, "failed": False}
+    lifecycle = {"task": None, "watcher": None, "stopping": False, "failed": False}
     worker = ReasoningWorker() if background else None
 
     def observe(name, facts):
         if name == "context":
             phase["error_type"] = None
+            phase["pause_error_type"] = None
         if name.endswith("_projection"):
             active.pop("trace", None)
             active.pop("response", None)
@@ -255,6 +260,18 @@ def create_app(
             raise
         return True
 
+    async def pause_until_durable(reason):
+        # Keep the active attempt/known usage while SQL recovers. A second
+        # cleanup/transport error must not terminate the recovery loop itself.
+        while not lifecycle["stopping"]:
+            try:
+                if await hold_worker(reason):
+                    return
+            except Exception as error:
+                runtime["last_error"] = "shadow_worker_pause_unavailable"
+                phase["pause_error_type"] = type(error).__name__
+            await asyncio.sleep(min(1, worker_timeout / 2))
+
     async def watch():
         while True:
             await asyncio.sleep(min(1, worker_timeout / 2))
@@ -278,8 +295,9 @@ def create_app(
                         # pause succeeds. Ordinary SQL/provider outages retry.
                         lifecycle["failed"] = True
                         return
-                except (ShadowError, ContractError):
+                except Exception as error:
                     runtime["last_error"] = "shadow_worker_pause_unavailable"
+                    phase["pause_error_type"] = type(error).__name__
 
     async def work():
         while not lifecycle["failed"]:
@@ -321,12 +339,12 @@ def create_app(
                     raise
                 phase["error_type"] = "CancelledError"
                 runtime["last_error"] = "shadow_worker_cancelled"
-                await hold_worker(runtime["last_error"])
+                await pause_until_durable(runtime["last_error"])
                 phase.update(name="idle", started=None)
             except Exception as error:
                 phase["error_type"] = type(error).__name__
                 runtime["last_error"] = "shadow_worker_failed"
-                await hold_worker(runtime["last_error"])
+                await pause_until_durable(runtime["last_error"])
                 phase.update(name="idle", started=None)
             await asyncio.sleep(2)
 
@@ -342,6 +360,7 @@ def create_app(
             task = asyncio.create_task(work()) if background else None
             lifecycle["task"] = task
             watcher = asyncio.create_task(watch()) if background else None
+            lifecycle["watcher"] = watcher
             try:
                 yield
             finally:
@@ -420,6 +439,8 @@ def create_app(
     @app.get("/status")
     def status():
         state = store.status()
+        loop_alive = lifecycle["task"] is not None and not lifecycle["task"].done()
+        supervisor_alive = lifecycle["watcher"] is not None and not lifecycle["watcher"].done()
         return {
             **state,
             **runtime,
@@ -429,11 +450,17 @@ def create_app(
             **(
                 {
                     "reasoning_worker": {
-                        "alive": worker.alive() and not lifecycle["failed"],
+                        "alive": worker.alive()
+                        and loop_alive
+                        and supervisor_alive
+                        and not lifecycle["failed"],
+                        "loop_alive": loop_alive,
+                        "supervisor_alive": supervisor_alive,
                         "phase": phase["name"],
                         "phase_since": phase["since"],
                         "event_id": active.get("event", {}).get("message_id"),
                         "error_type": phase["error_type"],
+                        "pause_error_type": phase.get("pause_error_type"),
                     }
                 }
                 if worker

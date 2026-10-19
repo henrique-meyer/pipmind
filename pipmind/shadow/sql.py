@@ -68,6 +68,7 @@ def connector(env=None):
         "timeout": 30,
         "autocommit": False,
         "use_mars": False,
+        "pooling": False,
     }
     if env.get("PIPMIND_SQL_LOCAL") == "true":
         # Unencrypted transport is restricted to an explicitly opted-in local container.
@@ -97,13 +98,31 @@ def connector(env=None):
             ),
         )
 
-    def connect():
+    def connect(*, isolation_level=None):
         try:
-            return pytds.connect(**options)
+            return pytds.connect(
+                **options,
+                **({"isolation_level": isolation_level} if isolation_level is not None else {}),
+            )
         except Exception:
             raise ShadowError("sql_unavailable") from None
 
     return connect
+
+
+def close_session(db):
+    """Dispose a non-pooled session without masking its primary result.
+
+    Disconnect aborts uncommitted work on the server. The pinned driver's
+    rollback handshake removes its socket timeout; attempting it on a broken
+    transport can block recovery or raise a second, unrelated exception.
+    An acknowledged commit remains a success even if cursor cleanup fails.
+    """
+    if db is not None:
+        try:
+            db.close()
+        except Exception:
+            pass  # Transport disposal/cursor cleanup cannot replace the result.
 
 
 @contextmanager
@@ -129,16 +148,11 @@ def transaction(connect, resource="pipmind-shadow"):
         yield cur
         db.commit()
     except ShadowError:
-        if db:
-            db.rollback()
         raise
     except Exception:
-        if db:
-            db.rollback()
         raise ShadowError("shadow_store_transaction_failed") from None
     finally:
-        if db:
-            db.close()
+        close_session(db)
 
 
 @contextmanager
@@ -160,32 +174,28 @@ def stream_transaction(connect, resource, *, snapshot=True):
             enabled = cur.fetchone()[0] == 1
         if not enabled:
             if db:
-                db.close()
+                close_session(db)
                 db = None
             with transaction(connect, resource) as cur:
                 yield cur, "locked"
             return
         from pytds.extensions import ISOLATION_LEVEL_SNAPSHOT
 
-        # TDS automatically begins transactions. Use the driver's public setter
-        # to end the metadata transaction and begin the next one in SNAPSHOT;
-        # a SET statement inside an already-open transaction is too late.
-        db.isolation_level = ISOLATION_LEVEL_SNAPSHOT
+        # Start a fresh transaction in the requested mode. Reconfiguring the
+        # existing session would use the driver's unbounded rollback handshake.
+        close_session(db)
+        db = None
+        db = connect(isolation_level=ISOLATION_LEVEL_SNAPSHOT)
         cur = db.cursor()
         cur.execute("SET NOCOUNT ON; SET XACT_ABORT ON")
         yield cur, "snapshot"
         db.commit()
     except ShadowError:
-        if db:
-            db.rollback()
         raise
     except Exception:
-        if db:
-            db.rollback()
         raise ShadowError("shadow_snapshot_transaction_failed") from None
     finally:
-        if db:
-            db.close()
+        close_session(db)
 
 
 def migrate(connect):
