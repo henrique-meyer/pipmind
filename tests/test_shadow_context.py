@@ -282,3 +282,57 @@ def test_larger_continuing_state_remains_complete_and_does_not_hit_the_old_guard
     _, usage = asyncio.run(model.triage({}, {"working_memory": state}, None, now()))
     assert state["views"][0] in captured["message"]
     assert 10000 < usage["prompt_bytes"] < 16000
+
+
+def test_checkpoint_cards_are_idempotent_across_sql_selection_request_and_native_tool():
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.context import record_view
+    from pipmind.shadow.store import metadata
+
+    meta = metadata("working-checkpoint:synthetic:1", "memory", "2026-10-19T00:00:00Z", "synthetic")
+    raw = {
+        "kind": "working-memory-transition",
+        "as_of": meta["ts"],
+        "before": {
+            "views": ["USD CPI uncertainty remains"],
+            "waiting_for": ["Confirm CPI vintage"],
+            "position_theses": [],
+        },
+        "after": {"views": [], "waiting_for": [], "position_theses": []},
+        "dispositions": [],
+    }
+    first = record_view(meta, encoded(raw))
+    assert first["partial"]
+    assert record_view(meta, first["body"]) == first
+    context = {"retrieved_memories": [first]}
+    assert phase_context(context, "decision")["retrieved_memories"][0] == first
+
+
+def test_request_projection_failure_is_known_pre_rpc_and_preserves_source(monkeypatch):
+    from pipmind.shadow.common import now
+    from pipmind.shadow.model import FoundryModel, ModelFailure
+
+    calls = []
+
+    def broken(*args):
+        raise KeyError("before")
+
+    monkeypatch.setattr("pipmind.shadow.model.phase_context", broken)
+    model = FoundryModel(
+        "https://synthetic.services.ai.azure.com/api/projects/shadow",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kwargs: calls.append(kwargs),
+    )
+    context = {
+        "working_memory": {"views": ["Retain this"], "waiting_for": [], "position_theses": []}
+    }
+    with pytest.raises(ModelFailure) as failed:
+        asyncio.run(model.triage({"message_id": "synthetic"}, context, None, now()))
+    trace = failed.value.trace
+    assert trace["attempted"] is False and trace["usage_unknown"] is False
+    assert (
+        trace["failure_code"] == "shadow_context_projection" and trace["error_type"] == "KeyError"
+    )
+    assert trace["source_request"]["context"] == context and calls == []
