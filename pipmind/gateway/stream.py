@@ -62,6 +62,14 @@ class LightstreamerPrices:
     def drain(self):
         if self.overflow:
             self.overflow = False
+            # Clear the bounded transport buffer on a declared loss. Leaving
+            # it full would make every subsequent callback set overflow again,
+            # so a slow REST read could wedge the stream permanently.
+            for _ in range(self.queue.maxsize):
+                try:
+                    self.queue.get_nowait()
+                except Empty:
+                    break
             raise GatewayError("stream_queue_overflow")
         values = []
         for _ in range(1000):

@@ -203,3 +203,17 @@ def test_symbol_wrapper_rejects_unexpected_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("PIPMIND_GATEWAY_SYMBOLS", str(path))
     with pytest.raises(GatewayError, match="invalid_symbol_map"):
         symbols_from_env()
+
+
+def test_stream_overflow_clears_transport_backlog_and_allows_fresh_updates():
+    from pipmind.gateway.stream import LightstreamerPrices
+
+    stream = LightstreamerPrices(broker())
+    stream.epoch = 3
+    for n in range(stream.queue.maxsize + 1):
+        stream._enqueue(3, {"sequence": n})
+    with pytest.raises(GatewayError, match="stream_queue_overflow"):
+        stream.drain()
+    assert stream.queue.empty()
+    stream._enqueue(3, {"sequence": "fresh"})
+    assert stream.drain() == [{"sequence": "fresh"}]
