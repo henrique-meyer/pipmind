@@ -114,11 +114,17 @@ class ShadowEngine:
         self.observer("ready", {"event": event, "revision": context["revision"], "result": result})
         if event["kind"] in {"AccountSnapshot", "PositionSnapshot"}:
             snapshots = dict(context["broker_snapshots"])
-            snapshots["account" if event["kind"] == "AccountSnapshot" else "positions"] = event[
-                "payload"
-            ]
+            key = "account" if event["kind"] == "AccountSnapshot" else "positions"
+            if key not in snapshots or utc(event["payload"]["as_of"]) >= utc(
+                snapshots[key]["as_of"]
+            ):
+                snapshots[key] = event["payload"]
             result["runtime_updates"]["broker_snapshots"] = snapshots
             context["broker_snapshots"] = snapshots
+            result["status"] = "snapshot_retained"
+            self.store.commit(event, context["revision"], result, moment)
+            self.observer("committed", {})
+            return True
         if event["kind"] == "PriceEvent":
             price = event["payload"]
             key = "price:" + price["instrument"]

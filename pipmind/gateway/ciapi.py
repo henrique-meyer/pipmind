@@ -1,5 +1,6 @@
 """Bounded, read-only CIAPI adapter. The sole POST is LogOn v2."""
 
+import hashlib
 import json
 import re
 import time
@@ -144,7 +145,13 @@ class Ciapi:
             re.fullmatch(r"/v2/market/\d+/information", path)
             or path == "/v2/margin/clientAccountMargin"
             or path == "/v2/userAccount/ClientAndTradingAccount"
-            or path == "/order/openpositions"
+            or path
+            in {
+                "/order/openpositions",
+                "/order/activestoplimitorders",
+                "/order/tradehistory",
+                "/order/stoplimitorderhistory",
+            }
             or re.fullmatch(r"/market/\d+/tickhistory", path)
         ):
             raise GatewayError("broker_endpoint_forbidden")
@@ -181,6 +188,61 @@ class Ciapi:
                 raise GatewayError("invalid_broker_response")
             return response.body
         raise GatewayError("broker_retry_exhausted")
+
+    def evidence(self, since):
+        """Retain broker-origin reads independently of engine dispatch counters.
+
+        The two legacy history endpoints use DIFFERENT documented units. A full
+        result page is explicitly incomplete; it cannot prove no activity.
+        """
+        moment = self.now()
+        if since.tzinfo is None or since > moment:
+            raise GatewayError("invalid_broker_evidence_window")
+        responses, complete, activity = {}, True, 0
+        for path, key, scale in (
+            ("openpositions", "OpenPositions", None),
+            ("activestoplimitorders", "ActiveStopLimitOrders", None),
+            ("tradehistory", "TradeHistory", 1),
+            ("stoplimitorderhistory", "StopLimitOrderHistory", 1000),
+        ):
+            query = {"TradingAccountId": self.config.trading_account_id}
+            if scale:
+                query.update(maxResults=200)
+                query["from"] = int(since.timestamp()) * scale
+            raw = self.read("/order/" + path, query=query, legacy=True)
+            body = fields(raw)
+            rows = body.get(key)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise GatewayError("incomplete_broker_evidence")
+            for row in rows:
+                normalized = fields(row)
+                if normalized.get("TradingAccountId") != self.config.trading_account_id:
+                    raise GatewayError("broker_account_mismatch")
+            # Supplemental open orders are additional activity, never ignored.
+            extra = body.get("SupplementalOpenOrders", [])
+            if not isinstance(extra, list):
+                raise GatewayError("incomplete_broker_evidence")
+            activity += len(rows) + len(extra)
+            complete &= not scale or len(rows) < 200
+            responses[path] = {"query": query, "body": raw}
+        return {
+            "as_of": stamp(moment),
+            "from": stamp(since),
+            "environment": self.config.environment,
+            "binding_sha256": hashlib.sha256(
+                json.dumps(
+                    [
+                        self.config.environment,
+                        self.config.client_account_id,
+                        self.config.trading_account_id,
+                    ],
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
+            "responses": responses,
+            "complete": bool(complete),
+            "activity_count": activity,
+        }
 
     def verify_symbols(self):
         for item in self.symbols.by_symbol.values():

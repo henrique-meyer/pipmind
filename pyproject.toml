@@ -9,6 +9,7 @@ dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 gateway = ["jsonschema>=4.23,<5", "lightstreamer-client-lib==2.2.3"]
 feeds = ["jsonschema>=4.23,<5", "defusedxml>=0.7,<1"]
 shadow = [
+    "tzdata>=2025.2,<2028",
     "jsonschema>=4.23,<5",
     "defusedxml>=0.7,<1",
     "agent-framework-foundry==1.15.0",
@@ -20,6 +21,7 @@ shadow = [
 
 [dependency-groups]
 dev = [
+    "tzdata>=2025.2,<2028",
     "defusedxml>=0.7,<1",
     "httpx>=0.28,<1",
     "jsonschema>=4.23,<5",

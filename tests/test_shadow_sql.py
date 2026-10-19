@@ -2030,3 +2030,118 @@ def test_sql_lock_timeout_disposes_connection_and_followup_transaction_recovers(
         blocker.close()
     assert mind.runtime(key) is None
     assert mind.head()["paused"]
+
+
+def test_fresh_broker_facts_survive_processing_an_older_account_input_without_model_rpc(mind):
+    from unittest.mock import Mock
+
+    old = {"schema_version": 1, "as_of": MOMENT.isoformat(), "currency": "USD", "balance": 100}
+    fresh = {**old, "as_of": (MOMENT + timedelta(seconds=60)).isoformat(), "balance": 110}
+    positions = {"schema_version": 1, "as_of": fresh["as_of"], "positions": []}
+    mind.refresh_broker_facts(fresh, positions, MOMENT + timedelta(seconds=60))
+    event = {
+        "schema_version": 1,
+        "kind": "AccountSnapshot",
+        "message_id": "snapshot-old",
+        "available_at": MOMENT.isoformat(),
+        "payload": old,
+    }
+    mind.accept("gateway", [{"sequence": 1, "event": event}], MOMENT)
+    mind.set_paused(False)
+    model = Mock()
+    assert asyncio.run(
+        ShadowEngine(mind, model, clock=lambda: MOMENT + timedelta(seconds=60)).step()
+    )
+    assert mind.runtime("broker_snapshots")["account"] == fresh
+    assert mind.outcome("snapshot-old")["status"] == "snapshot_retained"
+    assert mind.outcome("snapshot-old")["usage"] == []
+    model.triage.assert_not_called()
+    assert mind.status()["outcomes"] == 1
+
+
+def test_qualification_slots_survive_restart_and_cannot_erase_a_capture_gap(mind, monkeypatch):
+    from pipmind.shadow import qualification as q
+
+    moment = utc("2026-10-19T22:00:00Z")
+    clock = [moment]
+    mind.set_paused(False)
+    monkeypatch.setenv("BUILD_SHA", "synthetic-build")
+
+    def state():
+        return {
+            **mind.status(),
+            "last_error": None,
+            "reasoning_worker": {"alive": True, "loop_alive": True, "supervisor_alive": True},
+        }
+
+    def read(gateway, path):
+        at = clock[0].isoformat()
+        if path == "/evidence":
+            return {
+                "last_error": None,
+                "evidence": {
+                    "as_of": at,
+                    "from": moment.isoformat(),
+                    "binding_sha256": "b" * 64,
+                    "environment": "demo",
+                    "complete": True,
+                    "activity_count": 0,
+                    "responses": {},
+                },
+            }
+        return {
+            "dispatch_enabled": False,
+            "broker_verified": True,
+            "worker_alive": True,
+            "last_cycle": at,
+            "prices": [{"instrument": "EUR/USD", "stale": False}],
+            "snapshots": [{"as_of": at}, {"as_of": at}],
+            "last_error": None,
+        }
+
+    monkeypatch.setattr(q, "read_gateway", read)
+    q.arm(mind, "synthetic-day", ["EUR/USD"], "synthetic-build", moment)
+    recorder = q.Recorder(mind, None, state)
+    recorder.capture(moment)
+    first = mind.runtime(q.ACTIVE)
+    assert first["state"] == "running" and first["samples"] == 1
+    recorder.capture(moment)
+    assert mind.runtime(q.ACTIVE) == first
+    clock[0] += timedelta(minutes=1)
+    q.Recorder(mind, None, state).capture(clock[0])
+    assert mind.runtime(q.ACTIVE)["samples"] == 2
+    # Elapsed wall time without intermediate samples can never pass the day.
+    clock[0] += timedelta(hours=24)
+    q.Recorder(mind, None, state).capture(clock[0])
+    final = mind.runtime(q.ACTIVE)
+    assert final["state"] == "capture_failed" and "capture_gap" in final["failures"]
+    with mind.transaction() as c:
+        c.execute(
+            "SELECT COUNT(*) FROM pm_runtime WHERE trader=%s AND k LIKE %s",
+            (mind.trader, "qualification:synthetic-day:sample:%"),
+        )
+        assert c.fetchone()[0] == 3
+    assert mind.status()["outcomes"] == 0  # Capture never invents reasoning.
+
+
+def test_qualification_warmup_retains_read_failures_without_starting_the_day(mind, monkeypatch):
+    from pipmind.shadow import qualification as q
+
+    moment = utc("2026-10-19T22:00:00Z")
+    monkeypatch.setenv("BUILD_SHA", "synthetic-build")
+    mind.set_paused(False)
+    q.arm(mind, "failed-warmup", ["EUR/USD"], "synthetic-build", moment)
+
+    def outage(*args):
+        raise TimeoutError("synthetic")
+
+    monkeypatch.setattr(q, "read_gateway", outage)
+    q.Recorder(mind, None, mind.status).capture(moment)
+    r = mind.runtime(q.ACTIVE)
+    assert r["state"] == "warming" and r["start"] is None
+    sample = mind.runtime(
+        "qualification:failed-warmup:sample:" + str(int(moment.timestamp()) // 60)
+    )
+    assert sample["errors"] == ["TimeoutError"] and "sample_read_failed" in sample["readiness"]
+    with pytest.raises(ShadowError, match="qualification_already_active"):
+        q.arm(mind, "other-day", ["EUR/USD"], "synthetic-build", moment)
