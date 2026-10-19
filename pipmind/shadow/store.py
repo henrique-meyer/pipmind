@@ -375,7 +375,9 @@ class SqlMind:
             return loads(row[0]) if row else default
 
     def set_runtime(self, key, value):
-        if key != "feed_status" or len(encoded(value).encode()) > 16384:
+        # Raw SQL state is separate from the smaller model-visible projection.
+        # Keep full source facts; phase_context factors them within prompt guards.
+        if key != "feed_status" or len(encoded(value).encode()) > 131072:
             raise ShadowError("invalid_runtime_status")
         with self.transaction() as cur:
             cur.execute("SELECT 1 FROM pm_runtime WHERE trader=%s AND k=%s", (self.trader, key))
