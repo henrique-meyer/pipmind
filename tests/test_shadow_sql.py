@@ -1640,6 +1640,11 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, fa
         "position_theses": [],
     }
     with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            "USD uncertainty; wait for verified vintage",
+        )
         mind._write_working(cur, before, MOMENT)
     activate_bounded(mind)
     events, model = episode(mind)
