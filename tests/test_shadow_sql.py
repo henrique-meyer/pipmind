@@ -1971,3 +1971,62 @@ def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind, 
     finally:
         control.execute(f"DROP DATABASE [{name}]")
         admin.close()
+
+
+def test_closed_sql_session_keeps_original_error_and_rolls_back_staged_data(mind):
+    from pipmind.shadow.sql import transaction
+
+    key = "closed-session-" + uuid4().hex
+    db = mind.connect()
+    with pytest.raises(ShadowError, match="original_operation_refused"):
+        with transaction(lambda: db, "closed-session-test") as cur:
+            cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (mind.trader, key, "true"))
+            db.close()  # Actual disconnected SQL session, not a mock rollback.
+            raise ShadowError("original_operation_refused")
+    assert mind.runtime(key) is None
+    assert mind.status()["outcomes"] == 0
+
+
+@pytest.mark.skipif(
+    os.environ.get("PIPMIND_SQL_LOCAL") != "true",
+    reason="short-timeout fault connection is disposable local SQL only",
+)
+def test_sql_lock_timeout_disposes_connection_and_followup_transaction_recovers(mind):
+    import time
+
+    import pytds
+
+    from pipmind.shadow.sql import transaction
+
+    assert os.environ["PIPMIND_SQL_SERVER"] in {"localhost", "127.0.0.1", "sql"}
+    key = "lock-timeout-" + uuid4().hex
+    blocker = mind.connect()
+    cursor = blocker.cursor()
+    cursor.execute("SELECT COUNT(*) FROM pm_records WITH (TABLOCKX,HOLDLOCK)")
+    cursor.fetchone()
+
+    def short_connection():
+        return pytds.connect(
+            dsn=os.environ["PIPMIND_SQL_SERVER"],
+            database=os.environ["PIPMIND_SQL_DATABASE"],
+            user=os.environ["PIPMIND_SQL_USER"],
+            password=os.environ["PIPMIND_SQL_PASSWORD"],
+            port=int(os.environ.get("PIPMIND_SQL_PORT", "1433")),
+            timeout=0.2,
+            autocommit=False,
+            use_mars=False,
+            pooling=False,
+        )
+
+    try:
+        started = time.monotonic()
+        with pytest.raises(ShadowError, match="shadow_store_transaction_failed"):
+            with transaction(short_connection, "timeout-fault-test") as cur:
+                cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (mind.trader, key, "true"))
+                cur.execute("SELECT COUNT(*) FROM pm_records")
+                cur.fetchone()
+        assert time.monotonic() - started < 3
+    finally:
+        blocker.close()
+    assert mind.runtime(key) is None
+    assert mind.head()["paused"]

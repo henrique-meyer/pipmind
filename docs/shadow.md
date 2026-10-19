@@ -132,6 +132,14 @@ Neither the repeated synthetic cases nor the sizing sweep qualifies a full FX da
 
 ## Experience bundles and cloning
 
+SQL sessions are explicitly non-pooled. On an operation failure, closing the
+session aborts its uncommitted work; cleanup cannot mask the original error or
+turn an acknowledged commit into a failure. A lost commit acknowledgement still
+requires reading durable state before retrying. Local SQL feed outages use the
+same retry path as HTTP source outages, and failed durable-pause attempts retain
+the active attempt while retrying. Private status reports work-loop and
+supervisor liveness as well as thread liveness; a live thread alone is insufficient.
+
 The explicit `stream-v3` owner format extends complete experience portability
 without changing v1/v2 behavior or limits:
 
