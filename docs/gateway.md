@@ -1,6 +1,6 @@
 # M2 dry broker gateway
 
-M2 implements an independently runnable, authenticated internal gateway. Its only command mode is **dry**. An accepted command means durable local dry acceptance, never broker acceptance: `mode: dry`, `dispatch_state: not_sent`, no broker order ID and no simulated fill. There is no venue order submission method or switch to enable one. The public landing app does not mount these routes. Nothing from M2 has been deployed or connected to a broker account.
+M2 implements an independently runnable, authenticated internal gateway. Its only command mode is **dry**. An accepted command means durable local dry acceptance, never broker acceptance: `mode: dry`, `dispatch_state: not_sent`, no broker order ID and no simulated fill. There is no venue order submission method or switch to enable one. The public landing app does not mount these routes. M2 validation was offline; subsequent hosted and finite broker-read checks are recorded in the [M4 guide](shadow.md#hosted-m4-approval-and-live-qualification).
 
 ## Offline acceptance session
 
@@ -79,7 +79,7 @@ Redirects are refused, responses are bounded, and read calls retry at most three
 
 The pinned Apache-2.0 Lightstreamer Python SDK subscribes with `STREAMINGALL`, `PRICES`, `MERGE`, `ID.<market_id>` and named PriceDTO fields. SDK callbacks use a bounded queue and cannot do broker I/O. Epochs discard old-session callbacks; overflow is visible, and per-instrument venue-time watchdogs resubscribe no more than every 30 seconds. REST polling is at most once per five seconds per stale instrument. Fresh quotes for one symbol cannot keep another symbol healthy. REST bid and ask histories must share a venue timestamp; mismatches fail instead of becoming a fabricated quote. Tick-history fallback cannot certify that the market is currently tradable; M5/M6 must consult venue status/execution constraints before dispatch. There is no public quote display.
 
-No real broker request has been made to certify endpoint paths, account permissions, rate allowance, SDK licensing or actual stream fields/server compatibility. Broker documentation contains older examples alongside v2 paths; verify the configured environment with a separately authorized read-only smoke run before treating connectivity as operational. This is a validation step, not permission to send demo/live orders.
+PIP-14's authorized finite demo reads verify login, selected account/market, normalized Lightstreamer prices, snapshots and Reuters news against the owner's confirmed REST/streaming pair. That pair is called Live by the provider; the selected account's positive demo-expiry evidence establishes its demo identity. Some venue ticks are ahead of receipt time and remain explicit `future_broker_quote` refusals; timestamps are never shifted to pass freshness checks. These samples do not establish continuous rate allowance, full-day reliability or independent zero-order evidence. Hosted broker reads remain disabled pending continuous handoff and pacing qualification. This read validation does not authorize demo/live orders.
 
 Official references checked for M2:
 

@@ -49,6 +49,12 @@ PIP-15's refined hosted comparison measures three retained cases per role: mean 
 
 ### Unit cost, uncached
 
+PIP-14's separate repeated synthetic qualification run has 36 episodes and 85 model-phase calls. Known SDK counters total 79,655 input and 12,171 output tokens, approximately **$0.169** at the verified uncached rates. One 90-second decision timeout has unknown usage and remains a refused outcome. This reference excludes that attempt, cache adjustments and invoice differences. Median triage/decision phase latency is 2.17/32.03 seconds; the sampled mix is not a measurement of live wake frequency or monthly spend. Human quality calibration remains pending.
+
+The isolated v5 candidate repeat has 36 episodes and 86 phase calls. Known counters total 77,771 input / 10,885 output tokens, an uncached reference of **$0.152**, with **six 90-second decision timeouts** whose usage is unknown. Its lower known total does not establish lower billed cost. Median triage/decision latency is 1.97/41.72 seconds; the decision p95 is 90.03 seconds. Both matrices pass all 144 integrity checks, while model reliability and human quality remain unqualified.
+
+The expanded retained-context probe is separate from those synthetic matrices: v5 has one triage refusal at the 512-token ceiling and two decision timeouts. The triage-only v6 refinement yields three valid calls at 5,047 input tokens each and 169–264 output tokens (about **$0.00184** known uncached reference for all three). Its decision request is unchanged; this is not a new full-matrix or decision-reliability result. Full-day call volume, quality and billed costs remain unqualified.
+
 Planning assumptions for the size of a call:
 
 - **Decision.** 8,000 input tokens. 800 visible output tokens plus about 2,000 reasoning tokens, so 2,800 output tokens.
