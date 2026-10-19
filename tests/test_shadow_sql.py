@@ -320,6 +320,52 @@ def test_invalid_model_evidence_is_durably_refused_without_memory_mutation(mind)
     assert result["dispatches"] == 0
 
 
+@pytest.mark.parametrize("failure", ["position", "proposal", "evidence", "future_memory"])
+def test_semantic_refusal_retains_candidate_and_known_usage_without_authority(mind, failure):
+    events, model = episode(mind)
+    candidate = model.responses[events[0]["message_id"]]["reply"]
+    if failure == "position":
+        candidate["working_memory"]["position_theses"] = [
+            {"instrument": "EUR/USD", "thesis": "Invented holding", "as_of": MOMENT.isoformat()}
+        ]
+    elif failure == "proposal":
+        candidate.update(action="enter", side="buy", size=1)
+        candidate.pop("instrument", None)
+    elif failure == "evidence":
+        candidate["evidence_ids"] = ["invented-future-record"]
+    else:
+        from pipmind.shadow.common import encoded
+
+        positions = {
+            "schema_version": 1,
+            "as_of": MOMENT.isoformat(),
+            "positions": [{"instrument": "EUR/USD", "side": "buy", "size": 1}],
+        }
+        mind.contracts.validate("position-snapshot", positions)
+        with mind.transaction() as cur:
+            cur.execute(
+                "INSERT pm_runtime VALUES(%s,%s,%s)",
+                (mind.trader, "broker_snapshots", encoded({"positions": positions})),
+            )
+        candidate["working_memory"]["position_theses"] = [
+            {"instrument": "EUR/USD", "thesis": "Future thesis", "as_of": "2099-01-01T00:00:00Z"}
+        ]
+    usage = {"phase": "decision", "attempted": True, "input_tokens": 123, "output_tokens": 45}
+
+    class Metered(FixtureModel):
+        async def decide(self, *args):
+            reply, _ = await super().decide(*args)
+            return reply, usage
+
+    before = mind.head()["working"]
+    asyncio.run(ShadowEngine(mind, Metered(model.responses), clock=lambda: MOMENT).step())
+    result = mind.outcome(events[0]["message_id"])
+    assert result["status"] == "model_refused" and result["reply"] is None
+    assert result["model_reply"] == candidate and result["usage"][-1] == usage
+    assert "decision" not in result and result["dispatches"] == 0
+    assert mind.head()["working"] == before
+
+
 def test_consistent_export_clone_preserves_history_and_rebuilds_retrieval(mind):
     events, model = episode(mind)
     asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())

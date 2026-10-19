@@ -52,6 +52,7 @@ The [roadmap](roadmap.md) defines the application milestones and rollout order. 
 - Expanded quality facts: the 33-series coverage projection is approximately 30 KiB before the current mind/event, exceeding the 16 KiB triage guard. Factor repeated values into shared defaults and exact per-series overrides, preserving every fact and full SQL originals. Version the prompt/context representation, retain known bundle compatibility, and validate real token usage after rollout. Do not raise input limits or silently clip mandatory state.
 - Capture recovery follow-up: a manually reprocessed canonical capture must let the normal provider loop initialize its missing checkpoint without overwriting an existing or advanced cursor. Verify this recovery for both latest-row bootstrap and window pages before treating retained capture recovery as complete.
 - Expanded feed handoff: the original private SQL runtime-status bound was 16 KiB and rejected the complete 33-series facts before prompt factoring ran. Permit bounded raw SQL status up to 128 KiB, retain every source fact, and keep model prompt guards at 16/28 KiB with lossless factoring. Verify actual hosted handoff and current full-coverage inference.
+- Refusal accounting: retain a returned decision candidate and its known usage before semantic safety checks. A rejected proposal must keep its audit response and token evidence while leaving working memory and committed decisions unchanged; genuinely timed-out calls remain unknown.
 
 ## PIP-6 — Portable Markdown mind export/import design
 
