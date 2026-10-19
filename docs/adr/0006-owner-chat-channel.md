@@ -1,4 +1,4 @@
-# ADR 0006: Robot starter, owner guidance and saved robot versions
+# ADR 0006: Active robot, Auto Learn and saved robot library
 
 - Status: accepted
 - Date: 2026-10-19
@@ -30,9 +30,19 @@ Autosave the exact committed robot before nightly/other learned-policy changes w
 
 Allow owner replacement of an account's assigned robot even with open positions. The old owner must be drained/fenced, ambiguous execution resolved and current obligations reconciled before atomic new assignment. Preserve protective orders and account restrictions, reject stale outputs and retain original decision attribution; failure leaves one verified assignment or paused state. Loading a save and assigning it are distinct operations. The replacement uses its own mind with current information, not the prior robot's mindset. See [account separation](../architecture.md#robot-and-account-separation) and [save/restore](../architecture.md#compact-robot-saves-and-restore).
 
+### Auto Learn, library copies and retention (owner refinement)
+
+Name scheduled daily learning **Auto Learn**. On preserves autonomous learning/evidence rules and pre-change saves without owner confirmation. Off freezes all automatic durable robot rule/guide/lesson changes, including alternative writers and stale in-flight review commits, while current account/market facts, decisions, journals and risk controls continue. Explicit confirmed owner edits/loads remain possible. This is an owner workspace setting retained across restart/load, never authority supplied by imported robot text. It is separate from trading pause. Nightly review is the implementation mechanism, not the only mutation path that must respect Off.
+
+Maintain a private library of multiple blank/saved/imported robots. Loading copies one validated starting point into the account's unnamed **Active robot** workspace; technical revisions/provenance remain for audit, without a user-visible permanent named robot binding. Active learning never changes its source save. **Save a copy** creates an independent immutable library item. External imports enter the library inactive after bounded format/compatibility/protected-policy checks; they execute no code, change no owner controls and carry no account authority. Sharing/export is a future robot-only file workflow, not a public sharing service.
+
+Ordinary autosaves expire by configurable age/count limits; proposed defaults are 30 days/newest 30 unprotected autosaves. Favorite saves, deliberate saved copies/imports and active/in-flight dependencies are protected from automatic deletion. Favoriting is metadata, not a content edit. Cleanup must survive favorite/load races without breaking retained saves or deleting account/audit state. Known-good copies can be kept indefinitely until the owner deletes them.
+
+Game-style Load restores exact saved durable robot text/lessons and rebuilds its active retrieval generation. Later discarded lessons, hidden conversation state, stale indexes or queued learning cannot leak back from retained audit as active policy. Account history/current facts remain separate and available with original attribution; loading never recovers lost money, changes existing orders/positions or rewinds operational state. Internal audit versions advance even when restored robot content matches an older save.
+
 ## Consequences
 
 - The owner gains another influence on the mind while the robot continues to evolve autonomously.
 - PIP-16 delivers starter files and design; private chat, compact profile, save/restore/autosave and assignment enforcement remain planned implementation.
-- Existing nightly-review/learning contracts, hosted trader, M4 qualification, resources and trading permissions are unchanged.
+- Auto Learn is an explicit owner option over the planned learning contract; enabled learning remains autonomous. This design changes no hosted trader, M4 qualification, resources or trading permissions.
 - Future tests must prove that chat edits need confirmation and cannot block or silently execute through autonomous learning.

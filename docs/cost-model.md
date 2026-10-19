@@ -4,6 +4,8 @@ The [planned private owner chat and confirmed-edit workflow](architecture.md#pri
 
 Planned compact robot saves add retained policy/guide versions rather than account/trade history. Measure snapshot growth and price storage/operations within the selected existing services before implementation/deployment; configure visible retention and preserve pinned saves rather than treating storage as unlimited. No new storage resource is authorized by the save/restore design.
 
+Ordinary autosaves are a rolling age/count-bounded collection; proposed configurable defaults are 30 days/newest 30 unprotected saves. Favorites and deliberate saved/imported library items are not automatically evicted. Keep account/audit retention separate and measure any shared-content references before claiming actual storage reclamation. Auto Learn Off avoids mutation-capable review calls by default; it does not stop the runtime's ordinary decision/data usage. No budget saving or deployed toggle is claimed until implemented and measured.
+
 The hosted demo uses the [demo deployment profile](architecture.md#demo-instance): one Azure Container App containing two containers, Azure SQL S0, default managed networking, Blob Storage, a free static frontend, built-in app secrets, and essential monitoring. The application also supports separately sized production deployments.
 
 PIP-13 deploys the approved [hosted shadow layout](shadow.md#hosted-m4-approval-and-live-qualification), preserving the existing landing alongside a private backend. The owner selected **monthly** FXMacroData billing to validate the service first. Annual billing below remains a comparison, not the selected subscription.
