@@ -5,6 +5,7 @@ from copy import deepcopy
 from pipmind.contracts import ContractError, Contracts, event_id, stamp, utc, validate_event
 from pipmind.shadow.common import ShadowError, now
 from pipmind.shadow.context import event_query
+from pipmind.shadow.maintenance import POLICY, validate_working
 from pipmind.shadow.model import ModelFailure
 
 
@@ -24,8 +25,11 @@ class ShadowEngine:
             return False
         if validate_event(event, self.contracts) > moment:
             raise ShadowError("future_shadow_input")
-        query = event_query(event)
+        reconsideration = self.store.reconsideration(event)
+        query = event_query(reconsideration["original_input"] if reconsideration else event)
         context = self.store.context(moment, query)
+        if reconsideration:
+            context["reconsideration"] = reconsideration
         result = {
             "mode": "shadow",
             "event_id": event_id(event),
@@ -70,6 +74,10 @@ class ShadowEngine:
                 return True
         try:
             result["context"] = deepcopy(context)
+            if context.get("memory_policy"):
+                if context["memory_policy"]["version"] != POLICY:
+                    raise ShadowError("working_memory_policy")
+                validate_working(context["working_memory"], moment)
             result["usage"].append({"phase": "triage", "attempted": True, "usage_unknown": True})
             triage, usage = await self.model.triage(
                 deepcopy(event), deepcopy(context), self.store, moment
@@ -77,7 +85,10 @@ class ShadowEngine:
             self.contracts.validate("triage-result", triage)
             result.update(triage=triage)
             result["usage"][-1] = usage
-            analysis = event["kind"] == "NewsEvent" and event["payload"]["kind"] == "analysis"
+            effective = reconsideration["original_input"] if reconsideration else event
+            analysis = (
+                effective["kind"] == "NewsEvent" and effective["payload"]["kind"] == "analysis"
+            )
             if triage["wake"] and not analysis:
                 result["usage"].append(
                     {"phase": "decision", "attempted": True, "usage_unknown": True}
@@ -101,6 +112,10 @@ class ShadowEngine:
                     for row in reply["working_memory"]["position_theses"]
                 ):
                     raise ShadowError("unconfirmed_position_thesis")
+                if context.get("memory_policy") and not instruments <= {
+                    row["instrument"] for row in reply["working_memory"]["position_theses"]
+                }:
+                    raise ShadowError("working_memory_missing_thesis")
                 if reply["action"] != "hold" and not reply.get("instrument"):
                     raise ShadowError("unusable_shadow_proposal")
                 if reply["action"] in {"enter", "add"} and not {"side", "size"} <= set(reply):
@@ -110,11 +125,22 @@ class ShadowEngine:
         except (ShadowError, ContractError, KeyError) as error:
             if isinstance(error, ModelFailure):
                 result["usage"][-1] = error.trace
+            code = (
+                (error.trace.get("failure_code") or "")
+                if isinstance(error, ModelFailure)
+                else str(error)
+            )
+            if code == "shadow_context_size" or code.startswith("working_memory_"):
+                self.store.hold(event, context["revision"], result, moment, code)
+                return False
             result.update(status="model_refused", reply=None, error="model_unavailable_or_invalid")
         try:
             self.store.commit(event, context["revision"], result, moment)
         except ShadowError as error:
-            if str(error) in {"unavailable_shadow_evidence", "future_shadow_memory"}:
+            if str(error).startswith("working_memory_"):
+                self.store.hold(event, context["revision"], result, moment, str(error))
+                return False
+            elif str(error) in {"unavailable_shadow_evidence", "future_shadow_memory"}:
                 # Journal a validated refusal, retaining the original input. No
                 # invalid memory is committed, and no fabricated hold is invented.
                 result.update(status="model_refused", reply=None, error=str(error))

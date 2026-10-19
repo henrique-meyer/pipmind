@@ -7,6 +7,7 @@ from uuid import uuid4
 from pipmind.contracts import Contracts, event_facts, event_id, loads, stamp, utc, validate_event
 from pipmind.shadow.common import ShadowError, digest, encoded, terms
 from pipmind.shadow.context import query_terms, record_view, relevance, semantic_text
+from pipmind.shadow.maintenance import POLICY, policy_context, transition, working_digest
 from pipmind.shadow.sql import transaction
 
 PARTS = {
@@ -142,6 +143,241 @@ class SqlMind:
                 (paused, self.trader),
             )
 
+    def _runtime(self, cur, key, default=None):
+        cur.execute("SELECT v FROM pm_runtime WHERE trader=%s AND k=%s", (self.trader, key))
+        row = cur.fetchone()
+        return loads(row[0]) if row else default
+
+    def _set_runtime(self, cur, key, value):
+        cur.execute("SELECT 1 FROM pm_runtime WHERE trader=%s AND k=%s", (self.trader, key))
+        if cur.fetchone():
+            cur.execute(
+                "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k=%s",
+                (encoded(value), self.trader, key),
+            )
+        else:
+            cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (self.trader, key, encoded(value)))
+
+    def _evidence(self, cur, refs, moment):
+        for ref in refs:
+            cur.execute(
+                "SELECT id FROM pm_records WHERE trader=%s AND id=%s "
+                "AND part<>'working_memory' AND ts<=%s",
+                (self.trader, ref, moment.replace(tzinfo=None)),
+            )
+            if not cur.fetchone():
+                raise ShadowError("working_memory_evidence")
+
+    def _write_working(self, cur, working, moment):
+        cur.execute(
+            "SELECT id FROM pm_records WHERE trader=%s AND part='working_memory'", (self.trader,)
+        )
+        identifier = cur.fetchone()[0]
+        cur.execute(
+            "UPDATE pm_minds SET working=%s WHERE trader=%s", (encoded(working), self.trader)
+        )
+        cur.execute(
+            "UPDATE pm_records SET body=%s,ts=%s,meta=%s WHERE trader=%s AND part='working_memory'",
+            (
+                encoded(working),
+                moment.replace(tzinfo=None),
+                encoded(metadata(identifier, "working_memory", stamp(moment), self.trader)),
+                self.trader,
+            ),
+        )
+
+    def _working_checkpoint(self, cur, head, after, dispositions, moment, refs, *, initial=False):
+        identifier = (
+            "working-checkpoint:" + digest(head["lineage"])[:16] + ":" + str(head["revision"])
+        )
+        previous = self._runtime(cur, "memory_policy", {})
+        refs = set(refs) | ({previous["checkpoint"]} if previous else set())
+        self._insert(
+            cur,
+            metadata(identifier, "memory", stamp(moment), self.trader, sorted(refs)),
+            encoded(
+                {
+                    "kind": "working-memory-transition",
+                    "policy": POLICY,
+                    "revision": head["revision"],
+                    "as_of": stamp(moment),
+                    "initial": initial,
+                    "previous_checkpoint": previous.get("checkpoint"),
+                    "before": head["working"],
+                    "after": after,
+                    "dispositions": dispositions,
+                }
+            ),
+        )
+        self._set_runtime(
+            cur,
+            "memory_policy",
+            {
+                "version": POLICY,
+                "checkpoint": identifier,
+                "as_of": stamp(moment),
+                "origin_checkpoint": identifier if initial else previous["origin_checkpoint"],
+            },
+        )
+        self._write_working(cur, after, moment)
+        return identifier
+
+    def maintain_working(self, plan, moment):
+        """Explicit paused owner activation; a complete disposition plan is retained."""
+        if set(plan) != {"revision", "before_sha256", "working_memory", "dispositions", "review"}:
+            raise ShadowError("working_memory_plan")
+        if plan["review"] != "no-unresolved-ambiguity":
+            raise ShadowError("working_memory_review_required")
+        with self.transaction() as cur:
+            head = self._head(cur)
+            if not head["paused"] or head["revision"] != plan["revision"]:
+                raise ShadowError("shadow_revision_changed")
+            if working_digest(head["working"]) != plan["before_sha256"]:
+                raise ShadowError("working_memory_source_changed")
+            refs = transition(
+                head["working"], plan["working_memory"], plan["dispositions"], moment, initial=True
+            )
+            self._evidence(cur, refs, moment)
+            identifier = self._working_checkpoint(
+                cur, head, plan["working_memory"], plan["dispositions"], moment, refs, initial=True
+            )
+            cur.execute("UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (self.trader,))
+            return {"checkpoint": identifier, "paused": True, "dispatches": 0}
+
+    def hold(self, envelope, revision, result, moment, reason):
+        """Audit a failed attempt and pause atomically, leaving its input pending."""
+        identifier = event_id(envelope)
+        with self.transaction() as cur:
+            head = self._head(cur)
+            if head["revision"] != revision or head["paused"]:
+                raise ShadowError("shadow_revision_changed")
+            cur.execute(
+                "SELECT status FROM pm_inputs WHERE trader=%s AND id=%s", (self.trader, identifier)
+            )
+            if cur.fetchone() != ("pending",):
+                raise ShadowError("shadow_input_not_pending")
+            held_id = "held:" + digest(identifier) + ":" + str(revision)
+            held = {
+                **result,
+                "status": "held",
+                "error": reason,
+                "reply": None,
+                "input": envelope,
+                "decision": None,
+            }
+            self._insert(
+                cur, metadata(held_id, "journal", stamp(moment), self.trader), encoded(held)
+            )
+            self._set_runtime(
+                cur,
+                "reasoning_hold",
+                {
+                    "event_id": identifier,
+                    "attempt_id": held_id,
+                    "reason": reason,
+                    "since": stamp(moment),
+                    "input_pending": True,
+                },
+            )
+            cur.execute(
+                "UPDATE pm_minds SET paused=1,revision=revision+1 WHERE trader=%s", (self.trader,)
+            )
+
+    def queue_reconsideration(self, original_id, moment):
+        """One new present-time attempt; the original input/outcome are immutable."""
+        with self.transaction() as cur:
+            head = self._head(cur)
+            if not head["paused"]:
+                raise ShadowError("reconsideration_requires_pause")
+            cur.execute(
+                "SELECT result FROM pm_outcomes WHERE trader=%s AND event_id=%s",
+                (self.trader, original_id),
+            )
+            row = cur.fetchone()
+            result = loads(row[0]) if row else {}
+            if result.get("status") != "model_refused" or not any(
+                trace.get("attempted") is False
+                and trace.get("prompt_bytes", 0)
+                > (16000 if trace.get("phase") == "triage" else 28000)
+                for trace in result.get("usage", [])
+            ):
+                raise ShadowError("not_a_context_refusal")
+            identifier = "reconsider:" + digest(original_id)
+            cur.execute(
+                "SELECT id FROM pm_inputs WHERE trader=%s AND id=%s", (self.trader, identifier)
+            )
+            if cur.fetchone():
+                return identifier
+            original = self._original_input(cur, original_id)
+            if validate_event(original, self.contracts) > moment:
+                raise ShadowError("future_shadow_input")
+            event = {
+                "schema_version": 1,
+                "kind": "ClockEvent",
+                "message_id": identifier,
+                "available_at": stamp(moment),
+                "payload": {
+                    "schema_version": 1,
+                    "event_id": identifier,
+                    "ts": stamp(moment),
+                    "reason": "reconsideration",
+                    "reconsideration_of": original_id,
+                },
+            }
+            validate_event(event, self.contracts)
+            cur.execute(
+                "INSERT pm_inputs(trader,id,facts,envelope,status) VALUES(%s,%s,%s,%s,'pending')",
+                (self.trader, identifier, digest(encoded(event_facts(event))), encoded(event)),
+            )
+            authorization = "reconsideration-authorization:" + digest(original_id)
+            self._insert(
+                cur,
+                metadata(
+                    authorization,
+                    "memory",
+                    stamp(moment),
+                    self.trader,
+                    [original_id, "outcome:" + digest(original_id)],
+                ),
+                encoded(
+                    {
+                        "kind": "owner-reconsideration",
+                        "original_event_id": original_id,
+                        "new_event_id": identifier,
+                        "original_outcome_sha256": digest(row[0]),
+                        "requested_at": stamp(moment),
+                        "historical_replay": False,
+                    }
+                ),
+            )
+            self._set_runtime(cur, "reconsideration:" + identifier, authorization)
+            cur.execute("UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (self.trader,))
+            return identifier
+
+    def _original_input(self, cur, identifier):
+        cur.execute(
+            "SELECT envelope FROM pm_inputs WHERE trader=%s AND id=%s", (self.trader, identifier)
+        )
+        row = cur.fetchone()
+        if not row:
+            raise ShadowError("reconsideration_source_missing")
+        return loads(row[0])
+
+    def reconsideration(self, event):
+        if event["kind"] != "ClockEvent" or event["payload"]["reason"] != "reconsideration":
+            return None
+        with self.transaction() as cur:
+            authorization = self._runtime(cur, "reconsideration:" + event_id(event))
+            if not authorization:
+                raise ShadowError("reconsideration_not_authorized")
+            original_id = event["payload"]["reconsideration_of"]
+            return {
+                "original_input": self._original_input(cur, original_id),
+                "authorization": authorization,
+                "original_outcome_id": "outcome:" + digest(original_id),
+                "evaluation": "present-time reconsideration; original outcome remains unchanged",
+            }
+
     def head(self):
         with self.transaction() as cur:
             return self._head(cur)
@@ -178,6 +414,11 @@ class SqlMind:
                 if not isinstance(item, dict) or not {"sequence", "event"} <= set(item):
                     raise ShadowError("invalid_input_page")
                 seq, envelope = item["sequence"], item["event"]
+                if (
+                    envelope.get("kind") == "ClockEvent"
+                    and envelope.get("payload", {}).get("reason") == "reconsideration"
+                ):
+                    raise ShadowError("reconsideration_owner_operation_required")
                 if type(seq) is not int or seq <= previous:
                     raise ShadowError("input_cursor_not_increasing")
                 if validate_event(envelope, self.contracts) > moment:
@@ -258,7 +499,9 @@ class SqlMind:
             self._head(cur)
             cur.execute(
                 "SELECT TOP(1) envelope FROM pm_inputs WHERE trader=%s "
-                "AND status='pending' ORDER BY pk",
+                "AND status='pending' ORDER BY CASE WHEN EXISTS(SELECT 1 FROM pm_runtime r "
+                "WHERE r.trader=pm_inputs.trader AND r.k='reconsideration:'+pm_inputs.id) "
+                "THEN 0 ELSE 1 END,pk",
                 (self.trader,),
             )
             row = cur.fetchone()
@@ -310,17 +553,23 @@ class SqlMind:
                 "working_memory": head["working"],
                 "recent_journal": recent,
                 "retrieved_memories": memories,
+                **(
+                    {"memory_policy": policy_context(policy)}
+                    if (policy := self._runtime(cur, "memory_policy"))
+                    else {}
+                ),
             }
 
     def _search(self, cur, query, moment):
+        identifier, _, focus = query.partition(" | ")
         cur.execute(
             "SELECT meta,body FROM pm_records WHERE trader=%s AND id=%s "
             "AND part IN ('memory','review','journal','playbook_history') AND ts<=%s",
-            (self.trader, query[:500], moment.replace(tzinfo=None)),
+            (self.trader, identifier[:500], moment.replace(tzinfo=None)),
         )
         exact = cur.fetchone()
         if exact:
-            return [record_view(loads(exact[0]), exact[1])]
+            return [record_view(loads(exact[0]), exact[1], focus)]
         tokens = query_terms(query)
         if not tokens:
             return []
@@ -451,25 +700,17 @@ class SqlMind:
                 ):
                     raise ShadowError("future_shadow_memory")
                 working = reply["working_memory"]
-                cur.execute(
-                    "SELECT id FROM pm_records WHERE trader=%s AND part='working_memory'",
-                    (self.trader,),
-                )
-                working_id = cur.fetchone()[0]
-                cur.execute(
-                    "UPDATE pm_minds SET working=%s WHERE trader=%s",
-                    (encoded(working), self.trader),
-                )
-                cur.execute(
-                    "UPDATE pm_records SET body=%s,ts=%s,meta=%s "
-                    "WHERE trader=%s AND part='working_memory'",
-                    (
-                        encoded(working),
-                        moment.replace(tzinfo=None),
-                        encoded(metadata(working_id, "working_memory", stamp(moment), self.trader)),
-                        self.trader,
-                    ),
-                )
+                if self._runtime(cur, "memory_policy"):
+                    dispositions = reply.get("memory_dispositions", [])
+                    refs = transition(head["working"], working, dispositions, moment)
+                    self._evidence(cur, refs, moment)
+                    if working != head["working"] and not reply["evidence_ids"]:
+                        raise ShadowError("working_memory_evidence")
+                    self._working_checkpoint(
+                        cur, head, working, dispositions, moment, refs | set(reply["evidence_ids"])
+                    )
+                else:
+                    self._write_working(cur, working, moment)
             self._insert(
                 cur,
                 metadata(
@@ -501,6 +742,7 @@ class SqlMind:
                         "INSERT pm_runtime VALUES(%s,%s,%s)", (self.trader, key, encoded(value))
                     )
             cur.execute("UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (self.trader,))
+            self._set_runtime(cur, "reasoning_hold", None)
 
     def retained(self):
         with self.transaction() as cur:
@@ -531,6 +773,7 @@ class SqlMind:
                 "outcomes": outcomes,
                 "pending": cur.fetchone()[0],
                 "dispatches": 0,
+                "reasoning_hold": self._runtime(cur, "reasoning_hold"),
             }
 
     def outcome(self, identifier):

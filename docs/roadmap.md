@@ -66,6 +66,8 @@ After resource approval, provision the Microsoft Foundry resource/project and mo
 
 Done when a trading day of live events produces a journal and zero broker orders, and SQL-backed export/import and experience-clone checks pass with the documented transformations and no order submissions.
 
+M4 also maintains bounded current state with audited before/after dispositions and retrieval of historical detail; unresolved conditions and confirmed theses must survive consolidation. Bounds/transition failures hold the pending input and pause reasoning. Playbook self-revision stays in M7.
+
 ## M5 — Safety and reconciliation
 
 Outer hard boundary with real numbers in configuration, daily-loss stop fed by `AccountSnapshot`, single-instance lease, remote kill switch, suggestion channel and override channel.

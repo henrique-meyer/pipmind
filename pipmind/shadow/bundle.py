@@ -19,6 +19,7 @@ SUPPORTED_CONTEXTS = {
     ("shadow-context-v3", "sql-memory-v2"),
     ("shadow-context-v4", "sql-memory-v2"),
     ("shadow-context-v5", "sql-memory-v2"),
+    ("shadow-context-v6", "sql-memory-v2"),
     (PROMPT_VERSION, RETRIEVAL_VERSION),
 }
 

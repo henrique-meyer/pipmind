@@ -232,7 +232,7 @@ Hosted long-term memory starts with Azure SQL full-text search. Store access and
 
 The mind is operational data. It is not committed into this source repository.
 
-Model context and audit retention are separate. [Phase-specific views](shadow.md#processing-and-persistence) keep triage compact and supply decisions with complete current working views/theses/waiting conditions plus selected source evidence. Retrieval can reach older material events and opposing evidence; age alone does not invalidate a view. Structured journal projections prevent previous prompts from being recursively copied forward. Full original events and model-visible traces remain in SQL. The [Markdown knowledge discussion](shadow.md#markdown-knowledge-and-continuing-memory) describes how readable standing policy and durable briefs fit this persistent mind without treating a file repository as free model memory.
+Model context and audit retention are separate. [Phase-specific views](shadow.md#processing-and-persistence) keep triage compact and supply decisions with bounded current market views, all confirmed position theses and active prerequisites plus selected source evidence. Retrieval can reach older material events and opposing evidence; age alone does not invalidate a view. Structured journal projections prevent previous prompts from being recursively copied forward. Full original events and model-visible traces remain in SQL. The [Markdown knowledge discussion](shadow.md#markdown-knowledge-and-continuing-memory) describes how readable standing policy and durable briefs fit this persistent mind without treating a file repository as free model memory.
 
 ### Markdown mind export and import
 
@@ -520,3 +520,5 @@ Database access, service endpoints, identity/secret providers, resource sizes, p
 One broker account, one gateway, one core holding the lease.
 
 Platform references: [multiple containers and resource allocation](https://learn.microsoft.com/en-us/azure/container-apps/containers), [default networking](https://learn.microsoft.com/en-us/azure/container-apps/networking), [revision overlap](https://learn.microsoft.com/en-us/azure/container-apps/revisions), [app secrets](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets), and [SQL backups](https://learn.microsoft.com/en-us/azure/azure-sql/database/automated-backups-overview).
+
+PIP-14 adds owner-approved [bounded working-memory maintenance](shadow.md#bounded-working-memory-pip-14): complete SQL history remains exact, current-state consolidation has explicit dispositions, and context/transition failures pause with the input pending. Older accumulated paragraphs remain retrievable rather than mandatory in every prompt. This does not implement M7 playbook self-review.

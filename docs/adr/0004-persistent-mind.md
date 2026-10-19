@@ -23,7 +23,7 @@ The mind has five parts:
 
 Identity and the current playbook are the leading prompt prefix, so provider prompt caching can reuse them across calls. Working memory, the journal tail, retrieved passages and the new events follow the prefix, because they change after each decision.
 
-PIP-15 refines these views: triage reads current state and the new event without historical prompt traces; decisions retain all current views, position theses and waiting conditions plus selected journal/source evidence. Retrieval searches retained history without an age cutoff, including older relevant and contrary facts. A short recent tail alone cannot stand in for continuing memory. Full SQL audit history remains separate from bounded model projections. See [context and Markdown knowledge](../shadow.md#markdown-knowledge-and-continuing-memory).
+PIP-15 refines these views: triage reads current state and the new event without historical prompt traces; decisions retain current market state, confirmed position theses and active prerequisites plus selected journal/source evidence. Retrieval searches retained history without an age cutoff, including older relevant and contrary facts. A short recent tail alone cannot stand in for continuing memory. Full SQL audit history remains separate from bounded model projections. See [context and Markdown knowledge](../shadow.md#markdown-knowledge-and-continuing-memory).
 
 The hosted demo uses Azure SQL Database Standard S0, with full-text search for the long-term part. Local SQL Server integration checks exercise the same adapter; SQLite may support isolated replay fixtures but is not the hosted mind or lease store. The shape of the mind does not depend on that engine. This storage choice was revised on 2026-10-17 with the [demo deployment profile](../architecture.md#demo-instance); the five-part persistent-mind decision is unchanged.
 
@@ -49,3 +49,7 @@ Implementation checkpoint, 2026-10-18: [M4 shadow](../shadow.md) implements cons
 - Working memory can drift away from the broker. Reconciliation overwrites positions and P&L from gateway snapshots before the next decision.
 - The mind is operational data. It is not committed to this source repository; the public page publishes the playbook diff and the reasoning.
 - A saved mind can move between deployments without making a Markdown directory the live state store. Recovery still depends on matching durable execution records, fencing and broker reconciliation; clone history remains attributed to its source.
+
+### Bounded current state (2026-10-19)
+
+The owner approved M4 maintenance of a concise working state rather than every accumulated paragraph in each prompt. Preserve exact prior state and a disposition for each changed view/condition in SQL; unresolved prerequisites need explicit carry/merge or evidence-backed resolution. Keep all confirmed theses, dated uncertainty and contrary evidence available. Hold the pending input and pause on bounds/transition failure. This changes prompt delivery, not identity/playbook or the M7 self-review boundary. See [the implemented policy and owner workflow](../shadow.md#bounded-working-memory-pip-14).

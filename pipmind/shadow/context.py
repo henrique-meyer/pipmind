@@ -7,7 +7,7 @@ from pipmind.contracts import ContractError, loads
 from pipmind.shadow.common import ShadowError, encoded
 from pipmind.shadow.working import factor_working
 
-CONTEXT_VERSION = "selected-evidence-v3"
+CONTEXT_VERSION = "selected-evidence-v4"
 STOP = frozenset(
     (
         "a an and are as at be by for from has have in is it of on or "
@@ -171,6 +171,35 @@ def record_view(meta, body, query=""):
                 if key in data
             }
         )
+    elif isinstance(data, dict) and data.get("kind") == "working-memory-transition":
+        rows = [
+            {"key": f"{prefix}{i}", "before": value}
+            for field, prefix in (("views", "v"), ("waiting_for", "w"))
+            for i, value in enumerate(data["before"][field])
+        ]
+        words = set(query_terms_all(query))
+        rows.sort(
+            key=lambda row: (
+                row["key"] in query.split(),
+                len(words & set(query_terms_all(row["before"]))),
+            ),
+            reverse=True,
+        )
+        selected = rows[:2]
+        for row in selected:
+            row["disposition"] = next(
+                (d for d in data["dispositions"] if d["from"] == row["key"]), None
+            )
+        text = encoded(
+            {
+                "kind": data["kind"],
+                "as_of": data["as_of"],
+                "previous_checkpoint": data.get("previous_checkpoint"),
+                "entries": selected,
+                "total_entries": len(rows),
+            }
+        )
+        partial = True
     else:
         text = excerpt(body, query, 2400)
         partial = len(text) < len(body)
@@ -196,6 +225,8 @@ def phase_context(context, phase):
         "broker_snapshots",
         "feed_status",
         "price_aggregate",
+        "memory_policy",
+        "reconsideration",
     )
     view = {key: deepcopy(context[key]) for key in keys if key in context}
     if "working_memory" in view:

@@ -67,6 +67,9 @@
           }
         }
       }
+    },
+    "memory_dispositions": {
+      "$ref": "urn:pipmind:schema:v1:memory-dispositions"
     }
   }
 }
