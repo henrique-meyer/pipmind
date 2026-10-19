@@ -214,11 +214,14 @@ def test_wire_context_is_compact_audited_and_tools_cannot_reinflate_old_traces()
     assert "recent_journal" not in captured["message"]
     assert "Standing mandate" not in captured["message"]  # Present once in instructions.
     assert captured["instructions"].count("Standing mandate") == 1
+    assert "one sentence of at most 240 characters" in captured["instructions"]
+    assert "Do not restate the mind" in captured["instructions"]
     assert captured["options"]["max_tokens"] == 512
     assert usage["request"]["instructions"] == captured["instructions"]
     assert usage["prompt_bytes"] < 6000 and usage["input_tokens"] == 123
 
     async def decide(message, *, options):
+        assert "one sentence of at most 240 characters" not in captured["instructions"]
         tools = {fn.__name__: fn for fn in captured["tools"]}
         assert set(tools) == {"search_memory"}
         assert "Month-old inflation shift" in message
