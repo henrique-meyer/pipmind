@@ -3,7 +3,6 @@
 import asyncio
 import os
 import re
-from contextlib import suppress
 from time import perf_counter
 from urllib.parse import urlsplit
 
@@ -79,6 +78,7 @@ class FoundryModel:
         enabled=False,
         timeout=90,
         factory=None,
+        observer=None,
     ):
         parsed = urlsplit(endpoint)
         if (
@@ -98,6 +98,7 @@ class FoundryModel:
         self.endpoint, self.triage_model, self.decision_model = endpoint, triage, decision
         self.credential_mode, self.timeout, self.factory = credential_mode, timeout, factory
         self.managed_identity_client_id = managed_identity_client_id
+        self.observer = observer or (lambda phase, facts: None)
         self.contracts = Contracts()
 
     @classmethod
@@ -113,6 +114,7 @@ class FoundryModel:
 
     async def _call(self, phase, event, context, store, moment, triage=None):
         calls = []
+        self.observer(phase + "_projection", {})
         projected_at = perf_counter()
         try:
             selected = phase_context(context, phase)
@@ -202,6 +204,7 @@ class FoundryModel:
             "prompt_bytes": len((prefix + message).encode()),
             "max_output_tokens": 512 if phase == "triage" else 4096,
         }
+        self.observer(phase + "_setup", {"trace": trace})
         try:
             if trace["prompt_bytes"] > (16000 if phase == "triage" else 28000):
                 raise ShadowError("shadow_context_size")
@@ -242,6 +245,7 @@ class FoundryModel:
                     tools=[] if phase == "triage" else [search_memory],
                 )
             trace["attempted"] = True
+            self.observer(phase + "_rpc", {"trace": trace})
             response = await asyncio.wait_for(
                 agent.run(
                     message,
@@ -256,23 +260,35 @@ class FoundryModel:
             result = bounded_json(response.text, 65536)
             self.contracts.validate(name, result)
             usage = getattr(response, "usage_details", None) or {}
-            return result, {
-                **trace,
-                "phase": phase,
-                "latency_ms": round((perf_counter() - started) * 1000),
-                "input_tokens": usage.get("input_token_count"),
-                "output_tokens": usage.get("output_token_count"),
-                "tools": calls,
-                "model_version": "unverified",
-                "estimated_cost_usd": None,
-            }
-        except Exception as error:
+            trace.update(
+                {
+                    "phase": phase,
+                    "latency_ms": round((perf_counter() - started) * 1000),
+                    "input_tokens": usage.get("input_token_count"),
+                    "output_tokens": usage.get("output_token_count"),
+                    "tools": calls,
+                    "model_version": "unverified",
+                    "estimated_cost_usd": None,
+                }
+            )
+            self.observer(phase + "_response", {"trace": trace, "response": result})
+            return result, trace
+        except (Exception, asyncio.CancelledError) as error:
+            # SDK/child cancellation is not an instruction to cancel the service
+            # worker. An actual caller shutdown cancellation still propagates.
+            if isinstance(error, asyncio.CancelledError) and asyncio.current_task().cancelling():
+                raise
             text = getattr(response, "text", None)
             usage = getattr(response, "usage_details", None) or {}
-            raise ModelFailure(
+            trace.update(
                 {
-                    **trace,
-                    "failure_code": str(error) if isinstance(error, ShadowError) else "model_error",
+                    "failure_code": (
+                        "model_cancelled"
+                        if isinstance(error, asyncio.CancelledError)
+                        else str(error)
+                        if isinstance(error, ShadowError)
+                        else "model_error"
+                    ),
                     "error_type": type(error).__name__,
                     "usage_unknown": trace["attempted"] and not bool(usage),
                     "input_tokens": usage.get("input_token_count"),
@@ -281,16 +297,27 @@ class FoundryModel:
                     "invalid_response": text[:65536] if isinstance(text, str) else None,
                     "latency_ms": round((perf_counter() - started) * 1000),
                 }
-            ) from None
+            )
+            raise ModelFailure(trace) from None
         finally:
+            self.observer(phase + "_cleanup", {"trace": trace})
+
+            async def close(operation):
+                try:
+                    await operation()
+                except asyncio.CancelledError:
+                    if asyncio.current_task().cancelling():
+                        raise
+                    trace.setdefault("cleanup_errors", []).append("CancelledError")
+                except Exception as error:
+                    trace.setdefault("cleanup_errors", []).append(type(error).__name__)
+
             if client:
-                with suppress(Exception):
-                    await client.client.close()
-                with suppress(Exception):
-                    await client.project_client.close()
+                await close(lambda: client.client.close())
+                await close(lambda: client.project_client.close())
             if credential:
-                with suppress(Exception):
-                    await credential.close()
+                await close(credential.close)
+            self.observer(phase + "_finished", {})
 
     async def triage(self, event, context, store, moment):
         return await self._call("triage", event, context, store, moment)

@@ -10,11 +10,12 @@ from pipmind.shadow.model import ModelFailure
 
 
 class ShadowEngine:
-    def __init__(self, store, model, *, clock=now, price_interval=60):
+    def __init__(self, store, model, *, clock=now, price_interval=60, observer=None):
         if not 1 <= price_interval <= 3600:
             raise ShadowError("invalid_price_interval")
         self.store, self.model, self.clock, self.contracts = store, model, clock, Contracts()
         self.price_interval = price_interval
+        self.observer = observer or (lambda phase, facts: None)
 
     async def step(self):
         moment = self.clock()
@@ -25,6 +26,7 @@ class ShadowEngine:
             return False
         if validate_event(event, self.contracts) > moment:
             raise ShadowError("future_shadow_input")
+        self.observer("context", {"event": event})
         reconsideration = self.store.reconsideration(event)
         query = event_query(reconsideration["original_input"] if reconsideration else event)
         context = self.store.context(moment, query)
@@ -41,6 +43,7 @@ class ShadowEngine:
         }
         context["broker_snapshots"] = self.store.runtime("broker_snapshots", {})
         context["feed_status"] = self.store.runtime("feed_status", {"coverage": "unverified"})
+        self.observer("ready", {"event": event, "revision": context["revision"], "result": result})
         if event["kind"] in {"AccountSnapshot", "PositionSnapshot"}:
             snapshots = dict(context["broker_snapshots"])
             snapshots["account" if event["kind"] == "AccountSnapshot" else "positions"] = event[
@@ -71,6 +74,7 @@ class ShadowEngine:
             if not due:
                 result["status"] = "price_coalesced"
                 self.store.commit(event, context["revision"], result, moment)
+                self.observer("committed", {})
                 return True
         try:
             result["context"] = deepcopy(context)
@@ -149,4 +153,5 @@ class ShadowEngine:
                 self.store.commit(event, context["revision"], result, moment)
             else:
                 raise
+        self.observer("committed", {})
         return True

@@ -818,6 +818,127 @@ def test_status_reports_committed_progress_before_a_backlog_batch_finishes(mind)
             release.set()
 
 
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError, "stall"])
+def test_worker_fault_preserves_pending_input_and_durable_hold(mind, failure):
+    import threading
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from pipmind.shadow.service import create_app
+
+    events, _ = episode(mind)
+    entered = threading.Event()
+
+    class Model:
+        async def triage(self, *args):
+            entered.set()
+            if failure == "stall":
+                await asyncio.sleep(3600)
+            raise failure
+
+    token = "synthetic-worker-token-" + uuid4().hex
+    app = create_app(mind, Model(), token, scheduled_wakes=False, worker_timeout=2)
+    with TestClient(app) as client:
+        assert entered.wait(15)
+        deadline = time.monotonic() + 15
+        status = {}
+        while time.monotonic() < deadline:
+            status = client.get("/status", headers={"Authorization": "Bearer " + token}).json()
+            if status.get("reasoning_hold"):
+                break
+            time.sleep(0.02)
+        assert status["paused"] and status["pending"] == len(events)
+        assert status["outcomes"] == 0 and status["dispatches"] == 0
+        assert status["reasoning_hold"]["event_id"] == events[0]["message_id"]
+        assert status["reasoning_hold"]["input_pending"]
+        assert mind.pending() == events[0]
+        assert mind.outcome(events[0]["message_id"]) is None
+        if failure == "stall":
+            deadline = time.monotonic() + 5
+            while client.get("/healthz").status_code != 503 and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert client.get("/healthz").status_code == 503
+        else:
+            assert client.get("/healthz").status_code == 200
+            assert status["reasoning_worker"]["alive"]
+            assert status["reasoning_worker"]["error_type"] == failure.__name__
+
+
+def test_persistent_worker_advances_sql_after_child_cancellation_and_stays_healthy(mind):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from pipmind.contracts import stamp
+    from pipmind.shadow.model import FoundryModel
+    from pipmind.shadow.service import create_app
+
+    identifiers = ["worker-" + uuid4().hex for _ in range(80)]
+    mind.accept(
+        "worker-test",
+        [
+            {
+                "sequence": i + 1,
+                "event": {
+                    "schema_version": 1,
+                    "kind": "ClockEvent",
+                    "message_id": key,
+                    "available_at": stamp(MOMENT),
+                    "payload": {
+                        "schema_version": 1,
+                        "event_id": key,
+                        "ts": stamp(MOMENT),
+                        "reason": "heartbeat",
+                    },
+                },
+            }
+            for i, key in enumerate(identifiers)
+        ],
+        MOMENT,
+    )
+    mind.set_paused(False)
+    loops = set()
+    calls = []
+
+    class Agent:
+        async def run(self, *args, **kwargs):
+            from types import SimpleNamespace
+
+            loops.add(id(asyncio.get_running_loop()))
+            calls.append(1)
+            if len(calls) == 36:
+                raise asyncio.CancelledError
+            return SimpleNamespace(
+                text='{"wake":false,"summary":"Synthetic observation"}',
+                usage_details={"input_token_count": 10, "output_token_count": 5},
+            )
+
+    model = FoundryModel(
+        "https://synthetic.services.ai.azure.com/api/projects/shadow",
+        "synthetic-triage",
+        "synthetic-decision",
+        enabled=True,
+        factory=lambda **kwargs: Agent(),
+    )
+    token = "synthetic-worker-token-" + uuid4().hex
+    with TestClient(create_app(mind, model, token, scheduled_wakes=False)) as client:
+        deadline = time.monotonic() + 60
+        while mind.status()["pending"] and time.monotonic() < deadline:
+            assert client.get("/healthz").status_code == 200
+            time.sleep(0.05)
+        assert mind.status()["outcomes"] == 80 and mind.status()["pending"] == 0
+        assert mind.status()["dispatches"] == 0
+        assert len(loops) == 1 and len(calls) == 80
+        refusal = mind.outcome(identifiers[35])
+        assert refusal["status"] == "model_refused"
+        assert refusal["usage"][0]["failure_code"] == "model_cancelled"
+        assert mind.outcome(identifiers[36])["status"] == "observed"
+        assert client.get("/status", headers={"Authorization": "Bearer " + token}).json()[
+            "reasoning_worker"
+        ]["alive"]
+
+
 def test_many_retained_records_use_runtime_bundle_and_keep_override_provenance(mind):
     with mind.transaction() as cur:
         for i in range(150):
