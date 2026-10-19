@@ -248,7 +248,13 @@ class SqlMind:
             )
             self._evidence(cur, refs, moment)
             identifier = self._working_checkpoint(
-                cur, head, plan["working_memory"], plan["dispositions"], moment, refs, initial=True
+                cur,
+                head,
+                plan["working_memory"],
+                plan["dispositions"],
+                moment,
+                refs,
+                initial=self._runtime(cur, "memory_policy") is None,
             )
             cur.execute("UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (self.trader,))
             return {"checkpoint": identifier, "paused": True, "dispatches": 0}
@@ -679,6 +685,8 @@ class SqlMind:
             reply = result.get("reply")
             result["decision"] = None
             if reply:
+                if result.get("memory_repair"):
+                    self._evidence(cur, result["memory_repair"]["evidence_ids"], moment)
                 self.contracts.validate("model-reply", reply)
                 if len(reply["evidence_ids"]) > 256:
                     raise ShadowError("unavailable_shadow_evidence")

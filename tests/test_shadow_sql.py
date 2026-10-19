@@ -1628,3 +1628,132 @@ def test_private_http_rejects_malformed_and_forged_owner_inputs_without_advancin
         assert response.status_code == 403
         assert mind.checkpoint("bad-input") == mind.checkpoint("forged") == 0
         assert mind.pending() is None
+
+
+@pytest.mark.parametrize("failed_correction", [False, True])
+def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, failed_correction):
+    from pipmind.shadow.common import encoded
+
+    before = {
+        "views": ["USD uncertain"],
+        "waiting_for": ["Wait for verified vintage"],
+        "position_theses": [],
+    }
+    with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            "USD uncertainty; wait for verified vintage",
+        )
+        mind._write_working(cur, before, MOMENT)
+    activate_bounded(mind)
+    events, model = episode(mind)
+    event = events[0]
+    candidate = deepcopy(model.responses[event["message_id"]]["reply"])
+    candidate.update(
+        evidence_ids=[event["message_id"]],
+        tool_calls=[],
+        working_memory={**before, "views": ["USD uncertain " + "." * 301]},
+    )
+    model.responses[event["message_id"]]["reply"] = candidate
+    model.responses[event["message_id"]]["triage"]["wake"] = True
+    after = {**before, "views": ["USD uncertainty retained"]}
+
+    def disposition(key, state):
+        return {
+            "from": key,
+            "to": key,
+            "disposition": state,
+            "reason": "Same explicit dependency in concise wording",
+            "evidence_ids": [event["message_id"]],
+        }
+
+    correction = {
+        "working_memory": after,
+        "memory_dispositions": [disposition("v0", "updated")],
+        "candidate_dispositions": [disposition("v0", "updated"), disposition("w0", "retained")],
+    }
+
+    class Repair(FixtureModel):
+        calls = 0
+
+        async def repair_memory(self, *args):
+            self.calls += 1
+            reply = deepcopy(correction)
+            if failed_correction:
+                reply["working_memory"] = deepcopy(candidate["working_memory"])
+            return reply, {"phase": "memory_repair", "input_tokens": 123, "output_tokens": 45}
+
+    live = Repair(model.responses)
+    old = mind.retained()[1]
+    assert (
+        asyncio.run(ShadowEngine(mind, live, clock=lambda: MOMENT).step()) is not failed_correction
+    )
+    assert live.calls == 1
+    if failed_correction:
+        assert mind.head()["paused"] and mind.pending() == event
+        assert mind.head()["working"] == before and mind.outcome(event["message_id"]) is None
+        journal = [loads(body) for meta, body in mind.retained()[1] if meta["part"] == "journal"][
+            -1
+        ]
+        assert journal["status"] == "held" and journal["error"] == "working_memory_repair_failed"
+    else:
+        journal = mind.outcome(event["message_id"])
+        assert journal["status"] == "observed" and not mind.head()["paused"]
+        assert mind.head()["working"] == after and mind.pending() is None
+        for key in candidate.keys() - {"working_memory", "memory_dispositions"}:
+            assert journal["reply"][key] == candidate[key]
+    assert journal["memory_repair"]["candidate"] == candidate
+    assert [row["phase"] for row in journal["usage"]] == ["triage", "decision", "memory_repair"]
+    assert journal["usage"][-1]["input_tokens"] == 123 and journal["dispatches"] == 0
+    retained = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
+    assert all(
+        retained[meta["record_id"]] == (meta, body)
+        for meta, body in old
+        if meta["part"] != "working_memory"
+    )
+    assert encoded(before) in [
+        encoded(loads(body)["before"])
+        for meta, body in mind.retained()[1]
+        if meta["part"] == "memory" and '"working-memory-transition"' in body
+    ]
+
+
+def test_repeated_owner_maintenance_keeps_original_checkpoint_and_exact_prior_records(mind):
+    from pipmind.shadow.maintenance import entries, working_digest
+
+    _, first = activate_bounded(mind)
+    original_policy = mind.runtime("memory_policy")
+    original_records = mind.retained()[1]
+    head = mind.head()
+    second = mind.maintain_working(
+        {
+            "revision": head["revision"],
+            "before_sha256": working_digest(head["working"]),
+            "working_memory": head["working"],
+            "dispositions": [
+                {
+                    "from": key,
+                    "to": key,
+                    "disposition": "retained",
+                    "reason": "Preserve every current dependency",
+                    "evidence_ids": [first["checkpoint"]],
+                }
+                for key in entries(head["working"])
+            ],
+            "review": "no-unresolved-ambiguity",
+        },
+        MOMENT + timedelta(seconds=1),
+    )
+    policy = mind.runtime("memory_policy")
+    assert policy["origin_checkpoint"] == original_policy["origin_checkpoint"]
+    assert policy["checkpoint"] == second["checkpoint"] != first["checkpoint"]
+    after = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
+    assert all(
+        after[meta["record_id"]] == (meta, body)
+        for meta, body in original_records
+        if meta["part"] != "working_memory"
+    )
+    checkpoint = loads(after[second["checkpoint"]][1])
+    assert not checkpoint["initial"] and checkpoint["previous_checkpoint"] == first["checkpoint"]
+    assert mind.head()["paused"] and mind.status()["dispatches"] == 0

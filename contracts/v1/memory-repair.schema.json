@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:memory-repair",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["working_memory", "memory_dispositions", "candidate_dispositions"],
+  "properties": {
+    "working_memory": {"$ref": "urn:pipmind:schema:v1:working-memory"},
+    "memory_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"},
+    "candidate_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"}
+  }
+}
