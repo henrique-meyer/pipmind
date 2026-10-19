@@ -299,6 +299,84 @@ def test_learning_cannot_edit_identity_or_use_override_evidence(mind):
         library.commit_learning(ticket, {**content, "identity": "Bypass constraints"}, refs, MOMENT)
 
 
+def test_concurrent_favorite_cleanup_has_no_acknowledged_favorite_loss(mind):
+    library = RobotLibrary(mind)
+    automatic = learn(library, mind, "A new lesson")
+    barrier = Barrier(2)
+
+    def favorite():
+        barrier.wait()
+        try:
+            library.favorite(automatic, True, MOMENT + timedelta(days=31))
+            return True
+        except ShadowError as error:
+            assert str(error) == "robot_save_missing"
+            return False
+
+    def cleanup():
+        barrier.wait()
+        return library.cleanup(MOMENT + timedelta(days=31))
+
+    with ThreadPoolExecutor(2) as pool:
+        first, second = pool.submit(favorite), pool.submit(cleanup)
+        acknowledged, removed = first.result(), second.result()
+    assert (automatic not in removed) == acknowledged
+    if acknowledged:
+        assert library.content(automatic)
+        assert next(row for row in library.status()["saves"] if row["id"] == automatic)["favorite"]
+
+
+def test_concurrent_load_applies_once_and_preserves_position_obligations(mind):
+    library = RobotLibrary(mind)
+    saved = library.add_blank(MOMENT)
+    theses = [
+        {
+            "instrument": "EUR/USD",
+            "thesis": "Dated original owner rationale",
+            "as_of": stamp(MOMENT),
+        }
+    ]
+    with mind.transaction() as cur:
+        mind._write_working(
+            cur,
+            {
+                "views": ["Prior belief"],
+                "waiting_for": ["Old prerequisite"],
+                "position_theses": theses,
+            },
+            MOMENT,
+        )
+    plan = library.preview(saved, MOMENT)
+    barrier = Barrier(2)
+
+    def attempt():
+        barrier.wait()
+        try:
+            return library.load(plan["id"], plan["target_sha256"], MOMENT)
+        except ShadowError as error:
+            return str(error)
+
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda _: attempt(), range(2)))
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert "robot_confirmation_missing" in results
+    assert library.status()["active"]["version"] == 1
+    assert mind.head()["working"] == {"views": [], "waiting_for": [], "position_theses": theses}
+    assert sum(row["kind"] == "undo" for row in library.status()["saves"]) == 1
+
+
+def test_saved_policy_audits_are_exported_without_becoming_active_retrieval(mind):
+    library = RobotLibrary(mind)
+    saved = library.save_copy(MOMENT)
+    learn(library, mind, "Discarded quasar lesson")
+    load(library, saved)
+    histories = [
+        (meta, body) for meta, body in mind.retained()[1] if meta["part"] == "playbook_history"
+    ]
+    assert any("Discarded quasar lesson" in body for _, body in histories)
+    assert all(mind.search(meta["record_id"], MOMENT) == [] for meta, _ in histories)
+
+
 def test_private_owner_api_complete_workflow_and_auth(mind):
     token = "synthetic-owner-token-" + uuid4().hex
     headers = {"Authorization": "Bearer " + token}

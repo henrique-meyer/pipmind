@@ -591,13 +591,17 @@ class SqlMind:
         cur.execute("SELECT state FROM pm_robot_state WHERE trader=%s", (self.trader,))
         row = cur.fetchone()
         cutoff = loads(row[0])["cutoff"] if row else 0
-        if not cutoff:
-            return ""
-        cutoff = int(cutoff)
         p = alias + "." if alias else ""
+        audit_filter = (
+            f" AND COALESCE(JSON_VALUE(CASE WHEN ISJSON({p}body)=1 THEN {p}body ELSE N'{{}}' END,"
+            "'$.kind'),'')<>'robot-policy-audit' "
+        )
+        if not cutoff:
+            return audit_filter
+        cutoff = int(cutoff)
         # Source envelopes remain dated facts. Older journal/review/transition
         # text may contain discarded policy, so cannot re-enter active retrieval.
-        return (
+        return audit_filter + (
             f" AND ({p}pk>{cutoff} OR ({p}part='memory' AND "
             f"JSON_VALUE(CASE WHEN ISJSON({p}body)=1 THEN {p}body ELSE N'{{}}' END,'$.kind') "
             "IN ('ReleaseEvent','NewsEvent','PostEvent','PriceEvent','AccountSnapshot',"

@@ -61,7 +61,7 @@ DDL = (
       CONSTRAINT PK_pm_robot_saves PRIMARY KEY(trader,id))""",
     """IF OBJECT_ID('pm_robot_previews') IS NULL CREATE TABLE pm_robot_previews (
       trader varchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL REFERENCES pm_minds(trader),
-      id char(36) NOT NULL, plan nvarchar(max) NOT NULL,
+      id char(36) NOT NULL, proposal nvarchar(max) NOT NULL,
       CONSTRAINT PK_pm_robot_previews PRIMARY KEY(trader,id))""",
     """IF OBJECT_ID('pm_robot_audit') IS NULL CREATE TABLE pm_robot_audit (
       pk bigint IDENTITY PRIMARY KEY,

@@ -65,6 +65,21 @@ class RobotLibrary:
             "INSERT pm_robot_audit(trader,ts,detail) VALUES(%s,%s,%s)",
             (self.trader, stamp(moment), encoded(detail)),
         )
+        if detail["action"] in {"load", "learn", "auto_learn"}:
+            from pipmind.shadow.store import metadata
+
+            identifier = "robot-audit:" + str(uuid4())
+            self.mind._insert(
+                cur,
+                metadata(
+                    identifier,
+                    "playbook_history",
+                    stamp(moment),
+                    self.trader,
+                    version=self.mind._head(cur)["playbook_version"],
+                ),
+                encoded({"kind": "robot-policy-audit", "detail": detail}),
+            )
 
     def _save(self, cur, content, moment, kind, name, note, provenance):
         identifier = str(uuid4())
@@ -258,7 +273,7 @@ class RobotLibrary:
                 ],
             }
             cur.execute(
-                "DELETE pm_robot_previews WHERE trader=%s AND JSON_VALUE(plan,'$.expires')<%s",
+                "DELETE pm_robot_previews WHERE trader=%s AND JSON_VALUE(proposal,'$.expires')<%s",
                 (self.trader, stamp(moment)),
             )
             cur.execute(
@@ -279,7 +294,7 @@ class RobotLibrary:
             state = self._state(cur)
             head = self.mind._head(cur)
             cur.execute(
-                "SELECT plan FROM pm_robot_previews WHERE trader=%s AND id=%s",
+                "SELECT proposal FROM pm_robot_previews WHERE trader=%s AND id=%s",
                 (self.trader, preview_id),
             )
             row = cur.fetchone()
@@ -474,7 +489,7 @@ class RobotLibrary:
                 (self.trader,),
             )
             candidates = cur.fetchall()
-            cur.execute("SELECT plan FROM pm_robot_previews WHERE trader=%s", (self.trader,))
+            cur.execute("SELECT proposal FROM pm_robot_previews WHERE trader=%s", (self.trader,))
             protected = {
                 loads(row[0])["save_id"]
                 for row in cur.fetchall()
