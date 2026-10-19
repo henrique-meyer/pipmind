@@ -269,8 +269,11 @@ def create_app(
             "input_not_yet_available",
             "conflicting_shadow_input",
             "shadow_record_identity_collision",
+            "invalid_shadow_input",
         }:
             status = 422
+        if code == "reconsideration_owner_operation_required":
+            status = 403
         if code == "shadow_payload_size" or code == "shadow_input_bound":
             status = 413
         return JSONResponse(
