@@ -18,6 +18,19 @@
     "files"
   ],
   "properties": {
+    "robot_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "sha256", "version", "generation", "excluded_record_ids"],
+      "properties": {
+        "content": {"$ref": "urn:pipmind:schema:v1:robot-content"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "version": {"type": "integer", "minimum": 0},
+        "generation": {"type": "integer", "minimum": 0},
+        "excluded_record_ids": {"type": "array", "maxItems": 10000, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}}
+      }
+    },
     "format": {
       "const": "pipmind"
     },

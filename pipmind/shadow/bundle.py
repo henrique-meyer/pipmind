@@ -93,6 +93,8 @@ def export_experience(store, moment):
             for path, body in sorted(files.items())
         ],
     }
+    if "robot_state" in head:
+        manifest["robot_state"] = head["robot_state"]
     files["manifest.json"] = encoded(manifest).encode()
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:

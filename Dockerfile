@@ -54,6 +54,7 @@ FROM runtime AS shadow
 COPY --from=shadow-build /app/.venv /app/.venv
 COPY pipmind ./pipmind
 COPY contracts/v1 ./contracts/v1
+COPY templates/blank ./templates/blank
 EXPOSE 8084
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8084/healthz', timeout=3)"

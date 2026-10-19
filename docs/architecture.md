@@ -343,6 +343,12 @@ PIP-16 delivers the starter and design; private chat and durable SQL chat-edit e
 
 ### Compact robot saves and restore
 
+**PIP-17 implementation:** the [robot controls guide](robots.md) documents the
+delivered private shadow library, compact manifest v3, SQL load/undo transactions,
+favorites/retention and durable Auto Learn gate. The requirements below also cover
+future M5/M6 account handover and M7 review; those paths remain unimplemented.
+SQL is authoritative; this source change does not modify the hosted robot.
+
 Add a new versioned **robot-save** profile to the ZIP-based `.pipmind` format. It carries exact identity, active playbook, distilled learned lessons/guides and a manifest with profile/schema compatibility, logical robot/lineage/save IDs, UTC creation time, source policy version, provenance and payload hashes. It contains the robot's learned knowledge, not every event that taught it: no transcripts, raw event archive, account trade history, orders, positions/theses, balances, binding, credentials, stops, leases or execution cursors. Old-trade explanations still depend on the separate authorized decision/account audit. This compact profile is not a claim to preserve every retrievable historical detail in the current five-part experience export.
 
 The existing full experience/recovery profiles retain their contracts. Implement the new profile with explicit schema/validator/compatibility support before accepting or advertising it; do not pass a lightweight archive to the current full-experience importer or silently drop history from an existing export. All robot text must be preserved within declared bounds; oversize saves fail visibly rather than silently truncate guides. Package size depends on retained policy/guide text, not elapsed trading years, and needs measurement with real seasoned robots.
@@ -379,7 +385,7 @@ The toggle is an authenticated owner workspace setting, not a permission declare
 
 Load restores the exact saved durable robot content, not merely its latest rules while keeping later learned lessons active. Rebuild/swap the robot-derived memory index from that saved content and namespace it to the new active generation. Discarded post-save learned rules, briefs, embeddings/index entries, hidden conversational state and queued learning outputs cannot leak into active policy or silently re-teach themselves from retained audit. Keep account history available as dated facts with original robot attribution, and fresh market facts available for current decisions; neither is an instruction to re-adopt discarded lessons. All durable decision-shaping learned material must be included in the robot-save contract, without hidden provider-only memory. Internal audit/version numbers remain monotonic even though the robot-content hash matches the selected save. Exact saved mind does not rewind account losses or recreate historical market conditions.
 
-Future real-path tests must cover Auto Learn Off during an in-flight review, blocked automatic mutation through alternative writers/retrieval, explicit owner edits while frozen, restart/load setting persistence, generation-isolated restoration, many inactive imports, independent Save a copy, retention/favorite/load races, deletion without broken descendants, and unchanged account/active state after cleanup. These owner controls, compact profile and library/retention mechanisms remain planned; current runtime/CLI behavior is not rebranded as implemented functionality.
+PIP-17 tests the delivered storage gate, generation-isolated restoration, inactive imports, independent copies, protected retention, Auto Learn persistence and account separation through actual SQL. Future review/chat writers must also prove that their real paths obey this boundary, including review-in-flight cancellation and explicit confirmed owner edits while frozen. The nightly learning engine and live-account handover remain separate milestones; see [implemented controls and limits](robots.md).
 
 ## Learning loop
 

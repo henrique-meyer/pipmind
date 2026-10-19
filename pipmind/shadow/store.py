@@ -532,7 +532,8 @@ class SqlMind:
             cur.execute(
                 "SELECT TOP(10) meta,body FROM pm_records WHERE trader=%s "
                 "AND part='journal' AND ts<=%s "
-                "AND COALESCE(JSON_VALUE(CASE WHEN ISJSON(body)=1 THEN body ELSE N'{}' END,"
+                + self._robot_scope(cur)
+                + "AND COALESCE(JSON_VALUE(CASE WHEN ISJSON(body)=1 THEN body ELSE N'{}' END,"
                 "'$.status'),'')<>'price_coalesced' ORDER BY pk DESC",
                 (self.trader, moment.replace(tzinfo=None)),
             )
@@ -566,6 +567,7 @@ class SqlMind:
                 "working_memory": head["working"],
                 "recent_journal": recent,
                 "retrieved_memories": memories,
+                **self._robot_context(cur),
                 **(
                     {"memory_policy": policy_context(policy)}
                     if (policy := self._runtime(cur, "memory_policy"))
@@ -573,11 +575,41 @@ class SqlMind:
                 ),
             }
 
+    def _robot_context(self, cur):
+        cur.execute("SELECT state FROM pm_robot_state WHERE trader=%s", (self.trader,))
+        row = cur.fetchone()
+        if not row:
+            return {}
+        state = loads(row[0])
+        return {
+            "robot": {key: state[key] for key in ("sha256", "version", "generation")},
+            "learned_guides": state["content"]["guides"],
+            "learned_lessons": state["content"]["lessons"],
+        }
+
+    def _robot_scope(self, cur, alias=""):
+        cur.execute("SELECT state FROM pm_robot_state WHERE trader=%s", (self.trader,))
+        row = cur.fetchone()
+        cutoff = loads(row[0])["cutoff"] if row else 0
+        if not cutoff:
+            return ""
+        cutoff = int(cutoff)
+        p = alias + "." if alias else ""
+        # Source envelopes remain dated facts. Older journal/review/transition
+        # text may contain discarded policy, so cannot re-enter active retrieval.
+        return (
+            f" AND ({p}pk>{cutoff} OR ({p}part='memory' AND "
+            f"JSON_VALUE(CASE WHEN ISJSON({p}body)=1 THEN {p}body ELSE N'{{}}' END,'$.kind') "
+            "IN ('ReleaseEvent','NewsEvent','PostEvent','PriceEvent','AccountSnapshot',"
+            "'PositionSnapshot','FillEvent','OrderUpdate','ClockEvent'))) "
+        )
+
     def _search(self, cur, query, moment):
+        scope = self._robot_scope(cur)
         identifier, _, focus = query.partition(" | ")
         cur.execute(
             "SELECT meta,body FROM pm_records WHERE trader=%s AND id=%s "
-            "AND part IN ('memory','review','journal','playbook_history') AND ts<=%s",
+            "AND part IN ('memory','review','journal','playbook_history') AND ts<=%s" + scope,
             (self.trader, identifier[:500], moment.replace(tzinfo=None)),
         )
         exact = cur.fetchone()
@@ -591,6 +623,7 @@ class SqlMind:
         placeholders = ",".join(["%s"] * len(tokens))
         condition = " OR ".join('"' + term + '"' for term in tokens)
         candidates = []
+        scope = self._robot_scope(cur, "r")
         # Partition candidates so recursive legacy journal traces cannot crowd
         # original source events/reviews out of the archive search.
         for journal in (False, True):
@@ -608,8 +641,7 @@ class SqlMind:
                 "SELECT [KEY],RANK FROM CONTAINSTABLE(pm_records,body,@query)) hits "
                 "GROUP BY record_pk"
                 ") s ON r.pk=s.record_pk WHERE r.trader=%s AND r.ts<=%s "
-                f"AND {part_filter} "
-                "ORDER BY s.hits DESC,r.pk DESC",
+                f"AND {part_filter} " + scope + "ORDER BY s.hits DESC,r.pk DESC",
                 (condition, *tokens, self.trader, moment.replace(tzinfo=None)),
             )
             while cur.description is None:
@@ -660,6 +692,9 @@ class SqlMind:
             head = self._head(cur)
             if head["revision"] != revision or head["paused"]:
                 raise ShadowError("shadow_revision_changed")
+            robot = self._robot_context(cur).get("robot")
+            if robot:
+                result["robot"] = robot
             cur.execute("SELECT MAX(ts) FROM pm_records WHERE trader=%s", (self.trader,))
             latest = cur.fetchone()[0]
             if latest and latest.replace(tzinfo=UTC) > moment:
@@ -768,6 +803,18 @@ class SqlMind:
                 "SELECT COALESCE(MAX(pk),0) FROM pm_outcomes WHERE trader=%s", (self.trader,)
             )
             head["watermark"] = str(cur.fetchone()[0])
+            cur.execute("SELECT state FROM pm_robot_state WHERE trader=%s", (self.trader,))
+            row = cur.fetchone()
+            if row:
+                state = loads(row[0])
+                cur.execute(
+                    "SELECT id FROM pm_records WHERE trader=%s AND pk<=%s ORDER BY pk",
+                    (self.trader, state["cutoff"]),
+                )
+                head["robot_state"] = {
+                    **{key: state[key] for key in ("content", "sha256", "version", "generation")},
+                    "excluded_record_ids": [row[0] for row in cur.fetchall()],
+                }
             return head, records
 
     def status(self):
@@ -803,6 +850,19 @@ class SqlMind:
         identity = next(body for meta, body in records if meta["part"] == "identity")
         if identity != expected_identity:
             raise ShadowError("clone_identity_policy_mismatch")
+        robot = manifest.get("robot_state")
+        excluded = set(robot["excluded_record_ids"]) if robot else set()
+        if robot:
+            from pipmind.shadow.robot import content_hash
+
+            if (
+                robot["sha256"] != content_hash(robot["content"])
+                or robot["content"]["identity"] != identity
+                or robot["content"]["playbook"]
+                != next(body for meta, body in records if meta["part"] == "playbook")
+                or not excluded <= {meta["record_id"] for meta, _ in records}
+            ):
+                raise ShadowError("clone_robot_state_invalid")
         working = next((meta, body) for meta, body in records if meta["part"] == "working_memory")
         source_working = deepcopy(working[0])
         source_working["part"] = "memory"
@@ -848,10 +908,25 @@ class SqlMind:
                     encoded(parent),
                 ),
             )
-            for meta, body in records:
+            cutoff = 0
+            for meta, body in sorted(records, key=lambda row: row[0]["record_id"] not in excluded):
                 self._insert(cur, meta, body)
+                if meta["record_id"] in excluded:
+                    cur.execute("SELECT MAX(pk) FROM pm_records WHERE trader=%s", (self.trader,))
+                    cutoff = cur.fetchone()[0]
                 if interrupt:
                     interrupt()
+            if robot:
+                state = {
+                    **{key: robot[key] for key in ("content", "sha256", "version", "generation")},
+                    "cutoff": cutoff,
+                    "auto_learn": True,
+                    "retention_days": 30,
+                    "retention_count": 30,
+                    "restored_from": None,
+                    "origin": {"experience_export": manifest["export_id"]},
+                }
+                cur.execute("INSERT pm_robot_state VALUES(%s,%s)", (self.trader, encoded(state)))
         return {
             "paused": True,
             "source_checkpoint": manifest["checkpoint"]["checkpoint_id"],

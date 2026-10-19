@@ -166,6 +166,7 @@ def main():
                     "-m",
                     "pytest",
                     "tests/test_shadow_sql.py",
+                    "tests/test_robot_sql.py",
                     "-q",
                 ],
                 capture_output=True,

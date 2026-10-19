@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Robot library · PipMind</title>
+<link rel="stylesheet" href="/owner.css"><script src="/owner.js" defer></script></head>
+<body><main><header><span class="brand">PipMind<span class="brand-dot">.</span></span><span>Private owner workspace · Shadow mode</span></header>
+<h1>Robot library</h1><p>Keep a starting point, explore an idea, or load an earlier mind. Account history and current positions stay with the account.</p>
+<form id="login"><label>Owner access token <input id="token" type="password" required autocomplete="off"></label><button>Unlock</button></form>
+<p id="message" role="status" aria-live="polite"></p>
+<div id="workspace" hidden>
+<section><div class="row"><h2>Active robot</h2><button id="lock">Lock workspace</button></div>
+<p id="active-status"></p><p id="active-hash" class="hash"></p>
+<label class="toggle"><input id="auto-learn" type="checkbox"> Auto Learn</label>
+<p>When off, automatic changes to durable rules, guides and lessons are blocked. Observations and shadow decisions continue. The nightly learning engine is still planned.</p>
+<div class="row"><button id="pause">Pause shadow</button><button id="resume">Resume shadow</button></div>
+<details><summary>Current mind</summary><pre id="mind"></pre></details>
+<form id="save"><h3>Save a copy</h3><label>Name <input id="save-name" maxlength="120" placeholder="Optional name"></label><label>Note <input id="save-note" maxlength="500" placeholder="What makes this save useful?"></label><button>Save active robot</button></form>
+</section>
+<section><h2>Saved robots</h2><div class="row"><button id="blank">Add blank slate</button><label class="file">Import .pipmind <input id="import" type="file" accept=".pipmind"></label><label><input id="favorites-only" type="checkbox"> Favorites only</label></div>
+<p>Imports remain inactive until you preview and confirm Load. Favorites and deliberate copies are kept; ordinary autosaves expire under the limits below.</p><div id="saves"></div></section>
+<section id="preview" hidden><h2>Review Load</h2><p id="preview-target" class="hash"></p><ul id="effects"></ul><pre id="diff"></pre><p>Confirm this exact saved mind. Loading creates an undo save and leaves shadow reasoning paused.</p><div class="row"><button id="confirm">Confirm Load</button><button id="cancel">Cancel</button></div></section>
+<section><h2>Rolling autosaves</h2><form id="retention"><label>Maximum age (days) <input id="days" type="number" min="1" max="3650" required></label><label>Newest unprotected autosaves <input id="count" type="number" min="1" max="1000" required></label><button>Save limits</button><button id="cleanup" type="button">Clean up now</button></form></section>
+</div></main></body></html>

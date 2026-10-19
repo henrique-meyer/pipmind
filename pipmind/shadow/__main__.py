@@ -35,6 +35,34 @@ def main():
     maintenance.add_argument("--plan", required=True)
     reconsider = sub.add_parser("reconsider")
     reconsider.add_argument("--event-id", required=True)
+    robot = sub.add_parser("robot", help="Private robot library and owner controls")
+    actions = robot.add_subparsers(dest="robot_action", required=True)
+    for name in ("list", "blank", "cleanup"):
+        actions.add_parser(name)
+    save = actions.add_parser("save")
+    save.add_argument("--source")
+    save.add_argument("--name", default="")
+    save.add_argument("--note", default="")
+    imported = actions.add_parser("import")
+    imported.add_argument("--input", required=True)
+    imported.add_argument("--name", default="Imported robot")
+    exported = actions.add_parser("export")
+    exported.add_argument("--save", required=True)
+    exported.add_argument("--output", required=True)
+    preview = actions.add_parser("preview")
+    preview.add_argument("--save", required=True)
+    preview.add_argument("--output", required=True)
+    load = actions.add_parser("load")
+    load.add_argument("--preview", required=True, help="Previously reviewed private preview JSON")
+    load.add_argument("--confirm-sha256", required=True)
+    favorite = actions.add_parser("favorite")
+    favorite.add_argument("--save", required=True)
+    favorite.add_argument("--value", required=True, choices=("on", "off"))
+    learn = actions.add_parser("auto-learn")
+    learn.add_argument("--value", required=True, choices=("on", "off"))
+    retention = actions.add_parser("retention")
+    retention.add_argument("--days", required=True, type=int)
+    retention.add_argument("--count", required=True, type=int)
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8084)
@@ -85,7 +113,46 @@ def main():
             print("PASS: SQL schema and full-text index ready")
             return
         store = SqlMind(connect, os.environ["PIPMIND_SHADOW_TRADER"])
-        if args.command == "init":
+        if args.command == "robot":
+            from pipmind.shadow.library import RobotLibrary
+            from pipmind.shadow.robot import MAX_ARCHIVE
+
+            library = RobotLibrary(store)
+            action, result = args.robot_action, None
+            if action == "list":
+                result = library.status()
+            elif action == "blank":
+                result = {"saved": library.add_blank(now())}
+            elif action == "save":
+                result = {
+                    "saved": library.save_copy(
+                        now(), source=args.source, name=args.name, note=args.note
+                    )
+                }
+            elif action == "import":
+                result = {
+                    "saved": library.import_archive(
+                        read_private(args.input, MAX_ARCHIVE), now(), args.name
+                    )
+                }
+            elif action == "export":
+                write_private(args.output, library.export(args.save))
+            elif action == "preview":
+                write_private(args.output, encoded(library.preview(args.save, now())).encode())
+            elif action == "load":
+                plan = bounded_json(read_private(args.preview, 524288), 524288)
+                result = library.load(plan["id"], args.confirm_sha256, now())
+            elif action == "favorite":
+                library.favorite(args.save, args.value == "on", now())
+            elif action == "auto-learn":
+                result = library.set_auto_learn(args.value == "on", now())
+            elif action == "retention":
+                library.retention(args.days, args.count, now())
+            elif action == "cleanup":
+                result = {"removed": library.cleanup(now())}
+            if result is not None:
+                print(encoded(result))
+        elif args.command == "init":
             store.initialize(
                 read_private(args.identity, 32768).decode("utf-8"),
                 {

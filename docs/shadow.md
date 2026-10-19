@@ -6,6 +6,12 @@ M4 is complete only after approved hosted resources, project-backed inference, p
 
 ## Local SQL and mandatory checks
 
+PIP-17 adds the [private robot library and owner controls](robots.md): immutable
+compact saves, favorites, preview/confirmed Load, rolling cleanup and a durable
+Auto Learn setting. Run the explicit schema migration before using the new
+service. These controls are implemented in source; the hosted instance has not
+been changed by this work. The M7 nightly review engine remains unimplemented.
+
 Use Python 3.12 and locked dependencies:
 
 ```sh
@@ -49,7 +55,7 @@ python -m pipmind.shadow pause
 python -m pipmind.shadow export --output .data/exports/checkpoint.pipmind
 ```
 
-`init` and imports start paused. `resume-shadow` enables only journaling/model calls, and grants no trading authority. Pause increments the revision; an in-flight stale model response cannot commit. `run-once` processes one accepted event; `ingest --input <private JSON>` accepts a bounded `{source, events:[{sequence,event}]}` page. The HTTP equivalent is authenticated POST `/inputs`, at most 256 KiB. GET `/status` is authenticated; `/healthz` identifies shadow mode with `trading:false`. Health includes background worker liveness, not proof of feed/model/SQL quality; inspect status and progress separately. Docs/order/control routes are absent.
+`init` and experience clones start paused. `resume-shadow` enables only journaling/model calls, and grants no trading authority. Pause increments the revision; an in-flight stale model response cannot commit. `run-once` processes one accepted event; `ingest --input <private JSON>` accepts a bounded `{source, events:[{sequence,event}]}` page. The HTTP equivalent is authenticated POST `/inputs`, at most 256 KiB. GET `/status` is authenticated; `/healthz` identifies shadow mode with `trading:false`. Health includes background worker liveness, not proof of feed/model/SQL quality; inspect status and progress separately. `/owner` supplies an empty static shell with bearer-protected `/robots` operations; API documentation and order routes remain absent.
 
 The reasoning worker owns one persistent event loop in a separate thread; SQL/SDK work does not block private HTTP handling. Status exposes its current phase, phase start, input ID and sanitized exception type. Child SDK cancellation is a retained model refusal; caller shutdown cancellation still propagates. Cleanup faults retain a valid response and known usage. Unexpected worker failures durably pause without consuming the input. A phase stalled for 120 seconds or a stopped worker triggers an audited hold before health returns 503, allowing the existing platform probe to restart the process. A late result cannot cross the pause revision. Storage failures retry the hold rather than falsely claiming a durable pause; ordinary SQL/provider errors and explicitly paused operation do not intentionally fail liveness. Inspect the retained attempt before owner-controlled resumption. No automatic retry rewrites an earlier outcome.
 
