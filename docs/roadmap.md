@@ -72,7 +72,7 @@ PIP-16 supplies a [blank starter](../templates/blank/README.md) compatible with 
 
 Also define the [compact robot-save profile](architecture.md#compact-robot-saves-and-restore), separate from full experience/recovery and account history, with named manual saves, compatible imports, exact rules/guide round trips and confirmed restore as a new version. Robot identity/training/lessons and account data/authority are distinct. These planned controls do not reinterpret existing runtime bundles or certify M4 qualification.
 
-The planned [robot library](architecture.md#robot-library-and-active-working-copy) holds many inactive imported/saved starting points, including external robot-only files. Load creates an independent unnamed Active robot working copy; Save a copy preserves it as an immutable library item, without changing the source save. Provide favorites and bounded rolling autosave retention with protected manual/imported/favorite saves. Validate archive safety, provenance and compatibility before an explicit Load; future sharing does not authorize a public service.
+PIP-17 implements the [private shadow robot library](robots.md): inactive imports/blank saves, independent Save a copy, favorites, protected rolling cleanup and preview/confirmed Load with undo and a new active retrieval generation. The durable Auto Learn setting and transactional learning gate are available for future M7 writers. The nightly review engine, conversational owner chat, M5 account handover and original-trader recovery remain later work. No hosted deployment or live-account safety qualification is implied.
 
 ## M5 — Safety and reconciliation
 

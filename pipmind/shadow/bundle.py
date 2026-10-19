@@ -21,6 +21,7 @@ SUPPORTED_CONTEXTS = {
     ("shadow-context-v5", "sql-memory-v2"),
     ("shadow-context-v6", "sql-memory-v2"),
     ("shadow-context-v7", "sql-memory-v2"),
+    ("shadow-context-v8", "sql-memory-v2"),
     (PROMPT_VERSION, RETRIEVAL_VERSION),
 }
 
@@ -93,6 +94,8 @@ def export_experience(store, moment):
             for path, body in sorted(files.items())
         ],
     }
+    if "robot_state" in head:
+        manifest["robot_state"] = head["robot_state"]
     files["manifest.json"] = encoded(manifest).encode()
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:

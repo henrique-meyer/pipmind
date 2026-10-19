@@ -42,7 +42,14 @@ Game-style Load restores exact saved durable robot text/lessons and rebuilds its
 
 ## Consequences
 
+PIP-17 implements the private shadow library, compact save profile, confirmed
+Load/undo, favorites/retention and durable Auto Learn storage gate described in
+[the owner controls guide](../robots.md). Conversational owner edits, nightly
+review/evidence grading and live broker handover remain future work. Existing
+full-experience bundles preserve new robot content/retrieval boundaries through
+an explicit validated extension, without importing source owner controls.
+
 - The owner gains another influence on the mind while the robot continues to evolve autonomously.
-- PIP-16 delivers starter files and design; private chat, compact profile, save/restore/autosave and assignment enforcement remain planned implementation.
+- PIP-16 delivers starter files and design; PIP-17 implements compact shadow saves/library/controls. Private chat, nightly review and broker assignment enforcement remain planned.
 - Auto Learn is an explicit owner option over the planned learning contract; enabled learning remains autonomous. This design changes no hosted trader, M4 qualification, resources or trading permissions.
 - Future tests must prove that chat edits need confirmation and cannot block or silently execute through autonomous learning.

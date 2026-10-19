@@ -1,5 +1,15 @@
 # Implementation plan
 
+## PIP-17 — Robot library and owner controls
+
+- Story: [PIP-17](https://nitro.atlassian.net/browse/PIP-17)
+- Status: In Progress
+- Scope: SQL-backed immutable compact robot saves, inactive validated import/export, blank starter, Save a copy, favorites, protected rolling autosaves, preview/confirmed load into an independent paused active copy, and durable Auto Learn controls.
+- Acceptance: atomic pre-change undo saves; stale confirmation/learning rejection; exact restored learned content and isolated retrieval; account/operational facts and original audits preserved; owner controls survive restart/load and cannot be imported. Authenticated private interface and CLI/API workflows exercise the real SQL boundary. Legacy experience bundles retain their existing meaning.
+- Excludes: Azure deployment/resource changes, live provider/model/broker calls, order transport, M5 live-account handover, full owner conversation and the M7 nightly review engine.
+- Local validation: 375 offline tests pass (78 SQL cases are separately gated); all replay/bundle baseline checks pass. Fifteen transaction/concurrency/API/export-clone checks pass against an isolated local SQL Express database through a temporary ODBC harness; its four full-text-dependent cases are reserved for the normal SQL Server/pytds CI path. Browser save/favorite/filter/copy/export/import/blank-load/undo, Auto Learn persistence, retention and explicit version-bound resume/pause pass against that synthetic database with no console errors. Lint/format, JavaScript syntax, local documentation links and Gitleaks pass.
+- Delivery: [PR #48](https://github.com/henrique-meyer/pipmind/pull/48) is open. Required Linux CI includes all 78 real SQL/full-text tests and container/restart checks; merge remains pending those results. No hosted configuration, model/provider call or deployment changed.
+
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
 ## PIP-16 — Robot library, Auto Learn and protected rolling saves

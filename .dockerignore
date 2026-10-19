@@ -15,6 +15,14 @@
 !pipmind/
 !pipmind/**/
 !pipmind/**/*.py
+!pipmind/shadow/owner_web/
+!pipmind/shadow/owner_web/*.html
+!pipmind/shadow/owner_web/*.js
+!pipmind/shadow/owner_web/*.css
+!templates/
+!templates/blank/
+!templates/blank/identity.md
+!templates/blank/playbook.md
 !contracts/
 !contracts/v1/
 !contracts/v1/*.schema.json

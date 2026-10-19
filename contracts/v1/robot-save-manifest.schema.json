@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:robot-save-manifest",
+  "title": "Compact .pipmind robot-save manifest version 3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schema_version", "profile", "compatibility", "content_sha256", "files", "export_id", "created_at", "source"],
+  "properties": {
+    "format": {"const": "pipmind"},
+    "schema_version": {"const": 3},
+    "profile": {"const": "robot-save"},
+    "compatibility": {"const": "pipmind-robot-v1"},
+    "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "export_id": {"type": "string", "format": "uuid"},
+    "created_at": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "source": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false,
+      "required": ["save_id", "version"], "properties": {
+        "save_id": {"type": "string", "format": "uuid"},
+        "version": {"type": "integer", "minimum": 0}
+      }}]},
+    "files": {"type": "object", "additionalProperties": false,
+      "required": ["identity.md", "playbook.md", "guides.md", "lessons.md"],
+      "properties": {
+        "identity.md": {"$ref": "urn:pipmind:schema:v1:robot-save-manifest#/$defs/file"},
+        "playbook.md": {"$ref": "urn:pipmind:schema:v1:robot-save-manifest#/$defs/file"},
+        "guides.md": {"$ref": "urn:pipmind:schema:v1:robot-save-manifest#/$defs/file"},
+        "lessons.md": {"$ref": "urn:pipmind:schema:v1:robot-save-manifest#/$defs/file"}
+      }}
+  },
+  "$defs": {"file": {"type": "object", "additionalProperties": false,
+    "required": ["sha256", "bytes"], "properties": {
+      "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+      "bytes": {"type": "integer", "minimum": 0, "maximum": 32768}
+    }}}
+}

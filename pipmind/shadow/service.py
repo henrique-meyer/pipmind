@@ -192,6 +192,7 @@ def create_app(
     if not 0.01 <= worker_timeout <= 600:
         raise ShadowError("invalid_worker_timeout")
     runtime = {"last_progress": None, "last_error": None}
+    last_cleanup = 0
     phase = {"name": "idle", "since": None, "started": None, "error_type": None, "serial": 0}
     active = {}
     lifecycle = {"task": None, "stopping": False, "failed": False}
@@ -282,9 +283,15 @@ def create_app(
                     runtime["last_error"] = "shadow_worker_pause_unavailable"
 
     async def work():
+        nonlocal last_cleanup
         while not lifecycle["failed"]:
             try:
                 active.clear()
+                if monotonic() - last_cleanup > 86400:
+                    from pipmind.shadow.library import RobotLibrary
+
+                    await asyncio.to_thread(RobotLibrary(store).cleanup, now())
+                    last_cleanup = monotonic()
                 observe("source_poll", {})
                 source_errors = []
                 for source in (consumer, gateway):
@@ -367,9 +374,15 @@ def create_app(
     async def auth(request, call_next):
         # Mounted feed routes enforce their own bearer/HMAC policy.
         mounted = feed_app is not None and request.url.path.startswith("/feeds/")
+        shell = request.method in {"GET", "HEAD"} and request.url.path in {
+            "/owner",
+            "/owner.js",
+            "/owner.css",
+        }
         if (
             request.url.path != "/healthz"
             and not mounted
+            and not shell
             and not hmac.compare_digest(
                 request.headers.get("authorization", "").encode(), ("Bearer " + token).encode()
             )
@@ -380,12 +393,23 @@ def create_app(
         result = await call_next(request)
         result.headers["Cache-Control"] = "no-store"
         result.headers["X-Robots-Tag"] = "noindex"
+        result.headers["X-Content-Type-Options"] = "nosniff"
         return result
 
     @app.exception_handler(ShadowError)
     async def unavailable(request, error):
         code = str(error)
         status = 503
+        if code.startswith("robot_"):
+            status = 422
+            if code in {
+                "robot_confirmation_stale",
+                "robot_learning_stale",
+                "robot_learning_disabled",
+            }:
+                status = 409
+            if code == "robot_save_missing":
+                status = 404
         if code in {
             "shadow_invalid_json",
             "invalid_input_page",
@@ -463,6 +487,9 @@ def create_app(
 
     if feed_app:
         app.mount("/feeds", feed_app)
+    from pipmind.shadow.owner import install
+
+    install(app, store)
     return app
 
 

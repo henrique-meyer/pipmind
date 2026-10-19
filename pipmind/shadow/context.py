@@ -242,6 +242,9 @@ def phase_context(context, phase):
         "price_aggregate",
         "memory_policy",
         "reconsideration",
+        "robot",
+        "learned_guides",
+        "learned_lessons",
     )
     view = {key: deepcopy(context[key]) for key in keys if key in context}
     if "working_memory" in view:

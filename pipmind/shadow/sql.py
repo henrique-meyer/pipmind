@@ -50,6 +50,23 @@ DDL = (
       v nvarchar(max) NOT NULL, CONSTRAINT PK_pm_runtime PRIMARY KEY(trader,k))""",
     """IF OBJECT_ID('pm_schema') IS NULL BEGIN
       CREATE TABLE pm_schema(version int NOT NULL); INSERT pm_schema VALUES(1); END""",
+    """IF OBJECT_ID('pm_robot_state') IS NULL CREATE TABLE pm_robot_state (
+      trader varchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL PRIMARY KEY
+        REFERENCES pm_minds(trader), state nvarchar(max) NOT NULL)""",
+    """IF OBJECT_ID('pm_robot_saves') IS NULL CREATE TABLE pm_robot_saves (
+      trader varchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL REFERENCES pm_minds(trader),
+      id char(36) NOT NULL, created varchar(32) NOT NULL, kind varchar(16) NOT NULL,
+      name nvarchar(120) NOT NULL, note nvarchar(500) NOT NULL, favorite bit NOT NULL,
+      sha256 char(64) NOT NULL, content nvarchar(max) NULL, provenance nvarchar(max) NOT NULL,
+      CONSTRAINT PK_pm_robot_saves PRIMARY KEY(trader,id))""",
+    """IF OBJECT_ID('pm_robot_previews') IS NULL CREATE TABLE pm_robot_previews (
+      trader varchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL REFERENCES pm_minds(trader),
+      id char(36) NOT NULL, proposal nvarchar(max) NOT NULL,
+      CONSTRAINT PK_pm_robot_previews PRIMARY KEY(trader,id))""",
+    """IF OBJECT_ID('pm_robot_audit') IS NULL CREATE TABLE pm_robot_audit (
+      pk bigint IDENTITY PRIMARY KEY,
+      trader varchar(128) COLLATE Latin1_General_100_BIN2 NOT NULL REFERENCES pm_minds(trader),
+      ts varchar(32) NOT NULL, detail nvarchar(max) NOT NULL)""",
 )
 
 
