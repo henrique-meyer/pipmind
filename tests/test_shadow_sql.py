@@ -1848,3 +1848,39 @@ def test_stream_checkpoint_serializes_source_writer_without_losing_new_history(m
     worker.join(10)
     assert finished.is_set() and not errors
     assert "after-checkpoint" in {meta["record_id"] for meta, _ in mind.retained()[1]}
+
+
+def test_stream_corruption_during_sql_consumption_rolls_back_every_row(mind, tmp_path, monkeypatch):
+    import zipfile
+
+    from pipmind.shadow.stream_bundle import export_experience_file, import_experience_file
+
+    path = tmp_path / "source.zip"
+    export_experience_file(mind, path, MOMENT)
+    destination = SqlMind(mind.connect, "corruption-" + uuid4().hex)
+    clone = destination.clone_stream
+
+    def corrupt(bundle, *args, **kwargs):
+        with zipfile.ZipFile(bundle.archive.fp.name) as archive:
+            item = archive.getinfo("mind/playbook.md")
+            offset = item.header_offset + 30 + len(item.filename.encode())
+        modified = False
+
+        def interrupt():
+            nonlocal modified
+            if not modified:
+                modified = True
+                with open(bundle.archive.fp.name, "r+b") as stream:
+                    stream.seek(offset)
+                    stream.write(b"x")
+
+        return clone(bundle, *args, interrupt=interrupt)
+
+    monkeypatch.setattr(destination, "clone_stream", corrupt)
+    with pytest.raises(ShadowError):
+        import_experience_file(
+            destination, path, MOMENT, digest("new"), "Immutable identity\nnaïve ≠ unsafe\n"
+        )
+    with destination.transaction() as cur:
+        cur.execute("SELECT COUNT(*) FROM pm_minds WHERE trader=%s", (destination.trader,))
+        assert cur.fetchone()[0] == 0
