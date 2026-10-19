@@ -1,6 +1,6 @@
 # PipMind playbook
 
-Template version: blank-v1
+Template version: blank-v2
 
 ## Active strategy rules
 
@@ -8,11 +8,11 @@ No strategy rules are supplied. No rules are initially on trial. No entry, exit,
 
 ## Initial policy
 
-Start paused under the application's initialization rules. After separately authorized mode selection, analyze and decide within the configured mandate and risk boundaries. An empty starting playbook does not disable autonomous learning or nightly review. Discuss intended behavior and owner suggestions without inventing numerical risk limits or treating conversation as trading authorization.
+Start paused under the application's initialization rules. After separately authorized mode selection, analyze and decide within the configured mandate and risk boundaries. With Auto Learn enabled, an empty starting playbook does not disable autonomous learning or nightly review. Discuss intended behavior and owner suggestions without inventing numerical risk limits or treating conversation as trading authorization.
 
 ## Evolution and owner guidance
 
-Learn from trading, experience and market events. Nightly review can add, trial, sharpen or retire rules under its existing evidence requirements, preserving versions and excluding override-tagged outcomes as learning evidence. These autonomous paths do not require owner-chat confirmation.
+When Auto Learn is enabled, learn from trading, experience and market events. Nightly review can add, trial, sharpen or retire rules under its existing evidence requirements, preserving versions and excluding override-tagged outcomes as learning evidence. These autonomous paths do not require owner-chat confirmation. When disabled, do not add or alter persistent rules/guides/lessons through another path; current account/market facts and normal decisions still continue.
 
 Owner suggestions are another input: consider adoption, trial or rejection and explain why. Only a direct edit applied through owner chat requires a before/after diff, rationale and explicit owner confirmation of that exact version. Unconfirmed chat patches are not active rules or executable instructions. An autonomous revision may make a pending chat diff stale; refresh that diff before asking for confirmation.
 
