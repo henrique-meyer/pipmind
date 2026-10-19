@@ -34,6 +34,33 @@ def private_path(path):
 
 
 @contextmanager
+def exclusive_operation():
+    # One operation across output directories, not merely one per file path.
+    owner = str(os.getuid()) if hasattr(os, "getuid") else digest(str(Path.home()))[:16]
+    lock = Path(tempfile.gettempdir()) / f"pipmind-stream-{owner}.lock"
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        if hasattr(os, "getuid") and os.fstat(fd).st_uid != os.getuid():
+            raise BundleError("stream_lock_owner")
+        if os.name == "nt":
+            import msvcrt
+
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"0")
+            os.lseek(fd, 0, 0)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        # Closing releases the advisory lock after failures/process termination.
+        # Retain the inode so another process cannot race through a replacement.
+        os.close(fd)
+
+
+@contextmanager
 def operation(folder):
     """Refuse insufficient temporary headroom; never resize or pause a source."""
     folder = Path(folder)
@@ -50,20 +77,22 @@ def operation(folder):
             raise BundleError("stream_requires_disk_staging")
     if shutil.disk_usage(folder).free < 4 * MAX_TOTAL_BYTES:
         raise BundleError("stream_disk_headroom")
-    current = Path("/sys/fs/cgroup/memory.current")
-    limit = Path("/sys/fs/cgroup/memory.max")
-    if current.exists() and limit.exists() and limit.read_text().strip() != "max":
-        if int(limit.read_text()) - int(current.read_text()) < 96 * 1048576:
-            raise BundleError("stream_memory_headroom")
-    lock = folder / ".pipmind-stream.lock"
-    fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    try:
+    for usage_path, limit_path in (
+        ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),
+        (
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+        ),
+    ):
+        current, limit = Path(usage_path), Path(limit_path)
+        if current.exists() and limit.exists() and limit.read_text().strip() != "max":
+            if int(limit.read_text()) - int(current.read_text()) < 96 * 1048576:
+                raise BundleError("stream_memory_headroom")
+            break
+    with exclusive_operation():
         with tempfile.TemporaryDirectory(prefix="pipmind-stream-", dir=folder) as private:
             os.chmod(private, 0o700)
             yield Path(private)
-    finally:
-        os.close(fd)
-        lock.unlink()
 
 
 def _path(meta):

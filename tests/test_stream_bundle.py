@@ -216,3 +216,52 @@ def test_mismatched_local_header_cannot_hide_a_second_archive_layout(tmp_path):
     with pytest.raises(BundleError, match="zip_layout"):
         with validate_stream(path):
             pytest.fail("ambiguous local header accepted")
+
+
+def test_operations_serialize_across_different_output_directories(tmp_path):
+    from pipmind.shadow.stream_bundle import operation
+
+    with operation(tmp_path / "first"):
+        with pytest.raises(OSError):
+            with operation(tmp_path / "second"):
+                pytest.fail("concurrent memory-heavy operation admitted")
+    with operation(tmp_path / "second"):
+        pass
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_headroom_guard_covers_both_hosted_cgroup_layouts(tmp_path, monkeypatch, version):
+    from pathlib import Path
+
+    from pipmind.shadow.stream_bundle import operation
+
+    paths = (
+        (
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+        )
+        if version == 1
+        else ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max")
+    )
+    values = {paths[0]: str(450 * 1048576), paths[1]: str(512 * 1048576)}
+    exists, read = Path.exists, Path.read_text
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        lambda p: (
+            str(p).replace("\\", "/") in values
+            or (False if str(p).replace("\\", "/").startswith("/sys/fs/cgroup") else exists(p))
+        ),
+    )
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda p, *a, **k: (
+            values[str(p).replace("\\", "/")]
+            if str(p).replace("\\", "/") in values
+            else read(p, *a, **k)
+        ),
+    )
+    with pytest.raises(BundleError, match="stream_memory_headroom"):
+        with operation(tmp_path):
+            pytest.fail("insufficient container headroom accepted")

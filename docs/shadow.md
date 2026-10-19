@@ -162,10 +162,11 @@ playbook, source metadata and history remain exact; source working context is
 archived and the destination starts paused with separate authority.
 
 Use private **disk-backed** staging with at least 1 GiB free. RAM-backed staging
-is refused. One manual operation per staging directory runs at a time, and Linux
+is refused. One manual operation per container user runs at a time, and Linux
 cgroup headroom must exceed 96 MiB before starting. Large file cache is released
-between batches. A crashed operation can leave a private staging directory and
-lock; an owner must verify no operation is running before removing those files.
+between batches. A crashed operation can leave a private staging directory;
+the process lock releases automatically. Verify no operation is running before
+removing abandoned private staging files.
 No persistent export service, new Azure resource or capacity increase is needed.
 Qualification measures process RSS and total container usage separately; a
 synthetic near-cap test does not certify headroom beside every live workload.
