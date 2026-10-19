@@ -1897,7 +1897,7 @@ def test_stream_corruption_during_sql_consumption_rolls_back_every_row(mind, tmp
     os.environ.get("PIPMIND_SQL_LOCAL") != "true",
     reason="database option setup is restricted to disposable local SQL",
 )
-def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind):
+def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind, monkeypatch):
     import threading
 
     from pipmind.shadow.common import encoded
@@ -1941,18 +1941,28 @@ def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind):
             finally:
                 finished.set()
 
-        with source.stream_retained() as (head, records):
-            assert head["checkpoint_isolation"] == "snapshot" and head["revision"] == 0
-            worker = threading.Thread(target=writer)
+        read_head = source._head
+        worker = threading.Thread(target=writer)
+
+        def head_then_commit(cur):
+            head = read_head(cur)
+            # Commit BETWEEN checkpoint queries, not after all SELECTs ran.
+            # Statement-level RCSI would now mix the old head with new records.
             worker.start()
             assert finished.wait(4), "snapshot reader blocked the source writer"
-            captured = list(records)
-            assert len(captured) == 3 and not errors
-            original_working = next(
-                body for meta, body in captured if meta["part"] == "working_memory"
-            )
-            assert original_working == encoded(head["working"])
-            assert loads(original_working)["views"] == []
+            return head
+
+        with monkeypatch.context() as patch:
+            patch.setattr(source, "_head", head_then_commit)
+            with source.stream_retained() as (head, records):
+                assert head["checkpoint_isolation"] == "snapshot" and head["revision"] == 0
+                captured = list(records)
+                assert len(captured) == 3 and not errors
+                original_working = next(
+                    body for meta, body in captured if meta["part"] == "working_memory"
+                )
+                assert original_working == encoded(head["working"])
+                assert loads(original_working)["views"] == []
         worker.join(5)
         assert head["checkpoint_lock_seconds"] == 0
         assert source.head()["revision"] == 1

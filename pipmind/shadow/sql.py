@@ -158,8 +158,6 @@ def stream_transaction(connect, resource, *, snapshot=True):
                 "SELECT snapshot_isolation_state FROM sys.databases WHERE database_id=DB_ID()"
             )
             enabled = cur.fetchone()[0] == 1
-            # End the metadata read before beginning a different isolation level.
-            db.rollback()
         if not enabled:
             if db:
                 db.close()
@@ -167,8 +165,14 @@ def stream_transaction(connect, resource, *, snapshot=True):
             with transaction(connect, resource) as cur:
                 yield cur, "locked"
             return
+        from pytds.extensions import ISOLATION_LEVEL_SNAPSHOT
+
+        # TDS automatically begins transactions. Use the driver's public setter
+        # to end the metadata transaction and begin the next one in SNAPSHOT;
+        # a SET statement inside an already-open transaction is too late.
+        db.isolation_level = ISOLATION_LEVEL_SNAPSHOT
         cur = db.cursor()
-        cur.execute("SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+        cur.execute("SET NOCOUNT ON; SET XACT_ABORT ON")
         yield cur, "snapshot"
         db.commit()
     except ShadowError:
