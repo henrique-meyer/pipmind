@@ -29,6 +29,8 @@ The hosted demo uses Azure SQL Database Standard S0, with full-text search for t
 
 The nightly self-review is the autonomous writer of playbook versions. Retiring a rule takes repeated evidence. Diffs are published. [ADR 0006](0006-owner-chat-channel.md) adds separately confirmed direct owner-chat edits; it does not gate nightly review or any other existing autonomous learning. See the learning loop in [Architecture](../architecture.md).
 
+ADR 0006 also plans an automatic pre-change robot save and owner save/restore workflow. Robot rules/guides/distilled lessons are separate from account trade history, positions and operational state. Compact robot saves and account assignment are planned alongside the existing fuller experience export; restoring a robot never rewinds an account. Autosave adds durability without an owner-confirmation gate on autonomous evolution.
+
 ### Portable saved mind (2026-10-17)
 
 The five-part mind has a versioned Markdown export/import contract. A `.pipmind` file is a standard ZIP archive containing the Markdown records and a root `manifest.json` with format/schema versions, export kind, checkpoint, coverage, compatibility metadata and file checksums. SQL remains the transactional runtime store; the complete retained journal, reviews, rule versions, provenance, evidence references and override tags are portable, including context otherwise retained by an agent session. See the [architecture contract](../architecture.md#markdown-mind-export-and-import).
