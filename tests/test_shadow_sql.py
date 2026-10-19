@@ -1322,3 +1322,13 @@ def test_request_assembly_bug_holds_actual_input_without_claiming_an_rpc(mind, m
     assert held["usage"][0]["attempted"] is False
     assert held["usage"][0]["usage_unknown"] is False
     assert mind.status()["reasoning_hold"]["reason"] == "shadow_context_projection"
+
+
+@pytest.mark.parametrize("invalid", [None, [], {"kind": "ClockEvent", "payload": None}])
+def test_owner_control_check_validates_envelope_before_inspecting_its_payload(mind, invalid):
+    from pipmind.contracts import ContractError
+
+    with pytest.raises(ContractError):
+        mind.accept("invalid-control", [{"sequence": 1, "event": invalid}], MOMENT)
+    assert mind.checkpoint("invalid-control") == 0
+    assert mind.pending() is None

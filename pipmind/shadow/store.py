@@ -414,15 +414,15 @@ class SqlMind:
                 if not isinstance(item, dict) or not {"sequence", "event"} <= set(item):
                     raise ShadowError("invalid_input_page")
                 seq, envelope = item["sequence"], item["event"]
-                if (
-                    envelope.get("kind") == "ClockEvent"
-                    and envelope.get("payload", {}).get("reason") == "reconsideration"
-                ):
-                    raise ShadowError("reconsideration_owner_operation_required")
                 if type(seq) is not int or seq <= previous:
                     raise ShadowError("input_cursor_not_increasing")
                 if validate_event(envelope, self.contracts) > moment:
                     raise ShadowError("input_not_yet_available")
+                if (
+                    envelope["kind"] == "ClockEvent"
+                    and envelope["payload"]["reason"] == "reconsideration"
+                ):
+                    raise ShadowError("reconsideration_owner_operation_required")
                 identifier = event_id(envelope)
                 if (
                     len(identifier.encode("utf-16-le")) > 512
