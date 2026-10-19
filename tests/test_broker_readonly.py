@@ -205,7 +205,7 @@ def test_symbol_wrapper_rejects_unexpected_metadata(tmp_path, monkeypatch):
         symbols_from_env()
 
 
-def test_stream_overflow_clears_transport_backlog_and_allows_fresh_updates():
+def test_stream_overflow_reports_loss_then_drains_retained_batch_despite_new_callbacks():
     from pipmind.gateway.stream import LightstreamerPrices
 
     stream = LightstreamerPrices(broker())
@@ -214,6 +214,10 @@ def test_stream_overflow_clears_transport_backlog_and_allows_fresh_updates():
         stream._enqueue(3, {"sequence": n})
     with pytest.raises(GatewayError, match="stream_queue_overflow"):
         stream.drain()
+    stream._enqueue(3, {"sequence": "overflow-again"})
+    retained = stream.drain()
+    assert len(retained) == stream.queue.maxsize
+    assert retained[0] == {"sequence": 0}
     assert stream.queue.empty()
     stream._enqueue(3, {"sequence": "fresh"})
     assert stream.drain() == [{"sequence": "fresh"}]
