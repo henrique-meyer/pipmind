@@ -31,6 +31,10 @@ def main():
     clone.add_argument("--identity", required=True)
     ingest = sub.add_parser("ingest")
     ingest.add_argument("--input", required=True)
+    maintenance = sub.add_parser("maintain-working")
+    maintenance.add_argument("--plan", required=True)
+    reconsider = sub.add_parser("reconsider")
+    reconsider.add_argument("--event-id", required=True)
     serve = sub.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8084)
@@ -111,6 +115,22 @@ def main():
             if not isinstance(page, dict) or set(page) != {"source", "events"}:
                 raise ShadowError("invalid_input_page")
             store.accept(page["source"], page["events"], now())
+        elif args.command == "maintain-working":
+            print(
+                encoded(
+                    store.maintain_working(bounded_json(read_private(args.plan, 131072)), now())
+                )
+            )
+        elif args.command == "reconsider":
+            print(
+                encoded(
+                    {
+                        "event_id": store.queue_reconsideration(args.event_id, now()),
+                        "paused": True,
+                        "dispatches": 0,
+                    }
+                )
+            )
         elif args.command == "run-once":
             asyncio.run(ShadowEngine(store, FoundryModel.environment()).step())
         else:

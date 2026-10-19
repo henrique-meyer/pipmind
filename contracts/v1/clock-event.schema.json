@@ -27,8 +27,37 @@
         "heartbeat",
         "daily_brief",
         "session_open",
-        "session_close"
+        "session_close",
+        "reconsideration"
       ]
+    },
+    "reconsideration_of": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "reason": {
+            "const": "reconsideration"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reconsideration_of"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "reconsideration_of"
+          ]
+        }
+      }
+    }
+  ]
 }

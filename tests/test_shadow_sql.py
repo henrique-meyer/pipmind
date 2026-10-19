@@ -900,3 +900,332 @@ def test_analysis_and_quote_coalescing_retain_inputs_without_strong_model_calls(
         assert asyncio.run(engine.step())
     assert model.decisions == 1 and mind.status()["outcomes"] == 3
     assert mind.outcome("price-1")["status"] == "price_coalesced"
+
+
+def activate_bounded(mind, moment=MOMENT):
+    from pipmind.shadow.maintenance import entries, working_digest
+
+    head = mind.head()
+    mind.set_paused(True)
+    head = mind.head()
+    refs = [meta["record_id"] for meta, _ in mind.retained()[1] if meta["part"] == "memory"]
+    plan = {
+        "revision": head["revision"],
+        "before_sha256": working_digest(head["working"]),
+        "working_memory": head["working"],
+        "dispositions": [
+            {
+                "from": key,
+                "to": key,
+                "disposition": "retained",
+                "reason": "Retain exact condition and provenance",
+                "evidence_ids": refs[:1],
+            }
+            for key in entries(head["working"])
+        ],
+        "review": "no-unresolved-ambiguity",
+    }
+    return plan, mind.maintain_working(plan, moment)
+
+
+def test_bounded_activation_requires_complete_review_and_revision_and_retains_exact_state(mind):
+    from pipmind.shadow.maintenance import working_digest
+
+    events, model = episode(mind)
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    original = mind.retained()[1]
+    old_working = mind.head()["working"]
+    plan, report = activate_bounded(mind)
+    assert report["paused"] and mind.head()["working"] == old_working
+    checkpoint = next(
+        body for meta, body in mind.retained()[1] if meta["record_id"] == report["checkpoint"]
+    )
+    assert loads(checkpoint)["before"] == old_working
+    retained = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
+    assert all(
+        retained[meta["record_id"]] == (meta, body)
+        for meta, body in original
+        if meta["part"] != "working_memory"
+    )
+    plan["revision"] = mind.head()["revision"]
+    plan["before_sha256"] = working_digest(old_working)
+    plan["review"] = "unreviewed"
+    with pytest.raises(ShadowError, match="working_memory_review_required"):
+        mind.maintain_working(plan, MOMENT)
+    plan["review"] = "no-unresolved-ambiguity"
+    plan["before_sha256"] = "0" * 64
+    with pytest.raises(ShadowError, match="working_memory_source_changed"):
+        mind.maintain_working(plan, MOMENT)
+    plan["before_sha256"] = working_digest(old_working)
+    if plan["dispositions"]:
+        plan["dispositions"][0]["evidence_ids"] = ["unknown-evidence"]
+        with pytest.raises(ShadowError, match="working_memory_evidence"):
+            mind.maintain_working(plan, MOMENT)
+    assert mind.head()["working"] == old_working and mind.head()["paused"]
+    assert mind.outcome(events[0]["message_id"])["reply"] is not None
+
+
+def test_pre_rpc_overflow_holds_pending_and_pause_survives_restart_while_feeds_accept(mind):
+    from pipmind.shadow.model import ModelFailure
+
+    events, _ = episode(mind)
+    before = mind.head()["working"]
+
+    class Overflow:
+        calls = 0
+
+        async def triage(self, *args):
+            self.calls += 1
+            raise ModelFailure(
+                {
+                    "phase": "triage",
+                    "attempted": False,
+                    "prompt_bytes": 16001,
+                    "failure_code": "shadow_context_size",
+                    "usage_unknown": False,
+                }
+            )
+
+    model = Overflow()
+    assert not asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    restarted = SqlMind(mind.connect, mind.trader)
+    assert restarted.head()["paused"] and restarted.pending() == events[0]
+    assert restarted.outcome(events[0]["message_id"]) is None
+    assert restarted.head()["working"] == before
+    assert restarted.status()["reasoning_hold"]["reason"] == "shadow_context_size"
+    assert not asyncio.run(ShadowEngine(restarted, model, clock=lambda: MOMENT).step())
+    assert model.calls == 1
+    new = deepcopy(events[0])
+    new["message_id"] = new["payload"]["event_id"] = "new-during-hold"
+    restarted.accept("continues", [{"sequence": 1, "event": new}], MOMENT)
+    assert restarted.status()["pending"] == 2
+    held = [loads(body) for meta, body in restarted.retained()[1] if meta["part"] == "journal"]
+    assert held[0]["input"] == events[0] and held[0]["decision"] is None
+
+
+def test_rejected_memory_transition_is_held_with_candidate_and_usage_then_retried(mind):
+    from pipmind.shadow.common import encoded
+
+    activate_bounded(mind)
+    events, model = episode(mind)
+    candidate = model.responses[events[0]["message_id"]]["reply"]
+    candidate["working_memory"] = {"views": ["x" * 301], "waiting_for": [], "position_theses": []}
+    assert not asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    assert mind.head()["paused"] and mind.outcome(events[0]["message_id"]) is None
+    held = [loads(body) for meta, body in mind.retained()[1] if meta["part"] == "journal"][-1]
+    assert held["model_reply"] == candidate and held["usage"][-1]["phase"] == "decision"
+    candidate["working_memory"] = mind.head()["working"]
+    mind.set_paused(False)
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    assert mind.status()["reasoning_hold"] is None
+    assert mind.outcome(events[0]["message_id"])["status"] == "observed"
+    assert encoded(held) in [body for _, body in mind.retained()[1]]
+
+
+def test_reconsideration_has_new_identity_original_outcome_exact_and_no_cursor_rewind(mind):
+    from pipmind.shadow.common import encoded
+
+    events, _ = episode(mind)
+    event = events[0]
+    refused = {
+        "event_id": event["message_id"],
+        "status": "model_refused",
+        "reply": None,
+        "dispatches": 0,
+        "usage": [{"phase": "triage", "attempted": False, "prompt_bytes": 17000}],
+    }
+    mind.commit(event, mind.head()["revision"], refused, MOMENT)
+    original = encoded(mind.outcome(event["message_id"]))
+    mind.set_paused(True)
+    moment = MOMENT + timedelta(minutes=5)
+    identifier = mind.queue_reconsideration(event["message_id"], moment)
+    assert mind.queue_reconsideration(event["message_id"], moment) == identifier
+    queued = mind.pending()
+    assert queued["message_id"] == identifier and identifier != event["message_id"]
+    assert utc(queued["available_at"]) == moment
+    with pytest.raises(ShadowError, match="reconsideration_owner_operation_required"):
+        mind.accept("forged", [{"sequence": 1, "event": queued}], moment)
+    reply = deepcopy(CASE["model_responses"][event["message_id"]]["reply"])
+    model = FixtureModel(
+        {
+            identifier: {
+                "triage": {"wake": True, "summary": "Present-time reconsideration"},
+                "reply": reply,
+            }
+        }
+    )
+    mind.set_paused(False)
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: moment).step())
+    assert encoded(mind.outcome(event["message_id"])) == original
+    outcome = mind.outcome(identifier)
+    assert outcome["context"]["reconsideration"]["original_input"] == event
+    assert outcome["ts"] == moment.isoformat().replace("+00:00", "Z")
+    assert mind.checkpoint("fixture-source") == len(events)
+    assert mind.status()["outcomes"] == 2 and mind.status()["dispatches"] == 0
+    with pytest.raises(ShadowError, match="reconsideration_requires_pause"):
+        mind.queue_reconsideration(identifier, moment)
+    mind.set_paused(True)
+    with pytest.raises(ShadowError, match="not_a_context_refusal"):
+        mind.queue_reconsideration(identifier, moment)
+
+
+def test_bounded_state_multistep_growth_retains_every_checkpoint_and_complete_clone(mind):
+    from pipmind.shadow.common import encoded
+
+    activate_bounded(mind)
+    mind.set_paused(False)
+    model_responses = {}
+    previous = None
+    for i in range(20):
+        moment = MOMENT + timedelta(seconds=i)
+        event = deepcopy(CASE["events"][0])
+        identifier = f"growth-{i}"
+        event["message_id"] = event["payload"]["event_id"] = identifier
+        mind.accept("growth", [{"sequence": i + 1, "event": event}], moment)
+        reply = deepcopy(CASE["model_responses"][CASE["events"][0]["message_id"]]["reply"])
+        reply["evidence_ids"] = [identifier]
+        reply["working_memory"] = {
+            "views": [f"USD dated observation {i}; uncertainty remains"],
+            "waiting_for": ["Await verified CPI; invalidate on revision"],
+            "position_theses": [],
+        }
+        reply["memory_dispositions"] = (
+            []
+            if previous is None
+            else [
+                {
+                    "from": "v0",
+                    "to": "v0",
+                    "disposition": "updated",
+                    "reason": "Latest verified observation; preserve uncertainty",
+                    "evidence_ids": [identifier],
+                }
+            ]
+        )
+        model_responses[identifier] = {
+            "triage": {"wake": True, "summary": "Current evidence"},
+            "reply": reply,
+        }
+        assert asyncio.run(
+            ShadowEngine(
+                mind, FixtureModel(model_responses), clock=lambda moment=moment: moment
+            ).step()
+        )
+        assert mind.outcome(identifier)["status"] == "observed"
+        assert len(encoded(mind.head()["working"]).encode()) < 3200
+        previous = reply
+    records = mind.retained()[1]
+    checkpoints = [
+        loads(body)
+        for meta, body in records
+        if meta["part"] == "memory" and meta["record_id"].startswith("working-checkpoint:")
+    ]
+    assert len(checkpoints) == 21
+    assert all(
+        cp["after"]["waiting_for"] == ["Await verified CPI; invalidate on revision"]
+        for cp in checkpoints[1:]
+    )
+    moment += timedelta(seconds=1)
+    bundle = export_experience(mind, moment)
+    target = SqlMind(mind.connect, "bounded-clone-" + uuid4().hex)
+    import_experience(
+        target, bundle, moment, digest("separate"), "Immutable identity\nnaïve ≠ unsafe\n"
+    )
+    originals = {
+        meta["record_id"]: body for meta, body in records if meta["part"] != "working_memory"
+    }
+    cloned = {meta["record_id"]: body for meta, body in target.retained()[1]}
+    assert all(cloned[key] == value for key, value in originals.items())
+    assert target.head()["paused"] and target.status()["dispatches"] == 0
+
+
+def test_failed_maintenance_rolls_back_policy_record_and_working_and_stale_hold_refuses(
+    mind, monkeypatch
+):
+    from pipmind.shadow.maintenance import working_digest
+
+    events, model = episode(mind)
+    asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    mind.set_paused(True)
+    head, records = mind.retained()
+    before = head["working"]
+    refs = [events[0]["message_id"]]
+    from pipmind.shadow.maintenance import entries
+
+    plan = {
+        "revision": head["revision"],
+        "before_sha256": working_digest(before),
+        "working_memory": before,
+        "dispositions": [
+            {
+                "from": key,
+                "to": key,
+                "disposition": "retained",
+                "reason": "Preserve every condition",
+                "evidence_ids": refs,
+            }
+            for key in entries(before)
+        ],
+        "review": "no-unresolved-ambiguity",
+    }
+    real = mind._working_checkpoint
+
+    def interrupted(*args, **kwargs):
+        real(*args, **kwargs)
+        raise ShadowError("interrupted")
+
+    monkeypatch.setattr(mind, "_working_checkpoint", interrupted)
+    with pytest.raises(ShadowError, match="interrupted"):
+        mind.maintain_working(plan, MOMENT)
+    assert mind.head()["working"] == before
+    assert mind.runtime("memory_policy") is None
+    assert mind.retained()[1] == records
+    with pytest.raises(ShadowError, match="shadow_revision_changed"):
+        mind.hold(events[0], head["revision"] - 1, {}, MOMENT, "shadow_context_size")
+    assert mind.retained()[1] == records
+
+
+def test_exact_checkpoint_focus_retrieves_old_condition_after_newer_revisions(mind):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import entries, working_digest
+
+    old = {
+        "views": [f"Institution view {i}" for i in range(8)],
+        "waiting_for": [
+            f"Specific condition {i}: confirm quartz methodology and invalidation {i}"
+            for i in range(8)
+        ],
+        "position_theses": [],
+    }
+    with mind.transaction() as cur:
+        mind._write_working(cur, old, MOMENT)
+        mind._insert(
+            cur, metadata("source", "memory", MOMENT.isoformat(), mind.trader), "Known dated source"
+        )
+    plan = {
+        "revision": mind.head()["revision"],
+        "before_sha256": working_digest(old),
+        "working_memory": {
+            "views": ["Institution views remain uncertain"],
+            "waiting_for": [
+                "Confirm every individual quartz methodology/invalidation in the source checkpoint"
+            ],
+            "position_theses": [],
+        },
+        "dispositions": [
+            {
+                "from": key,
+                "to": key[0] + "0",
+                "disposition": "merged",
+                "reason": "Retain every unresolved prerequisite in named group",
+                "evidence_ids": ["source"],
+            }
+            for key in entries(old)
+        ],
+        "review": "no-unresolved-ambiguity",
+    }
+    report = mind.maintain_working(plan, MOMENT)
+    result = mind.search(report["checkpoint"] + " | Specific condition 7 invalidation 7", MOMENT)[0]
+    assert result["partial"] and result["metadata"]["record_id"] == report["checkpoint"]
+    assert old["waiting_for"][7] in result["body"]
+    assert old["waiting_for"][7] in encoded(mind.retained()[1])

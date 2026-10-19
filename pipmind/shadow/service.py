@@ -291,7 +291,14 @@ def create_app(
 
     @app.get("/status")
     def status():
-        return {**store.status(), **runtime}
+        state = store.status()
+        return {
+            **state,
+            **runtime,
+            "last_error": state.get("reasoning_hold", {}).get("reason")
+            if state.get("reasoning_hold")
+            else runtime["last_error"],
+        }
 
     @app.post("/inputs")
     async def inputs(request: WebRequest):
