@@ -36,7 +36,7 @@ class ReadWorker:
         self.broker = broker
         self.now = now or (lambda: datetime.now(UTC))
         self.stream = stream or LightstreamerPrices(broker)
-        self.router = PriceRouter(broker.symbols, broker, self.now, resubscribe=self.stream.start)
+        self.router = PriceRouter(broker.symbols, broker, self.now, resubscribe=self.recover_stream)
         self.lock, self.stop_event = threading.RLock(), threading.Event()
         self.contracts = Contracts()
         self.snapshots, self.last_snapshot, self.last_error = None, None, None
@@ -49,19 +49,28 @@ class ReadWorker:
         self.verified, self.last_cycle, self.prices = False, None, []
         self.thread = None
 
+    def recover_stream(self):
+        # A quiet instrument does not mean the shared transport is broken.
+        # Keep its stale flag/fallback, without disconnecting healthy peers.
+        if not getattr(self.stream, "connected", lambda: False)():
+            self.stream.start()
+
+    def drain_stream(self):
+        for raw in self.stream.drain():
+            if "error" in raw:
+                self.router.stream_times.clear()
+                if raw["error"] == "stream_auth":
+                    self.broker.login()
+                raise GatewayError(raw["error"])
+            self.router.stream(raw)
+
     def cycle(self):
         # Broker I/O never owns the status lock. A slow REST retry must not
         # make the engine's authenticated local GET block behind the network.
         try:
             if self.stream.generation != self.broker.generation:
                 self.stream.start()
-            for raw in self.stream.drain():
-                if "error" in raw:
-                    self.router.stream_times.clear()
-                    if raw["error"] == "stream_auth":
-                        self.broker.login()
-                    raise GatewayError(raw["error"])
-                self.router.stream(raw)
+            self.drain_stream()
             self.router.poll()
             now = self.now()
             if (
@@ -86,6 +95,9 @@ class ReadWorker:
                 except ContractError as error:
                     with self.lock:
                         self.evidence_error = {"code": str(error), "ts": stamp(self.now())}
+            # REST/account/history reads may take seconds. Publish the fresh
+            # callbacks received during that I/O, rather than the older batch.
+            self.drain_stream()
             with self.lock:
                 self.last_error = None
         except ContractError as error:
@@ -139,13 +151,16 @@ class ReadWorker:
         from pipmind.contracts import utc
 
         with self.lock:
+            checked = self.now()
             values = deepcopy(self.prices)
             for value in values:
-                if (self.now() - utc(value["venue_ts"])).total_seconds() >= (
+                if (checked - utc(value["venue_ts"])).total_seconds() >= (
                     self.broker.symbols.symbol(value["instrument"]).stale_seconds
                 ):
                     value["stale"] = True
             return {
+                "checked_at": stamp(checked),
+                "stream_connected": getattr(self.stream, "connected", lambda: False)(),
                 "prices": values,
                 "snapshots": deepcopy(self.snapshots),
                 "last_error": self.last_error,

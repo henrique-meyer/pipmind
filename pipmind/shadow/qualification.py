@@ -30,10 +30,12 @@ def open_fx_window(start):
     return True
 
 
-def arm(store, run_id, instruments, build, moment):
+def arm(store, run_id, instruments, build, moment, *, quote_policy="fresh_ticks"):
     if not re.fullmatch(r"[a-z0-9-]{1,40}", run_id) or not instruments or len(instruments) > 50:
         raise ShadowError("invalid_qualification_request")
     if any(not re.fullmatch(r"[A-Z]{3}/[A-Z]{3}", x) for x in instruments):
+        raise ShadowError("invalid_qualification_request")
+    if quote_policy not in {"fresh_ticks", "observed_staleness"}:
         raise ShadowError("invalid_qualification_request")
     with store.transaction() as c:
         previous = store._runtime(c, ACTIVE)
@@ -45,6 +47,8 @@ def arm(store, run_id, instruments, build, moment):
             "state": "warming",
             "build": build,
             "instruments": sorted(set(instruments)),
+            "quote_policy": quote_policy,
+            "quote_stale_seconds": 15,
             "interval": 60,
             "max_gap": 180,
             "max_input_lag": 300,
@@ -102,7 +106,33 @@ def healthy(sample, spec, moment):
         for name in ("macro", "news", "social")
     ):
         reasons.append("feed_worker_gap")
-    if any(x not in prices or prices[x].get("stale") is not False for x in spec["instruments"]):
+    if spec.get("quote_policy", "fresh_ticks") == "observed_staleness":
+        if any(x not in prices for x in spec["instruments"]):
+            reasons.append("broker_prices_missing")
+        try:
+            checked = utc(b["checked_at"])
+            if not 0 <= (moment - checked).total_seconds() <= 90:
+                reasons.append("broker_quote_check_gap")
+            for instrument in spec["instruments"]:
+                price = prices[instrument]
+                age = (checked - utc(price["venue_ts"])).total_seconds()
+                if (
+                    age < 0
+                    or utc(price["received_at"]) > checked
+                    or type(price.get("stale")) is not bool
+                    or (age >= spec["quote_stale_seconds"] and not price["stale"])
+                ):
+                    reasons.append("broker_quote_freshness_invalid")
+                    break
+        except (KeyError, TypeError, ValueError):
+            reasons.append("broker_quote_freshness_invalid")
+        fresh_rest = all(
+            x in prices and prices[x].get("source") == "rest" and prices[x].get("stale") is False
+            for x in spec["instruments"]
+        )
+        if b.get("stream_connected") is not True and not fresh_rest:
+            reasons.append("broker_transport_gap")
+    elif any(x not in prices or prices[x].get("stale") is not False for x in spec["instruments"]):
         reasons.append("broker_prices_stale")
     snapshots = b.get("snapshots")
     if (
@@ -162,6 +192,16 @@ class Recorder:
             moment = now()
             slot = int(moment.timestamp()) // spec["interval"]
             sample["at"] = stamp(moment)
+        sample["quote_ages"] = {}
+        for price in sample.get("broker", {}).get("prices", []):
+            try:
+                sample["quote_ages"][price["instrument"]] = {
+                    "seconds": (moment - utc(price["venue_ts"])).total_seconds(),
+                    "stale": price["stale"],
+                    "source": price["source"],
+                }
+            except (KeyError, TypeError, ValueError):
+                pass  # The readiness check retains invalid/missing quote failures.
         with self.store.transaction() as c:
             current = self.store._runtime(c, ACTIVE)
             if (
@@ -216,6 +256,24 @@ class Recorder:
                 if (Path("/sys/fs/cgroup/memory/memory.failcnt").exists())
                 else None
             )
+            sample["process_rss_bytes"] = {}
+            pids = {"engine": os.getpid()}
+            pids.update(
+                {
+                    name: worker.get("pid")
+                    for name, worker in sample.get("feeds", {}).get("workers", {}).items()
+                }
+            )
+            for name, pid in pids.items():
+                if type(pid) is not int or pid <= 0:
+                    continue
+                try:
+                    for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                        if line.startswith("VmRSS:"):
+                            sample["process_rss_bytes"][name] = int(line.split()[1]) * 1024
+                            break
+                except OSError:
+                    pass  # Process metrics are optional outside Linux or during a restart.
             cpu = Path("/sys/fs/cgroup/cpuacct/cpuacct.usage")
             sample["cpu_usage_ns"] = int(cpu.read_text()) if cpu.exists() else None
             sample["feed_status"] = self.store._runtime(c, "feed_status", {})
@@ -223,7 +281,10 @@ class Recorder:
             if sample["errors"]:
                 sample["readiness"].append("sample_read_failed")
             if current["state"] == "warming":
-                if (moment - utc(current["requested_at"])).total_seconds() > 86400:
+                if sample.get("build") != current["build"]:
+                    current["state"] = "warmup_failed"
+                    current["failures"] = ["build_changed"]
+                elif (moment - utc(current["requested_at"])).total_seconds() > 86400:
                     current["state"] = "warmup_failed"
                     current["failures"] = ["warmup_exceeded_24h"]
                 elif not sample["readiness"] and open_fx_window(moment):

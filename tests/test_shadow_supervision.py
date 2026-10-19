@@ -115,3 +115,34 @@ def test_local_sql_feed_outage_uses_the_expected_source_unavailable_path():
         assert status["last_error"] == "source_unavailable"
         assert status["reasoning_worker"]["alive"] and not state.holds
         assert client.get("/healthz").status_code == 200
+
+
+def test_completed_backlog_steps_continue_in_order_without_idle_poll_delay(monkeypatch):
+    import pipmind.shadow.service as service
+
+    state, order = State(), []
+
+    class Source:
+        def poll(self, moment):
+            order.append("refresh")
+
+    class Engine:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def step(self):
+            order.append("step")
+            if order.count("step") == 3:
+                state.paused = True
+            return not state.paused
+
+    monkeypatch.setattr(service, "ShadowEngine", Engine)
+    # Paced mode still refreshes source facts before each sequential step.
+    source = Source()
+    source.handoff_interval = 300
+    with TestClient(create_app(state, None, "s" * 32, gateway=source, scheduled_wakes=False)):
+        deadline = time.monotonic() + 1.5
+        while not state.paused and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert state.paused
+        assert order == ["refresh", "step"] * 3

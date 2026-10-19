@@ -173,6 +173,121 @@ def test_missing_evidence_and_startup_backlog_cannot_pass_readiness():
     assert {"startup_backlog", "broker_evidence_gap", "broker_not_ready"} <= set(r)
 
 
+def capture_sample():
+    stamp = MOMENT.isoformat()
+    return {
+        "shadow": {
+            "paused": False,
+            "last_error": None,
+            "dispatches": 0,
+            "pending": 0,
+            "reasoning_worker": {"alive": True, "loop_alive": True, "supervisor_alive": True},
+        },
+        "oldest_pending_age": 0,
+        "broker": {
+            "checked_at": stamp,
+            "stream_connected": True,
+            "dispatch_enabled": False,
+            "broker_verified": True,
+            "worker_alive": True,
+            "last_error": None,
+            "last_cycle": stamp,
+            "prices": [
+                {
+                    "instrument": "EUR/USD",
+                    "venue_ts": (MOMENT - timedelta(minutes=2)).isoformat(),
+                    "received_at": stamp,
+                    "stale": True,
+                    "source": "stream",
+                }
+            ],
+            "snapshots": [{"as_of": stamp}, {"as_of": stamp}],
+        },
+        "order_evidence": {
+            "last_error": None,
+            "evidence": {
+                "complete": True,
+                "environment": "demo",
+                "as_of": stamp,
+                "activity_count": 0,
+            },
+        },
+    }
+
+
+def test_observed_staleness_records_quiet_quotes_without_waiving_legacy_policy():
+    sample = capture_sample()
+    spec = {
+        "instruments": ["EUR/USD"],
+        "max_input_lag": 300,
+        "max_pending": 100,
+        "quote_policy": "observed_staleness",
+        "quote_stale_seconds": 15,
+    }
+    assert healthy(sample, spec, MOMENT) == []
+    assert sample["broker"]["prices"][0]["stale"] is True
+    spec["quote_policy"] = "fresh_ticks"
+    assert "broker_prices_stale" in healthy(sample, spec, MOMENT)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "false_fresh",
+        "future",
+        "missing",
+        "disconnected",
+        "old_check",
+        "old_snapshot",
+        "activity",
+        "backlog",
+    ],
+)
+def test_observed_staleness_still_fails_real_data_health_and_capture_faults(fault):
+    sample = capture_sample()
+    spec = {
+        "instruments": ["EUR/USD"],
+        "max_input_lag": 300,
+        "max_pending": 100,
+        "quote_policy": "observed_staleness",
+        "quote_stale_seconds": 15,
+    }
+    if fault == "false_fresh":
+        sample["broker"]["prices"][0]["stale"] = False
+    if fault == "future":
+        sample["broker"]["prices"][0]["venue_ts"] = (MOMENT + timedelta(seconds=1)).isoformat()
+    if fault == "missing":
+        sample["broker"]["prices"] = []
+    if fault == "disconnected":
+        sample["broker"]["stream_connected"] = False
+    if fault == "old_check":
+        sample["broker"]["checked_at"] = (MOMENT - timedelta(seconds=91)).isoformat()
+    if fault == "old_snapshot":
+        sample["broker"]["snapshots"][0]["as_of"] = (MOMENT - timedelta(seconds=121)).isoformat()
+    if fault == "activity":
+        sample["order_evidence"]["evidence"]["activity_count"] = 1
+    if fault == "backlog":
+        sample["oldest_pending_age"] = 301
+    assert healthy(sample, spec, MOMENT)
+
+
+def test_fresh_rest_can_cover_a_broken_stream_but_old_rest_cannot():
+    sample = capture_sample()
+    spec = {
+        "instruments": ["EUR/USD"],
+        "max_input_lag": 300,
+        "max_pending": 100,
+        "quote_policy": "observed_staleness",
+        "quote_stale_seconds": 15,
+    }
+    sample["broker"]["stream_connected"] = False
+    price = sample["broker"]["prices"][0]
+    price.update(source="rest", venue_ts=MOMENT.isoformat(), stale=False)
+    assert healthy(sample, spec, MOMENT) == []
+    price.update(venue_ts=(MOMENT - timedelta(seconds=16)).isoformat(), stale=True)
+    assert "broker_transport_gap" in healthy(sample, spec, MOMENT)
+
+
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_symbol_secret_accepts_arm_literal_object_and_legacy_array(tmp_path, monkeypatch, wrapped):
     import json

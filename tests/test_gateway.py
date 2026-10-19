@@ -559,6 +559,80 @@ def test_sdk_subscription_mapping_epoch_and_queue(clock):
     assert stream.queue.qsize() == 1000
 
 
+@pytest.mark.parametrize("connected", [True, False])
+def test_quiet_price_keeps_stale_flags_and_only_recovers_broken_transport(clock, connected):
+    original = quote(clock)
+    broker = SimpleNamespace(
+        symbols=synthetic_symbols(),
+        generation=1,
+        price=Mock(return_value=original),
+        snapshots=Mock(
+            return_value=(
+                {
+                    "schema_version": 1,
+                    "as_of": clock.now().isoformat(),
+                    "currency": "USD",
+                    "balance": 1,
+                },
+                {"schema_version": 1, "as_of": clock.now().isoformat(), "positions": []},
+            )
+        ),
+    )
+    stream = SimpleNamespace(
+        generation=1, start=Mock(), drain=Mock(return_value=[]), connected=lambda: connected
+    )
+    worker = ReadWorker(broker, stream=stream, now=clock.now)
+    worker.router.stream(original)
+    clock.advance(clock.now() + timedelta(seconds=16))
+    worker.cycle()
+    assert worker.state()["prices"][0]["stale"]
+    assert worker.state()["prices"][0]["venue_ts"] == original["TickDate"].replace("+00:00", "Z")
+    assert stream.start.call_count == (0 if connected else 1)
+
+
+def test_callbacks_during_slow_account_read_are_drained_before_cached_state(clock):
+    def snapshots():
+        clock.advance(clock.now() + timedelta(seconds=20))
+        return (
+            {
+                "schema_version": 1,
+                "as_of": clock.now().isoformat(),
+                "currency": "USD",
+                "balance": 1,
+            },
+            {"schema_version": 1, "as_of": clock.now().isoformat(), "positions": []},
+        )
+
+    broker = SimpleNamespace(symbols=synthetic_symbols(), generation=1, snapshots=snapshots)
+    stream = SimpleNamespace(generation=1, start=Mock(), drain=lambda: [quote(clock)])
+    worker = ReadWorker(broker, stream=stream, now=clock.now)
+    worker.cycle()
+    assert worker.last_error is None
+    assert worker.state()["prices"][0]["venue_ts"] == clock.now().isoformat().replace("+00:00", "Z")
+    assert worker.state()["prices"][0]["stale"] is False
+
+
+def test_sdk_transport_status_and_subscription_failure_do_not_forge_quote_freshness(clock):
+    client, subscription = Mock(), Mock()
+    client.getStatus.return_value = "CONNECTED:HTTP-STREAMING"
+    broker = Ciapi(synthetic_config(), synthetic_symbols(), now=clock.now)
+    broker._session, broker.generation = "x" * 36, 1
+    stream = LightstreamerPrices(
+        broker, client_factory=lambda *_: client, subscription_factory=lambda *_: subscription
+    )
+    stream.start()
+    assert stream.connected()
+    stream._enqueue(stream.epoch - 1, {"error": "stream_subscription_error"})
+    assert stream.connected()  # An old connection cannot invalidate the current transport.
+    listener = subscription.addListener.call_args.args[0]
+    listener.onSubscriptionError(17, "Synthetic refusal")
+    assert not stream.connected()
+    assert stream.drain() == [{"error": "stream_subscription_error"}]
+    client.getStatus.return_value = "STALLED"
+    stream.start()
+    assert not stream.connected()
+
+
 def test_internal_http_auth_dedupe_and_no_public_mount(gateway):
     token = "synthetic-local-gateway-token-000000000000"
     with TestClient(create_app(gateway, token)) as client:

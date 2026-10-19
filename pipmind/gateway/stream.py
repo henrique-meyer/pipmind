@@ -18,8 +18,11 @@ class LightstreamerPrices:
         self.queue, self.client, self.subscriptions = Queue(maxsize=1000), None, []
         self.epoch, self.overflow, self.generation = 0, False, None
         self.overflow_reported = False
+        self.failed = False
 
     def _enqueue(self, epoch, value):
+        if epoch == self.epoch and "error" in value:
+            self.failed = True
         try:
             self.queue.put_nowait((epoch, value))
         except Full:
@@ -31,6 +34,7 @@ class LightstreamerPrices:
         self.generation = self.broker.generation
         self.epoch += 1
         epoch, owner = self.epoch, self
+        self.failed = False
         self.client = self.client_factory(self.broker.config.stream_url, "STREAMINGALL")
         self.client.connectionDetails.setUser(self.broker.config.username)
         self.client.connectionDetails.setPassword(session)
@@ -59,6 +63,11 @@ class LightstreamerPrices:
             self.client.subscribe(subscription)
             self.subscriptions.append(subscription)
         self.client.connect()
+
+    def connected(self):
+        return bool(
+            self.client and not self.failed and self.client.getStatus().startswith("CONNECTED:")
+        )
 
     def drain(self):
         if self.overflow:

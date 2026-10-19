@@ -1631,7 +1631,10 @@ def test_private_http_rejects_malformed_and_forged_owner_inputs_without_advancin
 
 
 @pytest.mark.parametrize("failed_correction", [False, True])
-def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, failed_correction):
+@pytest.mark.parametrize("invalid_candidate", ["oversized", "missing_dispositions"])
+def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
+    mind, failed_correction, invalid_candidate
+):
     from pipmind.shadow.common import encoded
 
     before = {
@@ -1655,6 +1658,9 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, fa
         tool_calls=[],
         working_memory={**before, "views": ["USD uncertain " + "." * 301]},
     )
+    if invalid_candidate == "missing_dispositions":
+        candidate["working_memory"]["views"] = ["USD uncertainty remains"]
+        candidate.pop("memory_dispositions", None)
     model.responses[event["message_id"]]["reply"] = candidate
     model.responses[event["message_id"]]["triage"]["wake"] = True
     after = {**before, "views": ["USD uncertainty retained"]}
@@ -1682,6 +1688,8 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, fa
             reply = deepcopy(correction)
             if failed_correction:
                 reply["working_memory"] = deepcopy(candidate["working_memory"])
+                if invalid_candidate == "missing_dispositions":
+                    reply["candidate_dispositions"] = []
             return reply, {"phase": "memory_repair", "input_tokens": 123, "output_tokens": 45}
 
     live = Repair(model.responses)
@@ -1704,6 +1712,11 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, fa
         for key in candidate.keys() - {"working_memory", "memory_dispositions"}:
             assert journal["reply"][key] == candidate[key]
     assert journal["memory_repair"]["candidate"] == candidate
+    assert journal["memory_repair"]["reason"] == (
+        "working_memory_bound"
+        if invalid_candidate == "oversized"
+        else "working_memory_dispositions"
+    )
     assert [row["phase"] for row in journal["usage"]] == ["triage", "decision", "memory_repair"]
     assert journal["usage"][-1]["input_tokens"] == 123 and journal["dispatches"] == 0
     retained = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
@@ -2059,7 +2072,10 @@ def test_fresh_broker_facts_survive_processing_an_older_account_input_without_mo
     assert mind.status()["outcomes"] == 1
 
 
-def test_qualification_slots_survive_restart_and_cannot_erase_a_capture_gap(mind, monkeypatch):
+@pytest.mark.parametrize("quote_policy", ["fresh_ticks", "observed_staleness"])
+def test_qualification_slots_survive_restart_and_cannot_erase_a_capture_gap(
+    mind, monkeypatch, quote_policy
+):
     from pipmind.shadow import qualification as q
 
     moment = utc("2026-10-19T22:00:00Z")
@@ -2090,17 +2106,31 @@ def test_qualification_slots_survive_restart_and_cannot_erase_a_capture_gap(mind
                 },
             }
         return {
+            "checked_at": at,
+            "stream_connected": True,
             "dispatch_enabled": False,
             "broker_verified": True,
             "worker_alive": True,
             "last_cycle": at,
-            "prices": [{"instrument": "EUR/USD", "stale": False}],
+            "prices": [
+                {
+                    "instrument": "EUR/USD",
+                    "stale": quote_policy == "observed_staleness",
+                    "venue_ts": (
+                        clock[0] - timedelta(seconds=30)
+                        if quote_policy == "observed_staleness"
+                        else clock[0]
+                    ).isoformat(),
+                    "received_at": at,
+                    "source": "stream",
+                }
+            ],
             "snapshots": [{"as_of": at}, {"as_of": at}],
             "last_error": None,
         }
 
     monkeypatch.setattr(q, "read_gateway", read)
-    q.arm(mind, "synthetic-day", ["EUR/USD"], "synthetic-build", moment)
+    q.arm(mind, "synthetic-day", ["EUR/USD"], "synthetic-build", moment, quote_policy=quote_policy)
     recorder = q.Recorder(mind, None, state)
     recorder.capture(moment)
     first = mind.runtime(q.ACTIVE)
@@ -2124,13 +2154,18 @@ def test_qualification_slots_survive_restart_and_cannot_erase_a_capture_gap(mind
     assert mind.status()["outcomes"] == 0  # Capture never invents reasoning.
 
 
-def test_qualification_warmup_retains_read_failures_without_starting_the_day(mind, monkeypatch):
+@pytest.mark.parametrize("build_changed", [False, True])
+def test_qualification_warmup_retains_read_failures_without_starting_the_day(
+    mind, monkeypatch, build_changed
+):
     from pipmind.shadow import qualification as q
 
     moment = utc("2026-10-19T22:00:00Z")
     monkeypatch.setenv("BUILD_SHA", "synthetic-build")
     mind.set_paused(False)
     q.arm(mind, "failed-warmup", ["EUR/USD"], "synthetic-build", moment)
+    if build_changed:
+        monkeypatch.setenv("BUILD_SHA", "another-build")
 
     def outage(*args):
         raise TimeoutError("synthetic")
@@ -2138,13 +2173,18 @@ def test_qualification_warmup_retains_read_failures_without_starting_the_day(min
     monkeypatch.setattr(q, "read_gateway", outage)
     q.Recorder(mind, None, mind.status).capture(moment)
     r = mind.runtime(q.ACTIVE)
-    assert r["state"] == "warming" and r["start"] is None
+    assert r["state"] == ("warmup_failed" if build_changed else "warming") and r["start"] is None
+    assert r["failures"] == (["build_changed"] if build_changed else [])
     sample = mind.runtime(
         "qualification:failed-warmup:sample:" + str(int(moment.timestamp()) // 60)
     )
     assert sample["errors"] == ["TimeoutError"] and "sample_read_failed" in sample["readiness"]
-    with pytest.raises(ShadowError, match="qualification_already_active"):
-        q.arm(mind, "other-day", ["EUR/USD"], "synthetic-build", moment)
+    if build_changed:
+        q.arm(mind, "replacement-day", ["EUR/USD"], "another-build", moment)
+        assert mind.runtime("qualification:failed-warmup:request")["build"] == "synthetic-build"
+    else:
+        with pytest.raises(ShadowError, match="qualification_already_active"):
+            q.arm(mind, "other-day", ["EUR/USD"], "synthetic-build", moment)
 
 
 def test_qualification_freshness_uses_read_completion_not_earlier_request_time(mind, monkeypatch):
