@@ -226,6 +226,15 @@ class SqlFeedStore:
         with self.transaction() as db:
             db.execute("SELECT status,producer FROM pf_inbox WHERE k=%s", (key,))
             row = db.fetchone()
+            # Recovered captures can initialize a missing checkpoint only.
+            if (
+                row
+                and tuple(row) == ("complete", producer)
+                and cursor
+                and self.state(cursor[0], db=db) is None
+            ):
+                self.save(*cursor, db=db)
+                merge_state(self, db, state_patch)
             if not row or tuple(row) != ("pending", producer):
                 return
             self.emit_many(db, producer, payloads, now)

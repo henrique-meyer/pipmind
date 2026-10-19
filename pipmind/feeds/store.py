@@ -199,6 +199,11 @@ class FeedStore:
     def complete_batch(self, producer, key, payloads, now, *, cursor=None, state_patch=None):
         with self.transaction() as db:
             row = db.execute("SELECT status,producer FROM inbox WHERE key=?", (key,)).fetchone()
+            # Manual capture recovery emits events without moving checkpoints.
+            # Normal polling may then initialize an absent cursor, never rewind one.
+            if row == ("complete", producer) and cursor and self.state(cursor[0], db=db) is None:
+                self.save(*cursor, db=db)
+                merge_state(self, db, state_patch)
             if row != ("pending", producer):
                 return
             for payload in payloads:

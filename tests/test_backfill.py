@@ -96,6 +96,58 @@ def test_storage_outage_leaves_valid_canonical_capture_pending_for_retry(
     assert store.capture(key)["status"] == "complete" and len(store.events()) == 2
 
 
+@pytest.mark.parametrize("mode", ["latest", "window"])
+def test_reprocessed_capture_recovers_missing_checkpoint_without_reinserting_events(
+    tmp_path, monkeypatch, mode
+):
+    store = FeedStore(tmp_path / "recovered.db")
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(args[0])
+        return SimpleNamespace(status=200, body=encoded(page()).encode(), headers={})
+
+    calendar = SimpleNamespace(match=lambda *a: None)
+    backfill = CanonicalBackfill(
+        store,
+        SimpleNamespace(get=get),
+        "https://provider.invalid",
+        "synthetic",
+        calendar,
+        lambda: MOMENT,
+    )
+    original = store.complete_batch
+
+    def unavailable(*args, **kwargs):
+        raise FeedError("feed_store_unavailable")
+
+    def run():
+        if mode == "latest":
+            return backfill.latest(MAPPING)
+        return backfill.page(MAPPING, "2026-01-01", "2026-10-18")
+
+    monkeypatch.setattr(store, "complete_batch", unavailable)
+    with pytest.raises(FeedError):
+        run()
+    with store.transaction() as db:
+        key = db.execute("SELECT key FROM inbox").fetchone()[0]
+    # An older build quarantined a valid capture on a transient storage failure.
+    store.quarantine(key)
+    monkeypatch.setattr(store, "complete_batch", original)
+    assert reprocess_capture(store, key, configuration(), calendar, MOMENT)
+    before = store.events()
+    assert len(before) == 2
+    run()
+    assert store.events() == before and len(calls) == 2
+    run()
+    assert store.events() == before and len(calls) == 2
+    if mode == "window":
+        assert (
+            store.state("canonical:quality")["USD:synthetic_cpi"]["quality"]
+            == page()["data_quality"]
+        )
+
+
 def test_quality_failure_rolls_back_events_cursor_and_completion_together(tmp_path, monkeypatch):
     store = FeedStore(tmp_path / "quality.db")
     reads = SimpleNamespace(
