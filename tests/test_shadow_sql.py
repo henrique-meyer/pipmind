@@ -432,6 +432,7 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
         ("shadow-context-v1", "sql-memory-v1"),
         ("shadow-context-v2", "sql-memory-v2"),
         ("shadow-context-v3", "sql-memory-v2"),
+        ("shadow-context-v4", "sql-memory-v2"),
     ],
 )
 def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind, versions):
