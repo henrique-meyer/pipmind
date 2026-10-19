@@ -663,6 +663,30 @@ class SqlMind:
                     "INSERT pm_runtime VALUES(%s,%s,%s)", (self.trader, key, encoded(value))
                 )
 
+    def refresh_broker_facts(self, account, positions, moment):
+        self.contracts.validate("account-snapshot", account)
+        self.contracts.validate("position-snapshot", positions)
+        if any(utc(value["as_of"]) > moment for value in (account, positions)):
+            raise ShadowError("future_broker_snapshot")
+        with self.transaction() as cur:
+            current = self._runtime(cur, "broker_snapshots", {})
+            for key, value in (("account", account), ("positions", positions)):
+                if key not in current or utc(value["as_of"]) > utc(current[key]["as_of"]):
+                    current[key] = value
+            cur.execute(
+                "SELECT 1 FROM pm_runtime WHERE trader=%s AND k='broker_snapshots'", (self.trader,)
+            )
+            if cur.fetchone():
+                cur.execute(
+                    "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k='broker_snapshots'",
+                    (encoded(current), self.trader),
+                )
+            else:
+                cur.execute(
+                    "INSERT pm_runtime VALUES(%s,'broker_snapshots',%s)",
+                    (self.trader, encoded(current)),
+                )
+
     def commit(self, envelope, revision, result, moment):
         """A stale concurrent model response cannot overwrite another decision."""
         identifier = event_id(envelope)
@@ -756,6 +780,17 @@ class SqlMind:
                 (self.trader, identifier),
             )
             for key, value in result.get("runtime_updates", {}).items():
+                if key == "broker_snapshots":
+                    current = self._runtime(cur, key, {})
+                    value = {
+                        **value,
+                        **{
+                            name: snapshot
+                            for name, snapshot in current.items()
+                            if name not in value
+                            or utc(snapshot["as_of"]) >= utc(value[name]["as_of"])
+                        },
+                    }
                 cur.execute("SELECT 1 FROM pm_runtime WHERE trader=%s AND k=%s", (self.trader, key))
                 if cur.fetchone():
                     cur.execute(

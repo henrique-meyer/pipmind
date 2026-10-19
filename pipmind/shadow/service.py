@@ -79,6 +79,12 @@ class FeedConsumer:
 class GatewayConsumer(FeedConsumer):
     """Only GET /state. No order URL, broker credential or command method exists."""
 
+    def __init__(self, *args, handoff_interval=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not 0 <= handoff_interval <= 3600:
+            raise ShadowError("invalid_gateway_handoff_interval")
+        self.handoff_interval, self.last_handoff = handoff_interval, None
+
     def poll(self, moment):
         request = Request(self.url + "/state", headers={"Authorization": "Bearer " + self.token})
         try:
@@ -86,6 +92,14 @@ class GatewayConsumer(FeedConsumer):
                 page = bounded_json(response.read(2_097_153), 2_097_152)
             if page.get("dispatch_enabled") is not False:
                 raise ValueError
+            if self.handoff_interval:
+                if page.get("snapshots"):
+                    self.store.refresh_broker_facts(*page["snapshots"], moment)
+                if (
+                    self.last_handoff is not None
+                    and (moment - self.last_handoff).total_seconds() < self.handoff_interval
+                ):
+                    return 0
             events = []
             for payload in page.get("prices", []):
                 # /state may mark the same quote stale later. That observation
@@ -125,6 +139,7 @@ class GatewayConsumer(FeedConsumer):
                     ],
                     moment,
                 )
+            self.last_handoff = moment
             return len(events)
         except Exception:
             raise ShadowError("shadow_gateway_read_unavailable") from None
@@ -188,6 +203,7 @@ def create_app(
     price_interval=60,
     clock_interval=900,
     worker_timeout=120,
+    qualification_enabled=False,
 ):
     if not isinstance(token, str) or len(token) < 32:
         raise ShadowError("shadow_token_minimum_32_characters")
@@ -214,6 +230,15 @@ def create_app(
     engine = ShadowEngine(store, model, price_interval=price_interval, observer=observe)
     if isinstance(model, FoundryModel):
         model.observer = observe
+    recorder = None
+    if qualification_enabled:
+        from pipmind.shadow.qualification import Recorder
+
+        if not background or gateway is None:
+            raise ShadowError("qualification_requires_background_gateway")
+        recorder = Recorder(
+            store, gateway, lambda: status(), feed_app.state.private_status if feed_app else None
+        )
 
     async def hold_worker(reason, expected_phase=None):
         # Only durable pending data is held. A late result loses its revision
@@ -319,7 +344,7 @@ def create_app(
                     )
                 if scheduled_wakes:
                     await asyncio.to_thread(clock_wake, store, now(), clock_interval)
-                for _ in range(100):
+                for _ in range(1 if gateway and getattr(gateway, "handoff_interval", 0) else 100):
                     # The engine uses synchronous SQL. Keep blocked database
                     # connections off the ASGI loop, including during outages.
                     active.clear()
@@ -361,10 +386,18 @@ def create_app(
             lifecycle["task"] = task
             watcher = asyncio.create_task(watch()) if background else None
             lifecycle["watcher"] = watcher
+            capture_task = asyncio.create_task(recorder.run()) if recorder else None
+            lifecycle["qualification"] = capture_task
             try:
                 yield
             finally:
                 lifecycle["stopping"] = True
+                if capture_task:
+                    capture_task.cancel()
+                    try:
+                        await capture_task
+                    except asyncio.CancelledError:
+                        pass
                 if watcher:
                     watcher.cancel()
                     try:
@@ -444,6 +477,18 @@ def create_app(
         return {
             **state,
             **runtime,
+            **(
+                {
+                    "qualification": store.runtime("qualification:active"),
+                    "qualification_recorder": {
+                        "alive": lifecycle.get("qualification") is not None
+                        and not lifecycle["qualification"].done(),
+                        "last_error": recorder.last_error,
+                    },
+                }
+                if recorder
+                else {}
+            ),
             "last_error": state.get("reasoning_hold", {}).get("reason")
             if state.get("reasoning_hold")
             else runtime["last_error"],
@@ -526,6 +571,7 @@ def from_env():
             os.environ["PIPMIND_SHADOW_GATEWAY_URL"],
             os.environ["PIPMIND_GATEWAY_TOKEN"],
             os.environ["PIPMIND_SHADOW_GATEWAY_SOURCE_ID"],
+            handoff_interval=int(os.environ.get("PIPMIND_SHADOW_GATEWAY_INTERVAL", "0")),
         )
     return create_app(
         store,
@@ -536,4 +582,5 @@ def from_env():
         feed_app=feed_app,
         price_interval=int(os.environ.get("PIPMIND_SHADOW_PRICE_INTERVAL", "60")),
         clock_interval=int(os.environ.get("PIPMIND_SHADOW_CLOCK_INTERVAL", "900")),
+        qualification_enabled=os.environ.get("PIPMIND_SHADOW_QUALIFICATION_ENABLED") == "true",
     )

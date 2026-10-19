@@ -9,6 +9,8 @@ param gatewayImage string
 @description('Non-secret runtime configuration; actual values stay in private parameters.')
 param engineEnvironment array
 param gatewayEnvironment array
+@description('Enable the verified demo read-only profile; never enables command acceptance or dispatch.')
+param brokerReadOnlyEnabled bool = false
 @secure()
 param appSecrets object
 
@@ -53,7 +55,11 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
         {
           name: 'gateway'
           image: gatewayImage
-          env: gatewayEnvironment
+          env: brokerReadOnlyEnabled ? concat(filter(gatewayEnvironment, item => !contains(['PIPMIND_BROKER_READS', 'PIPMIND_GATEWAY_UNCONFIGURED', 'PIPMIND_GATEWAY_READ_ONLY'], item.name)), [
+            { name: 'PIPMIND_BROKER_READS', value: 'true' }
+            { name: 'PIPMIND_GATEWAY_UNCONFIGURED', value: 'false' }
+            { name: 'PIPMIND_GATEWAY_READ_ONLY', value: 'true' }
+          ]) : gatewayEnvironment
           volumeMounts: [{ volumeName: 'gateway-config', mountPath: '/run/pipmind/gateway' }]
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
           probes: [

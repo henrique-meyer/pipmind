@@ -113,6 +113,7 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
             },
         }
 
+    app.state.private_status = status
     return app
 
 

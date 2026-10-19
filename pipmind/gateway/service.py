@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from pipmind.contracts import ContractError, Contracts, loads, stamp
+from pipmind.contracts import ContractError, Contracts, loads, stamp, utc
 from pipmind.gateway.ciapi import Ciapi
 from pipmind.gateway.config import BrokerConfig, GatewayError, symbols_from_env
 from pipmind.gateway.engine import DryGateway, PriceRouter
@@ -19,7 +19,20 @@ from pipmind.gateway.stream import LightstreamerPrices
 
 
 class ReadWorker:
-    def __init__(self, broker, *, stream=None, now=None):
+    def __init__(
+        self,
+        broker,
+        *,
+        stream=None,
+        now=None,
+        snapshot_interval=30,
+        evidence_interval=None,
+        evidence_since=None,
+    ):
+        if not 30 <= snapshot_interval <= 3600 or (
+            evidence_interval is not None and not 60 <= evidence_interval <= 3600
+        ):
+            raise GatewayError("invalid_broker_read_intervals")
         self.broker = broker
         self.now = now or (lambda: datetime.now(UTC))
         self.stream = stream or LightstreamerPrices(broker)
@@ -27,45 +40,84 @@ class ReadWorker:
         self.lock, self.stop_event = threading.RLock(), threading.Event()
         self.contracts = Contracts()
         self.snapshots, self.last_snapshot, self.last_error = None, None, None
+        self.snapshot_interval, self.evidence_interval = snapshot_interval, evidence_interval
+        self.evidence_since = evidence_since or self.now()
+        if self.evidence_since > self.now():
+            raise GatewayError("invalid_broker_evidence_window")
+        self.evidence, self.last_evidence, self.evidence_error = None, None, None
+        self.snapshot_attempt, self.evidence_attempt = None, None
+        self.verified, self.last_cycle, self.prices = False, None, []
         self.thread = None
 
     def cycle(self):
-        with self.lock:
-            try:
-                if self.stream.generation != self.broker.generation:
-                    self.stream.start()
-                for raw in self.stream.drain():
-                    if "error" in raw:
-                        self.router.stream_times.clear()
-                        if raw["error"] == "stream_auth":
-                            self.broker.login()
-                        raise GatewayError(raw["error"])
-                    self.router.stream(raw)
-                self.router.poll()
-                now = self.now()
-                if self.last_snapshot is None or (now - self.last_snapshot).total_seconds() >= 30:
-                    snapshots = self.broker.snapshots()
-                    self.contracts.validate("account-snapshot", snapshots[0])
-                    self.contracts.validate("position-snapshot", snapshots[1])
+        # Broker I/O never owns the status lock. A slow REST retry must not
+        # make the engine's authenticated local GET block behind the network.
+        try:
+            if self.stream.generation != self.broker.generation:
+                self.stream.start()
+            for raw in self.stream.drain():
+                if "error" in raw:
+                    self.router.stream_times.clear()
+                    if raw["error"] == "stream_auth":
+                        self.broker.login()
+                    raise GatewayError(raw["error"])
+                self.router.stream(raw)
+            self.router.poll()
+            now = self.now()
+            if (
+                self.snapshot_attempt is None
+                or (now - self.snapshot_attempt).total_seconds() >= self.snapshot_interval
+            ):
+                self.snapshot_attempt = now
+                snapshots = self.broker.snapshots()
+                self.contracts.validate("account-snapshot", snapshots[0])
+                self.contracts.validate("position-snapshot", snapshots[1])
+                with self.lock:
                     self.snapshots, self.last_snapshot = snapshots, now
+            if self.evidence_interval is not None and (
+                self.evidence_attempt is None
+                or (now - self.evidence_attempt).total_seconds() >= self.evidence_interval
+            ):
+                self.evidence_attempt = now
+                try:
+                    evidence = self.broker.evidence(self.evidence_since)
+                    with self.lock:
+                        self.evidence, self.last_evidence, self.evidence_error = evidence, now, None
+                except ContractError as error:
+                    with self.lock:
+                        self.evidence_error = {"code": str(error), "ts": stamp(self.now())}
+            with self.lock:
                 self.last_error = None
-            except ContractError as error:
+        except ContractError as error:
+            with self.lock:
                 self.last_error = {"code": str(error), "ts": stamp(self.now())}
+        except Exception:
+            with self.lock:
+                self.last_error = {"code": "broker_worker_failed", "ts": stamp(self.now())}
+        finally:
+            prices = self.router.current()
+            with self.lock:
+                self.prices, self.last_cycle = prices, stamp(self.now())
 
     def start(self):
         def run():
-            initialized = False
             try:
                 while not self.stop_event.is_set():
-                    if not initialized:
+                    if not self.verified:
                         try:
                             self.broker.verify_account()
                             self.broker.verify_symbols()
                             self.stream.start()
-                            initialized = True
-                        except ContractError as error:
                             with self.lock:
-                                self.last_error = {"code": str(error), "ts": stamp(self.now())}
+                                self.verified = True
+                        except Exception as error:
+                            with self.lock:
+                                self.last_error = {
+                                    "code": str(error)
+                                    if isinstance(error, ContractError)
+                                    else "broker_worker_failed",
+                                    "ts": stamp(self.now()),
+                                }
                             self.stop_event.wait(30)
                             continue
                     self.cycle()
@@ -82,13 +134,34 @@ class ReadWorker:
             self.thread.join(timeout=40)
 
     def state(self):
+        from copy import deepcopy
+
+        from pipmind.contracts import utc
+
         with self.lock:
+            values = deepcopy(self.prices)
+            for value in values:
+                if (self.now() - utc(value["venue_ts"])).total_seconds() >= (
+                    self.broker.symbols.symbol(value["instrument"]).stale_seconds
+                ):
+                    value["stale"] = True
             return {
-                "prices": self.router.current(),
-                "snapshots": self.snapshots,
+                "prices": values,
+                "snapshots": deepcopy(self.snapshots),
                 "last_error": self.last_error,
                 "dispatch_enabled": False,
+                "broker_verified": self.verified,
+                "worker_alive": bool(self.thread and self.thread.is_alive()),
+                "last_cycle": self.last_cycle,
+                "evidence_as_of": self.evidence.get("as_of") if self.evidence else None,
+                "evidence_error": self.evidence_error,
             }
+
+    def order_evidence(self):
+        from copy import deepcopy
+
+        with self.lock:
+            return {"evidence": deepcopy(self.evidence), "last_error": self.evidence_error}
 
 
 def create_app(gateway, token, *, worker=None):
@@ -133,12 +206,17 @@ def create_app(gateway, token, *, worker=None):
 
     @app.get("/healthz")
     def health():
-        return {"application": "pipmind-gateway", "mode": "dry", "dispatch_enabled": False}
+        body = {"application": "pipmind-gateway", "mode": "dry", "dispatch_enabled": False}
+        if worker and worker.thread is not None and not worker.thread.is_alive():
+            return JSONResponse(body, status_code=503)
+        return body
 
     @app.post("/orders")
     async def orders(request: Request):
         if gateway is None:
-            raise GatewayError("broker_configuration_pending")
+            raise GatewayError(
+                "broker_commands_disabled" if worker else "broker_configuration_pending"
+            )
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
@@ -146,6 +224,14 @@ def create_app(gateway, token, *, worker=None):
                 raise HTTPException(413, detail="command_too_large")
         acknowledgement, replayed = await asyncio.to_thread(gateway.accept, loads(bytes(body)))
         return {"acknowledgement": acknowledgement, "replayed": replayed}
+
+    @app.get("/evidence")
+    def evidence():
+        return (
+            worker.order_evidence()
+            if worker
+            else {"evidence": None, "last_error": "broker_reads_disabled"}
+        )
 
     @app.get("/state")
     def state():
@@ -174,6 +260,22 @@ def from_env():
         return create_app(None, os.environ.get("PIPMIND_GATEWAY_TOKEN", ""))
     symbols = symbols_from_env()
     config = BrokerConfig.from_env() if os.environ.get("PIPMIND_BROKER_READS") == "true" else None
+    if os.environ.get("PIPMIND_GATEWAY_READ_ONLY") == "true":
+        if config is None or config.environment != "demo":
+            raise GatewayError("read_only_demo_configuration_required")
+        try:
+            worker = ReadWorker(
+                Ciapi(config, symbols),
+                snapshot_interval=int(os.environ.get("PIPMIND_BROKER_SNAPSHOT_INTERVAL", "60")),
+                evidence_interval=int(os.environ.get("PIPMIND_BROKER_EVIDENCE_INTERVAL", "300")),
+                evidence_since=utc(os.environ["PIPMIND_BROKER_EVIDENCE_FROM"])
+                if os.environ.get("PIPMIND_BROKER_EVIDENCE_FROM")
+                else None,
+            )
+        except ValueError:
+            raise GatewayError("invalid_broker_read_intervals") from None
+        # Hosted shadow has no command ledger or accepted OrderRequest path.
+        return create_app(None, os.environ.get("PIPMIND_GATEWAY_TOKEN", ""), worker=worker)
     # Account/environment binding is private and cannot cross ledgers on restart.
     profile = canonical(
         {
