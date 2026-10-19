@@ -4,7 +4,16 @@ from copy import deepcopy
 from datetime import UTC
 from uuid import uuid4
 
-from pipmind.contracts import Contracts, event_facts, event_id, loads, stamp, utc, validate_event
+from pipmind.contracts import (
+    ContractError,
+    Contracts,
+    event_facts,
+    event_id,
+    loads,
+    stamp,
+    utc,
+    validate_event,
+)
 from pipmind.shadow.common import ShadowError, digest, encoded, terms
 from pipmind.shadow.context import query_terms, record_view, relevance, semantic_text
 from pipmind.shadow.maintenance import POLICY, policy_context, transition, working_digest
@@ -416,7 +425,11 @@ class SqlMind:
                 seq, envelope = item["sequence"], item["event"]
                 if type(seq) is not int or seq <= previous:
                     raise ShadowError("input_cursor_not_increasing")
-                if validate_event(envelope, self.contracts) > moment:
+                try:
+                    available = validate_event(envelope, self.contracts)
+                except ContractError:
+                    raise ShadowError("invalid_shadow_input") from None
+                if available > moment:
                     raise ShadowError("input_not_yet_available")
                 if (
                     envelope["kind"] == "ClockEvent"

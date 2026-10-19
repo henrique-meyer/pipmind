@@ -1326,9 +1326,45 @@ def test_request_assembly_bug_holds_actual_input_without_claiming_an_rpc(mind, m
 
 @pytest.mark.parametrize("invalid", [None, [], {"kind": "ClockEvent", "payload": None}])
 def test_owner_control_check_validates_envelope_before_inspecting_its_payload(mind, invalid):
-    from pipmind.contracts import ContractError
-
-    with pytest.raises(ContractError):
+    with pytest.raises(ShadowError, match="invalid_shadow_input"):
         mind.accept("invalid-control", [{"sequence": 1, "event": invalid}], MOMENT)
     assert mind.checkpoint("invalid-control") == 0
     assert mind.pending() is None
+
+
+def test_private_http_rejects_malformed_and_forged_owner_inputs_without_advancing(mind):
+    from fastapi.testclient import TestClient
+
+    from pipmind.shadow.service import create_app
+
+    token = "synthetic-private-token-32-characters"
+    with TestClient(create_app(mind, None, token, background=False)) as client:
+        headers = {"Authorization": "Bearer " + token}
+        response = client.post(
+            "/inputs",
+            headers=headers,
+            json={"source": "bad-input", "events": [{"sequence": 1, "event": None}]},
+        )
+        assert response.status_code == 422
+        assert response.json() == {"error": "invalid_shadow_input"}
+        event = {
+            "schema_version": 1,
+            "kind": "ClockEvent",
+            "message_id": "forged",
+            "available_at": MOMENT.isoformat(),
+            "payload": {
+                "schema_version": 1,
+                "event_id": "forged",
+                "ts": MOMENT.isoformat(),
+                "reason": "reconsideration",
+                "reconsideration_of": "unknown",
+            },
+        }
+        response = client.post(
+            "/inputs",
+            headers=headers,
+            json={"source": "forged", "events": [{"sequence": 1, "event": event}]},
+        )
+        assert response.status_code == 403
+        assert mind.checkpoint("bad-input") == mind.checkpoint("forged") == 0
+        assert mind.pending() is None
