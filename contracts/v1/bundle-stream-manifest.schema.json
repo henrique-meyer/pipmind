@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:bundle-stream-manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "schema_version",
+    "mind_schema_version",
+    "kind",
+    "trader_id",
+    "lineage_id",
+    "export_id",
+    "created_at",
+    "checkpoint",
+    "coverage",
+    "compatibility",
+    "files"
+  ],
+  "properties": {
+    "format": {
+      "const": "pipmind"
+    },
+    "schema_version": {
+      "const": 3
+    },
+    "mind_schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "experience"
+    },
+    "trader_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lineage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "export_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checkpoint_id",
+        "event_watermark",
+        "as_of"
+      ],
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_watermark": {
+          "type": "string",
+          "minLength": 1
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "(Z|\\+00:00)$"
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complete",
+        "retained_from",
+        "through",
+        "gaps",
+        "record_counts"
+      ],
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "retained_from": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "(Z|\\+00:00)$"
+        },
+        "through": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "(Z|\\+00:00)$"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "record_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identity",
+            "playbook",
+            "working_memory",
+            "journal",
+            "review",
+            "memory",
+            "playbook_history"
+          ],
+          "properties": {
+            "identity": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "playbook": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "working_memory": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "journal": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "review": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memory": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "playbook_history": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "application_schema",
+        "prompt_version",
+        "retrieval_version",
+        "model_version",
+        "inference_settings",
+        "compatibility_decision",
+        "application_version"
+      ],
+      "properties": {
+        "application_schema": {
+          "const": 1
+        },
+        "prompt_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retrieval_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inference_settings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "temperature": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2
+            },
+            "top_p": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 1
+            },
+            "max_output_tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            },
+            "seed": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        },
+        "compatibility_decision": {
+          "const": "shadow-stream-v1"
+        },
+        "application_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 19999,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256",
+          "bytes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

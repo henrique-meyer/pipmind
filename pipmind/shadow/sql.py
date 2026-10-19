@@ -141,6 +141,53 @@ def transaction(connect, resource="pipmind-shadow"):
             db.close()
 
 
+@contextmanager
+def stream_transaction(connect, resource, *, snapshot=True):
+    """Use an already-enabled transaction snapshot; never alter database options.
+
+    Without that capability, the existing coordinated source lock is required.
+    A failed snapshot never falls back mid-checkpoint to a different version.
+    """
+    db = None
+    try:
+        enabled = False
+        if snapshot:
+            db = connect()
+            cur = db.cursor()
+            cur.execute(
+                "SELECT snapshot_isolation_state FROM sys.databases WHERE database_id=DB_ID()"
+            )
+            enabled = cur.fetchone()[0] == 1
+        if not enabled:
+            if db:
+                db.close()
+                db = None
+            with transaction(connect, resource) as cur:
+                yield cur, "locked"
+            return
+        from pytds.extensions import ISOLATION_LEVEL_SNAPSHOT
+
+        # TDS automatically begins transactions. Use the driver's public setter
+        # to end the metadata transaction and begin the next one in SNAPSHOT;
+        # a SET statement inside an already-open transaction is too late.
+        db.isolation_level = ISOLATION_LEVEL_SNAPSHOT
+        cur = db.cursor()
+        cur.execute("SET NOCOUNT ON; SET XACT_ABORT ON")
+        yield cur, "snapshot"
+        db.commit()
+    except ShadowError:
+        if db:
+            db.rollback()
+        raise
+    except Exception:
+        if db:
+            db.rollback()
+        raise ShadowError("shadow_snapshot_transaction_failed") from None
+    finally:
+        if db:
+            db.close()
+
+
 def migrate(connect):
     with transaction(connect, "pipmind-shadow-schema") as cur:
         for statement in DDL:

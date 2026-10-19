@@ -1757,3 +1757,217 @@ def test_repeated_owner_maintenance_keeps_original_checkpoint_and_exact_prior_re
     checkpoint = loads(after[second["checkpoint"]][1])
     assert not checkpoint["initial"] and checkpoint["previous_checkpoint"] == first["checkpoint"]
     assert mind.head()["paused"] and mind.status()["dispatches"] == 0
+
+
+def test_stream_experience_large_sql_checkpoint_clone_and_atomic_rollback(mind, tmp_path):
+    from pipmind.shadow.stream_bundle import export_experience_file, import_experience_file
+    from pipmind.stream_portability import validate_stream
+
+    # Generated payloads stay in the private SQL/container test environment.
+    with mind.transaction() as cur:
+        for i in range(36):
+            mind._insert(
+                cur,
+                metadata(
+                    f"large:{i}", "journal", MOMENT.isoformat(), mind.trader, ["mind:identity"]
+                ),
+                f"Exact retained entry {i}: " + "a" * 1000000,
+            )
+    path = tmp_path / "complete.zip"
+    before = mind.head()
+    report = export_experience_file(mind, path, MOMENT)
+    assert report["bytes"] > 33554432 and report["records"] == 39
+    assert mind.head() == before
+
+    identity = "Immutable identity\nnaïve ≠ unsafe\n"
+    destination = SqlMind(mind.connect, "stream-clone-" + uuid4().hex)
+    calls = 0
+
+    def interrupted():
+        nonlocal calls
+        calls += 1
+        if calls == 10:
+            raise RuntimeError("simulated interruption")
+
+    with pytest.raises(ShadowError):
+        import_experience_file(
+            destination, path, MOMENT, digest("new-binding"), identity, interrupt=interrupted
+        )
+    with destination.transaction() as cur:
+        for table in ("pm_minds", "pm_records", "pm_runtime", "pm_inputs", "pm_outcomes"):
+            cur.execute(f"SELECT COUNT(*) FROM {table} WHERE trader=%s", (destination.trader,))
+            assert cur.fetchone()[0] == 0
+    result = import_experience_file(destination, path, MOMENT, digest("new-binding"), identity)
+    assert result["paused"] and destination.head()["binding"] == digest("new-binding")
+    assert destination.head()["lineage"] != before["lineage"]
+    assert destination.head()["working"]["views"] == []
+    assert destination.status()["outcomes"] == destination.status()["pending"] == 0
+    with validate_stream(path) as bundle:
+        with destination.stream_retained() as (_, actual):
+            old = iter(bundle.records())
+            for index, (meta, body) in enumerate(actual):
+                if index == 39:
+                    assert meta["part"] == "working_memory"
+                    continue
+                expected_meta, expected_body = next(old)
+                if expected_meta["part"] == "working_memory":
+                    expected_meta = {**expected_meta, "part": "memory"}
+                assert (meta, body) == (expected_meta, expected_body)
+            assert next(old, None) is None
+    with pytest.raises(ShadowError, match="clone_requires_empty_destination"):
+        import_experience_file(destination, path, MOMENT, digest("new-binding"), identity)
+    assert mind.head() == before
+
+
+def test_stream_checkpoint_serializes_source_writer_without_losing_new_history(mind):
+    import threading
+
+    entered, finished = threading.Event(), threading.Event()
+    errors = []
+
+    def writer():
+        entered.set()
+        try:
+            with mind.transaction() as cur:
+                mind._insert(
+                    cur,
+                    metadata("after-checkpoint", "journal", MOMENT.isoformat(), mind.trader),
+                    "New history after the captured checkpoint",
+                )
+        except Exception as error:
+            errors.append(type(error).__name__)
+        finally:
+            finished.set()
+
+    with mind.stream_retained(snapshot=False) as (_, records):
+        worker = threading.Thread(target=writer)
+        worker.start()
+        assert entered.wait(1) and not finished.wait(0.25)
+        captured = list(records)
+        assert "after-checkpoint" not in {meta["record_id"] for meta, _ in captured}
+    worker.join(10)
+    assert finished.is_set() and not errors
+    assert "after-checkpoint" in {meta["record_id"] for meta, _ in mind.retained()[1]}
+
+
+def test_stream_corruption_during_sql_consumption_rolls_back_every_row(mind, tmp_path, monkeypatch):
+    import zipfile
+
+    from pipmind.shadow.stream_bundle import export_experience_file, import_experience_file
+
+    with mind.transaction() as cur:
+        for identifier in ("padding", "corrupt-later"):
+            mind._insert(
+                cur,
+                metadata(identifier, "journal", MOMENT.isoformat(), mind.trader),
+                "Exact retained history " * 3000,
+            )
+    path = tmp_path / "source.zip"
+    export_experience_file(mind, path, MOMENT)
+    destination = SqlMind(mind.connect, "corruption-" + uuid4().hex)
+    clone = destination.clone_stream
+
+    def corrupt(bundle, *args, **kwargs):
+        with zipfile.ZipFile(bundle.archive.fp.name) as archive:
+            item = archive.getinfo("mind/journal/" + digest("corrupt-later") + ".md")
+            offset = item.header_offset + 30 + len(item.filename.encode())
+        modified = False
+
+        def interrupt():
+            nonlocal modified
+            if not modified:
+                modified = True
+                with open(bundle.archive.fp.name, "r+b") as stream:
+                    stream.seek(offset)
+                    stream.write(b"x")
+
+        return clone(bundle, *args, interrupt=interrupt)
+
+    monkeypatch.setattr(destination, "clone_stream", corrupt)
+    with pytest.raises(ShadowError):
+        import_experience_file(
+            destination, path, MOMENT, digest("new"), "Immutable identity\nnaïve ≠ unsafe\n"
+        )
+    with destination.transaction() as cur:
+        cur.execute("SELECT COUNT(*) FROM pm_minds WHERE trader=%s", (destination.trader,))
+        assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.skipif(
+    os.environ.get("PIPMIND_SQL_LOCAL") != "true",
+    reason="database option setup is restricted to disposable local SQL",
+)
+def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind, monkeypatch):
+    import threading
+
+    from pipmind.shadow.common import encoded
+
+    name = "stream_snapshot_" + uuid4().hex
+    admin = mind.connect()
+    admin.autocommit = True
+    control = admin.cursor()
+    control.execute(f"CREATE DATABASE [{name}]")
+    try:
+        control.execute(f"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON")
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        migrate(connect)
+        source = SqlMind(connect, "snapshot-source")
+        source.initialize(
+            "Exact identity",
+            {"version": "v1", "text": "Exact playbook"},
+            MOMENT.isoformat(),
+            binding=digest("source"),
+        )
+        finished, errors = threading.Event(), []
+
+        def writer():
+            try:
+                with source.transaction() as cur:
+                    source._insert(
+                        cur,
+                        metadata("new-history", "journal", MOMENT.isoformat(), source.trader),
+                        "Committed after snapshot",
+                    )
+                    source._write_working(
+                        cur,
+                        {"views": ["New state"], "position_theses": [], "waiting_for": []},
+                        MOMENT,
+                    )
+                    cur.execute(
+                        "UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (source.trader,)
+                    )
+            except Exception as error:
+                errors.append(type(error).__name__)
+            finally:
+                finished.set()
+
+        read_head = source._head
+        worker = threading.Thread(target=writer)
+
+        def head_then_commit(cur):
+            head = read_head(cur)
+            # Commit BETWEEN checkpoint queries, not after all SELECTs ran.
+            # Statement-level RCSI would now mix the old head with new records.
+            worker.start()
+            assert finished.wait(4), "snapshot reader blocked the source writer"
+            return head
+
+        with monkeypatch.context() as patch:
+            patch.setattr(source, "_head", head_then_commit)
+            with source.stream_retained() as (head, records):
+                assert head["checkpoint_isolation"] == "snapshot" and head["revision"] == 0
+                captured = list(records)
+                assert len(captured) == 3 and not errors
+                original_working = next(
+                    body for meta, body in captured if meta["part"] == "working_memory"
+                )
+                assert original_working == encoded(head["working"])
+                assert loads(original_working)["views"] == []
+        worker.join(5)
+        assert head["checkpoint_lock_seconds"] == 0
+        assert source.head()["revision"] == 1
+        assert source.head()["working"]["views"] == ["New state"]
+        assert len(source.retained()[1]) == 4
+    finally:
+        control.execute(f"DROP DATABASE [{name}]")
+        admin.close()

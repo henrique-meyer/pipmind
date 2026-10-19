@@ -26,9 +26,11 @@ def main():
         sub.add_parser(name)
     export = sub.add_parser("export")
     export.add_argument("--output", required=True)
+    export.add_argument("--format", choices=("v2", "stream-v3"), default="v2")
     clone = sub.add_parser("clone")
     clone.add_argument("--input", required=True)
     clone.add_argument("--identity", required=True)
+    clone.add_argument("--format", choices=("v2", "stream-v3"), default="v2")
     ingest = sub.add_parser("ingest")
     ingest.add_argument("--input", required=True)
     maintenance = sub.add_parser("maintain-working")
@@ -100,8 +102,25 @@ def main():
         elif args.command in {"pause", "resume-shadow"}:
             store.set_paused(args.command == "pause")
         elif args.command == "export":
-            write_private(args.output, export_experience(store, now()))
+            if args.format == "stream-v3":
+                from pipmind.shadow.stream_bundle import export_experience_file
+
+                print(encoded(export_experience_file(store, args.output)))
+            else:
+                write_private(args.output, export_experience(store, now()))
         elif args.command == "clone":
+            if args.format == "stream-v3":
+                from pipmind.shadow.stream_bundle import import_experience_file
+
+                report = import_experience_file(
+                    store,
+                    args.input,
+                    now(),
+                    digest(os.environ["PIPMIND_SHADOW_BINDING_REF"]),
+                    read_private(args.identity, 32768).decode("utf-8"),
+                )
+                print(encoded(report))
+                return
             report = import_experience(
                 store,
                 read_private(args.input, 33554432),
