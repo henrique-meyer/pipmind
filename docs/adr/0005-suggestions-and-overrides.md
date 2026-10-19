@@ -19,6 +19,8 @@ Two owner channels enter the core. They do not share a queue.
 
 The kill switch and pause are overrides. So is an instruction to flatten. They are reachable remotely, including when the model is busy or the session is unhealthy.
 
+[ADR 0006](0006-owner-chat-channel.md) adds private owner chat for questions, suggestions and explicitly confirmed direct Markdown edits. It preserves the suggestion/override semantics above and all autonomous nightly/trading/experience/market learning. Confirmation belongs only to the direct chat-edit operation, not to independently learned rules or the nightly review.
+
 The outer hard boundary still applies to size and daily loss. An override cannot enlarge that boundary. Moving the boundary is a separate, explicit configuration change by the owner, recorded the same way as an override so the public record shows who moved it. The model cannot move it, and a suggestion cannot move it.
 
 ## Consequences

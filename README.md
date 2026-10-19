@@ -12,6 +12,10 @@ The model is the trader. Deterministic code does not encode a strategy. The mode
 
 It is also one continuous trader, not a fresh prompt on every tick. A persistent mind holds its identity, a playbook of rules it wrote itself, its current views, and a journal. A nightly review adds, sharpens or retires those rules, and the diff is public.
 
+A reusable [blank trader template](templates/blank/README.md) starts with standing constraints and no inherited strategy or experience. The design includes [private owner chat](docs/architecture.md#private-owner-chat-and-confirmed-edits) for questions, suggestions and confirmed direct Markdown edits. Chat is an additional influence; nightly review and all other learning from trades, experience and market events remain autonomous under their existing rules. The UI and durable chat-edit enforcement remain planned; starter files work with existing paused SQL initialization.
+
+The [robot-save design](docs/architecture.md#compact-robot-saves-and-restore) adds automatic saves before learned-policy changes, named owner saves and confirmed restore of compact rules/guides. [Robot and account are separate](docs/architecture.md#robot-and-account-separation): the owner can replace the assigned robot even with positions open, through a safe handover. Saves/restores do not copy or rewind account trades, positions, balances or risk state. Compact saves and assignment controls remain planned, distinct from the existing full-experience export below.
+
 The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. M4 implements consistent SQL-backed experience export and paused atomic clone import; original-trader operational recovery remains M5 work.
 
 Losses stay on the page next to the reasoning that produced them. The project makes no claim about returns.

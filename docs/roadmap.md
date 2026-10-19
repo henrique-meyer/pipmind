@@ -68,9 +68,17 @@ Done when a trading day of live events produces a journal and zero broker orders
 
 M4 also maintains bounded current state with audited before/after dispositions and retrieval of historical detail; unresolved conditions and confirmed theses must survive consolidation. Bounds/transition failures hold the pending input and pause reasoning. Playbook self-revision stays in M7.
 
+PIP-16 supplies a [blank starter](../templates/blank/README.md) compatible with existing paused initialization and the [private owner chat design](architecture.md#private-owner-chat-and-confirmed-edits). Future owner-interface work adds separate blank/clone/recovery onboarding, evidence-grounded explanations, suggestions and confirmed direct chat edits. It does not reset the hosted trader, close PIP-14 qualification or change autonomous nightly/market/experience learning. The UI and durable chat-edit path remain planned.
+
+Also define the [compact robot-save profile](architecture.md#compact-robot-saves-and-restore), separate from full experience/recovery and account history, with named manual saves, compatible imports, exact rules/guide round trips and confirmed restore as a new version. Robot identity/training/lessons and account data/authority are distinct. These planned controls do not reinterpret existing runtime bundles or certify M4 qualification.
+
 ## M5 — Safety and reconciliation
 
 Outer hard boundary with real numbers in configuration, daily-loss stop fed by `AccountSnapshot`, single-instance lease, remote kill switch, suggestion channel and override channel.
+
+Owner-chat controls add version-bound exact-diff confirmation only for edits made through chat. Verify atomic apply/audit, stale/expired/replayed/concurrent request refusal, interruption rollback, immutable-boundary checks and clone/recovery separation through actual SQL paths. Grounded questions/suggestion discussion remain distinct from direct edits. Test that an autonomous revision invalidates a conflicting pending chat diff and that pending/rejected chat edits never block or silently execute through existing nightly review/learning. M7's autonomous self-review contract remains unchanged.
+
+Implement explicit robot/account/assignment identities and owner-confirmed replacement even with open positions. Fence the old runtime, reconcile pending/ambiguous execution, supply the new robot with current information/obligations and atomically change assignment; preserve account protections, historical robot attribution and one active owner. Restore robot text through a versioned pre-restore save without rewinding account/market/operational state or automatically resuming. Test failure, stale outputs, concurrent review/saves and incompatible position obligations through SQL; validate actual demo handover/no duplicate execution at M6. Autosave precedes any durable robot-policy change, including owner edits/restores, without gating autonomous learning on human consent.
 
 Reconciliation takes positions and balances from gateway snapshots. A mismatch halts new risk.
 
@@ -87,6 +95,8 @@ Done when a scripted round-trip is flat at the end and the core's position match
 ## M7 — Self-review
 
 The nightly review can add a rule, sharpen one, or retire one. Retirement requires repeated evidence. Playbook versions are stored, and a public diff document is produced. Override-tagged rows do not count as evidence.
+
+Before writing a changed robot policy, atomically preserve a durable pre-review compact robot save. No owner confirmation is required for autosave or the autonomous review. Test exact pre-change content, save failure without policy mutation and compatible manual restore as a new version; review/evidence/override semantics remain unchanged. Account history, positions and risk state never enter or rewind with that robot save.
 
 Done when a fixture journal shows an add, a sharpen, and a refused retirement that cited only one outcome. Activate the M1 self-review cases against the implementation, including valid repeated-evidence retirement, override exclusion and evidence grounding. Verify clone/recovery round trips preserve current/retired rule versions, review and suggestion history, evidence references and override exclusions; subsequent reviews continue monotonic versions.
 

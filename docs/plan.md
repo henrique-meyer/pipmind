@@ -2,6 +2,29 @@
 
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
+## PIP-16 — Blank robot, additive owner chat and robot saves
+
+- Story: [PIP-16](https://nitro.atlassian.net/browse/PIP-16)
+- Status: Starter and design complete; private chat, compact save/restore and assignment enforcement remain planned
+- Scope: reusable strategy-neutral Markdown starter and design for private owner chat, recorded-decision explanations, suggestions, confirmed direct chat edits and versioned compact mind saves/restores. SQL remains runtime/audit authority.
+- Acceptance: a paused new trader starts without invented experience or strategy. Chat questions do not mutate state; suggestions use existing learning semantics. Only direct owner-chat edits require exact-diff confirmation. Nightly review and every other autonomous learning/evolution path remain unchanged, including learning from trades, experience and market events; they are never gated by the chat approval queue.
+- Robot-save acceptance: robot identity/rules/guides/distilled lessons are separate from account orders/fills/trade history/positions/balances/risk state. Automatically save the committed robot before nightly policy changes, without owner confirmation; allow named owner saves at any time. Define an account-independent compact `.pipmind` profile separately from full experience/recovery. Explicit restore keeps a pre-restore save and creates a new version; account/market/operational state is neither included nor rewound, and orders cannot replay or silently resume. Implement coherent snapshot/base validation and failure handling before claiming support.
+- Assignment acceptance: the owner may replace an account's robot even with open positions, through a confirmed single-owner handover. Preserve current positions/protections and historical robot attribution, fence stale outputs, resolve in-flight orders and validate the replacement against current obligations. Loading a robot save does not itself grant account authority. Failed handover leaves one verified assignment or paused state, never two active robots.
+- Delivery boundary: this story delivers starter files and design. Private chat UI, durable chat-edit enforcement, compact save/restore, autosave and account-assignment controls are subsequent milestone work; existing shadow deployment, current PIP-14 qualification, credentials, cloud resources and trading permissions are unchanged.
+- Validation: reviewed the existing SQL initializer/CLI for exact UTF-8 input, fresh empty state and paused initialization; both starter files fit its 32-KiB input bound. Checked local Markdown links/anchors, fence balance, diff whitespace, LF attributes and Gitleaks. The learning-loop section and ADR 0001 exactly match the baseline; original M7 learning/evidence requirements remain intact with pre-change autosave added. ADR 0004 preserves autonomous review and adds the separate owner-edit/save workflow. Required PR CI covers existing offline/SQL/replay/container/infrastructure checks. No paid model/provider calls, new runtime control or hosted initialization are claimed.
+
+### Owner conversation delivery requirements
+
+| Stage | Planned implementation and acceptance |
+| --- | --- |
+| Owner experience following M4 prerequisites | Private authorized chat and separate blank/clone/recovery onboarding; original-record explanations with dated evidence/policy, missing/ambiguous-ID handling, observation/proposal/refusal/fill distinctions and suggestion replies without policy mutation. Reuse existing SQL and model opt-in; preserve hosted qualification work and current deployment. |
+| Owner chat controls alongside M5 | Durable version-bound direct chat edits and exact-diff confirmation; atomic apply/audit, rejection/expiry/conflict/replay/concurrency/failure checks. Autonomous revision invalidates a stale chat diff but is never blocked by pending consent. Clone/recovery retains provenance without copying pending confirmation authority. |
+| M7 — Review remains autonomous | Existing add/trial/sharpen/retire learning semantics, evidence requirements and override exclusions remain unchanged. Verify chat cannot silently execute pending patches through review, and pending/rejected chat edits cannot block independent self-review or other learning. |
+
+Add the compact robot-save profile and named save/list/compare/download workflow as owner-experience work, explicitly versioned apart from current full experience/recovery. M5 implements the separate robot/account/assignment migration, coherent snapshots, confirmed restore with undo and safe replacement on accounts with open positions; M6 validates demo handover and zero duplicate execution. M7 automatically saves the committed robot before review changes without human confirmation. Test save failure/no mutation, concurrent save/review version choice, exact compact content, restored-as-new lineage, account-state exclusion, retained protections and historical robot attribution. No current compact-save, assignment or restore runtime is claimed here.
+
+Confirmation applies only to the direct owner-chat edit operation. All other learning/evolution from trades, experience and market events remains autonomous under existing rules, even when independently considering an idea first discussed in chat. A pending/rejected chat patch is not an executable review command. Private chat/model usage needs measurement and opt-in rather than an assumed free allowance. UI hosting/public-route changes, new inference spend or resources require their own approved delivery scope. PIP-16 does not deploy a UI, enable calls, activate a new policy or change the current trader.
+
 ## PIP-15 — Compact model context and hosted token measurement
 
 - Story: [PIP-15](https://nitro.atlassian.net/browse/PIP-15)
