@@ -248,7 +248,13 @@ class SqlMind:
             )
             self._evidence(cur, refs, moment)
             identifier = self._working_checkpoint(
-                cur, head, plan["working_memory"], plan["dispositions"], moment, refs, initial=True
+                cur,
+                head,
+                plan["working_memory"],
+                plan["dispositions"],
+                moment,
+                refs,
+                initial=self._runtime(cur, "memory_policy") is None,
             )
             cur.execute("UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (self.trader,))
             return {"checkpoint": identifier, "paused": True, "dispatches": 0}

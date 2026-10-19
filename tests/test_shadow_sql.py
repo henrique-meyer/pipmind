@@ -1717,3 +1717,43 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(mind, fa
         for meta, body in mind.retained()[1]
         if meta["part"] == "memory" and '"working-memory-transition"' in body
     ]
+
+
+def test_repeated_owner_maintenance_keeps_original_checkpoint_and_exact_prior_records(mind):
+    from pipmind.shadow.maintenance import entries, working_digest
+
+    _, first = activate_bounded(mind)
+    original_policy = mind.runtime("memory_policy")
+    original_records = mind.retained()[1]
+    head = mind.head()
+    second = mind.maintain_working(
+        {
+            "revision": head["revision"],
+            "before_sha256": working_digest(head["working"]),
+            "working_memory": head["working"],
+            "dispositions": [
+                {
+                    "from": key,
+                    "to": key,
+                    "disposition": "retained",
+                    "reason": "Preserve every current dependency",
+                    "evidence_ids": [first["checkpoint"]],
+                }
+                for key in entries(head["working"])
+            ],
+            "review": "no-unresolved-ambiguity",
+        },
+        MOMENT + timedelta(seconds=1),
+    )
+    policy = mind.runtime("memory_policy")
+    assert policy["origin_checkpoint"] == original_policy["origin_checkpoint"]
+    assert policy["checkpoint"] == second["checkpoint"] != first["checkpoint"]
+    after = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
+    assert all(
+        after[meta["record_id"]] == (meta, body)
+        for meta, body in original_records
+        if meta["part"] != "working_memory"
+    )
+    checkpoint = loads(after[second["checkpoint"]][1])
+    assert not checkpoint["initial"] and checkpoint["previous_checkpoint"] == first["checkpoint"]
+    assert mind.head()["paused"] and mind.status()["dispatches"] == 0

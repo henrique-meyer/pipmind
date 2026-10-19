@@ -70,6 +70,12 @@ REPAIR_INSTRUCTIONS = (
     " condition. Any already resolved BEFORE condition must retain its exact original"
     " disposition/evidence. Use only supplied evidence IDs. No tools or new facts."
     " Preserve the immutable trading decision; your response cannot edit it."
+    " Make a genuine consolidation, not a rewrite of the same long list. Aim for"
+    " no more than six views and six waits, usually under 200 bytes each, while"
+    " preserving all distinct meaning. Use one current-state as-of date rather"
+    " than repeating today's date in every entry; retain each source's actual"
+    " publication dates, numbers and verification distinctions. Shared missing-"
+    " evidence qualifications may be stated once with explicit named scope."
 )
 
 
