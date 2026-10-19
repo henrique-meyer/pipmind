@@ -177,6 +177,145 @@ def test_restart_persistence_and_exactly_once_consumption(mind):
     assert reopened.status()["dispatches"] == 0
 
 
+@pytest.mark.parametrize("analysis", [False, True])
+def test_quiet_and_analysis_inputs_do_not_read_the_archive(mind, monkeypatch, analysis):
+    if analysis:
+        cases = [
+            loads(line)
+            for line in (ROOT / "evals/fixtures/starter-v1.jsonl").read_text().splitlines()
+        ]
+        event = next(
+            deepcopy(event)
+            for case in cases
+            for event in case["events"]
+            if event["kind"] == "NewsEvent" and event["payload"]["kind"] == "analysis"
+        )
+        mind.accept("analysis", [{"sequence": 1, "event": event}], MOMENT)
+        mind.set_paused(False)
+    else:
+        events, _ = episode(mind)
+        event = events[0]
+
+    def unavailable_archive(*args):
+        pytest.fail("quiet/analysis input attempted archive retrieval")
+
+    monkeypatch.setattr(mind, "_context_evidence", unavailable_archive)
+
+    class Quiet:
+        async def triage(self, incoming, context, store, moment):
+            assert incoming == event
+            assert context["identity"] == "Immutable identity\nnaïve ≠ unsafe\n"
+            assert context["playbook"]["version"] == "v1"
+            assert context["working_memory"] == mind.head()["working"]
+            assert not context["recent_journal"] and not context["retrieved_memories"]
+            return {"wake": analysis, "summary": "Retain without a decision"}, {
+                "phase": "triage",
+                "synthetic": True,
+            }
+
+        async def decide(self, *args):
+            pytest.fail("quiet/analysis input requested a decision")
+
+    assert asyncio.run(ShadowEngine(mind, Quiet(), clock=lambda: MOMENT).step())
+    outcome = mind.outcome(event["message_id"])
+    assert outcome["status"] == ("analysis_retained" if analysis else "observed")
+    assert len(outcome["usage"]) == 1 and outcome["dispatches"] == 0
+
+
+def test_decision_loads_same_revision_evidence_after_triage(mind):
+    from pipmind.shadow.common import encoded
+
+    events, model = episode(mind)
+    event = events[0]
+    old = "2026-09-15T00:00:00Z"
+    with mind.transaction() as cur:
+        mind._insert(
+            cur, metadata("older-source", "memory", old, mind.trader), "USD inflation rose"
+        )
+        mind._insert(
+            cur, metadata("contrary-source", "memory", old, mind.trader), "USD inflation fell"
+        )
+        cur.execute(
+            "UPDATE pm_minds SET working=%s WHERE trader=%s",
+            (
+                encoded(
+                    {
+                        "views": ["USD inflation unresolved"],
+                        "waiting_for": ["Contrary inflation evidence"],
+                        "position_theses": [],
+                    }
+                ),
+                mind.trader,
+            ),
+        )
+    model.responses[event["message_id"]]["triage"]["wake"] = True
+    before = mind.retained()
+
+    class Inspect(FixtureModel):
+        async def triage(self, incoming, context, store, moment):
+            assert context["retrieved_memories"] == context["recent_journal"] == []
+            self.revision = context["revision"]
+            return await super().triage(incoming, context, store, moment)
+
+        async def decide(self, incoming, context, triage, store, moment):
+            assert context["revision"] == self.revision
+            assert {"older-source", "contrary-source"} <= {
+                row["metadata"]["record_id"] for row in context["retrieved_memories"]
+            }
+            expected = mind.context(moment, "USD inflation", revision=self.revision)
+            assert context["working_memory"] == expected["working_memory"]
+            return await super().decide(incoming, context, triage, store, moment)
+
+    assert asyncio.run(ShadowEngine(mind, Inspect(model.responses), clock=lambda: MOMENT).step())
+    outcome = mind.outcome(event["message_id"])
+    assert len(outcome["usage"]) == 2
+    assert all(row in mind.retained()[1] for row in before[1] if row[0]["part"] != "working_memory")
+
+
+@pytest.mark.parametrize("failure", ["pause", "revision", "store_busy"])
+def test_evidence_failure_keeps_input_pending_and_does_not_call_decision(
+    mind, monkeypatch, failure
+):
+    events, model = episode(mind)
+    event = events[0]
+    known_usage = {"phase": "triage", "input_tokens": 123, "output_tokens": 12}
+    captured = {}
+    original = mind.context
+
+    class Interrupted(FixtureModel):
+        async def triage(self, *args):
+            if failure == "pause":
+                mind.set_paused(True)
+            elif failure == "revision":
+                mind.set_paused(True)
+                mind.set_paused(False)
+            return {"wake": True, "summary": "Relevant"}, known_usage
+
+        async def decide(self, *args):
+            pytest.fail("decision used stale or unavailable evidence")
+
+    def context(*args, **kwargs):
+        if failure == "store_busy" and kwargs.get("revision") is not None:
+            raise ShadowError("shadow_store_busy")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mind, "context", context)
+    engine = ShadowEngine(
+        mind,
+        Interrupted(model.responses),
+        clock=lambda: MOMENT,
+        observer=lambda phase, facts: captured.update(facts) if phase == "ready" else None,
+    )
+    with pytest.raises(
+        ShadowError,
+        match="shadow_store_busy" if failure == "store_busy" else "shadow_revision_changed",
+    ):
+        asyncio.run(engine.step())
+    assert mind.pending() == event and mind.outcome(event["message_id"]) is None
+    assert captured["result"]["usage"] == [known_usage]
+    assert captured["result"]["triage"]["wake"]
+
+
 def test_conflicting_or_future_page_rolls_back_cursor_and_all_inputs(mind):
     event = deepcopy(CASE["events"][0])
     altered = deepcopy(event)

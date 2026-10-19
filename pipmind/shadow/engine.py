@@ -29,7 +29,9 @@ class ShadowEngine:
         self.observer("context", {"event": event})
         reconsideration = self.store.reconsideration(event)
         query = event_query(reconsideration["original_input"] if reconsideration else event)
-        context = self.store.context(moment, query)
+        # Triage consumes only the current mind/facts. Defer SQL archive reads
+        # until a decision needs them, keeping quiet inputs off the expensive path.
+        context = self.store.context(moment, query, history=False)
         if reconsideration:
             context["reconsideration"] = reconsideration
         result = {
@@ -76,6 +78,7 @@ class ShadowEngine:
                 self.store.commit(event, context["revision"], result, moment)
                 self.observer("committed", {})
                 return True
+        loading_evidence = False
         try:
             result["context"] = deepcopy(context)
             if context.get("memory_policy"):
@@ -94,6 +97,13 @@ class ShadowEngine:
                 effective["kind"] == "NewsEvent" and effective["payload"]["kind"] == "analysis"
             )
             if triage["wake"] and not analysis:
+                self.observer("evidence", {"event": event})
+                loading_evidence = True
+                evidence = self.store.context(moment, query, revision=context["revision"])
+                loading_evidence = False
+                for key in ("recent_journal", "retrieved_memories"):
+                    context[key] = evidence[key]
+                result["context"] = deepcopy(context)
                 result["usage"].append(
                     {"phase": "decision", "attempted": True, "usage_unknown": True}
                 )
@@ -127,6 +137,10 @@ class ShadowEngine:
                 result["reply"] = reply
             result["status"] = "analysis_retained" if analysis else "observed"
         except (ShadowError, ContractError, KeyError) as error:
+            if loading_evidence:
+                # A database/revision failure is an operational hold. Preserve
+                # the pending input and known triage usage for worker recovery.
+                raise
             if isinstance(error, ModelFailure):
                 result["usage"][-1] = error.trace
             code = (
