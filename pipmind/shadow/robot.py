@@ -5,6 +5,7 @@ import re
 import zipfile
 import zlib
 from copy import deepcopy
+from functools import lru_cache
 from uuid import uuid4
 
 from pipmind.contracts import ROOT, ContractError, Contracts, loads
@@ -15,9 +16,14 @@ MAX_CONTENT = 131072
 COMPATIBILITY = "pipmind-robot-v1"
 
 
+@lru_cache(maxsize=1)
+def _contracts():
+    return Contracts()
+
+
 def validate_content(content):
     try:
-        Contracts().validate("robot-content", content)
+        _contracts().validate("robot-content", content)
         if len(encoded(content).encode()) > MAX_CONTENT:
             raise ValueError
         for key in ("identity", "playbook", "guides", "lessons"):
@@ -60,7 +66,7 @@ def export_robot(content, source=None):
         "source": source,
         "files": {path: {"sha256": digest(raw), "bytes": len(raw)} for path, raw in files.items()},
     }
-    Contracts().validate("robot-save-manifest", manifest)
+    _contracts().validate("robot-save-manifest", manifest)
     result = io.BytesIO()
     with zipfile.ZipFile(result, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", encoded(manifest))
@@ -100,7 +106,7 @@ def import_robot(raw, *, with_manifest=False):
                 if len(files[entry.filename]) != entry.file_size:
                     raise ValueError
         manifest = loads(files.pop("manifest.json"))
-        Contracts().validate("robot-save-manifest", manifest)
+        _contracts().validate("robot-save-manifest", manifest)
         if (
             set(manifest)
             != {

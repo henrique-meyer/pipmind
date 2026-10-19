@@ -411,8 +411,44 @@ def test_private_owner_api_complete_workflow_and_auth(mind):
         assert response.status_code == 200 and response.json()["paused"]
         current = client.get("/robots", headers=headers).json()
         assert current["active"]["auto_learn"] is False
+        resume = {"paused": False, "confirm": True, "revision": current["active"]["revision"] - 1}
+        assert client.post("/robots/pause", json=resume, headers=headers).status_code == 409
+        resume["revision"] = current["active"]["revision"]
+        assert client.post("/robots/pause", json=resume, headers=headers).status_code == 200
+        assert mind.head()["paused"] is False
+        assert (
+            client.post(
+                "/robots/pause", json={**resume, "paused": True}, headers=headers
+            ).status_code
+            == 200
+        )
         assert next(row for row in current["saves"] if row["id"] == saved)["favorite"]
         assert (
             client.post("/robots/import", content=b"x" * 524289, headers=headers).status_code == 413
         )
         assert client.post("/robots/save", json={"content": {}}, headers=headers).status_code == 422
+
+
+def test_policy_change_preserves_cited_record_time_and_complete_experience_export(mind):
+    library = RobotLibrary(mind)
+    with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("cited-policy", "journal", stamp(MOMENT), mind.trader, ["mind:playbook"]),
+            "Decision cited the original playbook",
+        )
+    content = {
+        **library.status()["active"]["content"],
+        "playbook": "New playbook",
+        "guides": "Guide",
+    }
+    later = MOMENT + timedelta(hours=1)
+    library.commit_learning(library.learning_ticket(), content, ["cited-policy"], later)
+    # The experience validator rejects evidence dated after its citing record.
+    raw = export_experience(mind, later)
+    clone = SqlMind(mind.connect, "clone-citations-" + uuid4().hex)
+    import_experience(clone, raw, later, digest("clone-binding"), "Standing mandate")
+    records = {meta["record_id"]: (meta, body) for meta, body in clone.retained()[1]}
+    assert records["mind:playbook"][1] == "Initial playbook"
+    assert records["mind:playbook"][0]["ts"] == stamp(MOMENT - timedelta(days=1))
+    assert RobotLibrary(clone).status()["active"]["content"] == content

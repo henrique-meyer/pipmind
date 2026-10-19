@@ -19,7 +19,7 @@
     try { await task(); if (success) message(success); }
     catch (error) { message(`Could not complete: ${error.message}. Refresh a stale preview before confirming.`); }
   }
-  function closePreview() { preview = null; $("preview").hidden = true; $("diff").textContent = ""; }
+  function closePreview() { preview = null; $("preview").hidden = true; $("diff").textContent = ""; $("confirm-resume").hidden = true; }
   async function refresh() {
     state = await (await api("/robots", undefined, "GET")).json();
     const active = state.active;
@@ -78,8 +78,11 @@
   $("cancel").addEventListener("click", closePreview);
   $("retention").addEventListener("submit", event => { event.preventDefault(); action(async () => { await api("/robots/retention", {days: Number($("days").value), count: Number($("count").value)}); await refresh(); }, "Autosave limits saved."); });
   $("cleanup").addEventListener("click", () => action(async () => { const result = await (await api("/robots/cleanup")).json(); await refresh(); message(`${result.removed.length} unprotected autosaves expired.`); }));
-  for (const [id, paused] of [["pause", true], ["resume", false]]) $(id).addEventListener("click", () => action(async () => {
-    if (!paused && !window.confirm("Resume shadow reasoning with the current robot? No orders can be sent.")) return;
-    await api("/robots/pause", {paused, confirm: true}); closePreview(); await refresh();
+  $("resume").addEventListener("click", () => {
+    $("confirm-resume").hidden = false;
+    message("Resume shadow reasoning with the displayed robot version? No orders can be sent. Confirm to continue.");
+  });
+  for (const [id, paused] of [["pause", true], ["confirm-resume", false]]) $(id).addEventListener("click", () => action(async () => {
+    await api("/robots/pause", {paused, confirm: true, revision: state.active.revision}); closePreview(); await refresh();
   }, paused ? "Shadow paused." : "Shadow reasoning resumed."));
 })();

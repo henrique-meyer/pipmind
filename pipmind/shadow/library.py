@@ -380,25 +380,35 @@ class RobotLibrary:
             }
 
     def _apply(self, cur, state, moment):
+        from pipmind.shadow.store import metadata
+
         version = "robot-" + str(state["version"]) + "-" + state["sha256"][:16]
-        # Existing five-part exports keep the actual active identity/playbook.
+        # Preserve cited IDs/timestamps/bodies as history before adding a current
+        # policy record. Moving a cited timestamp would break older evidence.
         for part in ("identity", "playbook"):
             cur.execute(
-                "SELECT meta FROM pm_records WHERE trader=%s AND part=%s", (self.trader, part)
+                "SELECT id,meta,body FROM pm_records WHERE trader=%s AND part=%s",
+                (self.trader, part),
             )
-            meta = loads(cur.fetchone()[0])
-            meta["ts"] = stamp(moment)
-            if part == "playbook":
-                meta["playbook_version"] = version
+            identifier, raw_meta, body = cur.fetchone()
+            if part == "identity" and body == state["content"][part]:
+                continue
+            meta = loads(raw_meta)
+            meta["part"] = "playbook_history"
             cur.execute(
-                "UPDATE pm_records SET body=%s,meta=%s,ts=%s WHERE trader=%s AND part=%s",
-                (
-                    state["content"][part],
-                    encoded(meta),
-                    moment.replace(tzinfo=None),
-                    self.trader,
+                "UPDATE pm_records SET part='playbook_history',meta=%s WHERE trader=%s AND id=%s",
+                (encoded(meta), self.trader, identifier),
+            )
+            self.mind._insert(
+                cur,
+                metadata(
+                    "robot:" + str(uuid4()),
                     part,
+                    stamp(moment),
+                    self.trader,
+                    version=version if part == "playbook" else None,
                 ),
+                state["content"][part],
             )
         self._write(cur, state)
         cur.execute(

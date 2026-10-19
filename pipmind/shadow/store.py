@@ -142,11 +142,13 @@ class SqlMind:
                     raise ShadowError("future_initial_record")
                 self._insert(cur, meta, body)
 
-    def set_paused(self, paused):
+    def set_paused(self, paused, *, expected_revision=None):
         if type(paused) is not bool:
             raise ShadowError("invalid_pause")
         with self.transaction() as cur:
-            self._head(cur)
+            head = self._head(cur)
+            if expected_revision is not None and head["revision"] != expected_revision:
+                raise ShadowError("robot_confirmation_stale")
             cur.execute(
                 "UPDATE pm_minds SET paused=%s,revision=revision+1 WHERE trader=%s",
                 (paused, self.trader),

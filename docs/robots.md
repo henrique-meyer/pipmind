@@ -7,6 +7,10 @@ Live-account handover/reconciliation remains M5/M6; nightly autonomous review an
 its evidence grading remain M7. There is no order transport or conversational
 owner-chat editor in this interface.
 
+The source prompt version is `shadow-context-v9`; existing v1–v8 experience
+bundles remain supported. Active guides/lessons join both phase projections
+without clipping, and application constraints remain above imported strategy text.
+
 ## Owner workspace
 
 After the explicit SQL migration, use the shadow service's `/owner` page over

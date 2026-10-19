@@ -123,8 +123,14 @@ def install(app, store):
 
     @app.post("/robots/pause")
     async def pause(request: Request):
-        body = await fields(request, ("paused", "confirm"))
+        body = await fields(request, ("paused", "confirm", "revision"))
         if type(body["paused"]) is not bool or body["confirm"] is not True:
             raise ShadowError("robot_confirmation_required")
-        await asyncio.to_thread(store.set_paused, body["paused"])
+        if type(body["revision"]) is not int:
+            raise ShadowError("robot_confirmation_required")
+        await asyncio.to_thread(
+            store.set_paused,
+            body["paused"],
+            expected_revision=None if body["paused"] else body["revision"],
+        )
         return {"paused": body["paused"], "mode": "shadow", "dispatches": 0}
