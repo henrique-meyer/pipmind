@@ -362,7 +362,7 @@ def test_semantic_refusal_retains_candidate_and_known_usage_without_authority(mi
     result = mind.outcome(events[0]["message_id"])
     assert result["status"] == "model_refused" and result["reply"] is None
     assert result["model_reply"] == candidate and result["usage"][-1] == usage
-    assert "decision" not in result and result["dispatches"] == 0
+    assert result.get("decision") is None and result["dispatches"] == 0
     assert mind.head()["working"] == before
 
 

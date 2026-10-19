@@ -118,7 +118,6 @@ class ShadowEngine:
                 # Journal a validated refusal, retaining the original input. No
                 # invalid memory is committed, and no fabricated hold is invented.
                 result.update(status="model_refused", reply=None, error=str(error))
-                result.pop("decision", None)
                 self.store.commit(event, context["revision"], result, moment)
             else:
                 raise
