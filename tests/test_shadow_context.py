@@ -82,6 +82,73 @@ def test_phase_views_keep_continuing_state_without_resending_history_to_triage()
     assert decision["recent_journal"] == []  # Same evidence only once.
 
 
+@pytest.mark.parametrize("phase", ["triage", "decision"])
+def test_expanded_feed_facts_fit_context_without_losing_types_values_or_series(phase):
+    source = context()
+    quality = {
+        "point_in_time_safe": False,
+        "source_monitoring_complete": False,
+        "source_freshness": "monitoring_unknown",
+        "known_source_gap": False,
+        "is_fallback": False,
+        "is_proxy": False,
+        "is_derived": False,
+        "is_official": True,
+        "has_assumed_release_times": False,
+        "unknown_publication_time_count": 0,
+        "unverified_vintage_count": 1,
+        "requested_window_has_data": True,
+        "publication_time_status": "unverified",
+        "publication_time_precision": "minute",
+        "page_includes_latest_available": True,
+        "quality_scope": "full_result",
+        "row_count": 1,
+        "stale_after_days": 95,
+        "bounded_release_time_count": 0,
+        "missing_announcement_datetime_count": 0,
+    }
+    coverage = {
+        f"CUR:indicator{i}": {
+            "complete_history_proven": False,
+            "status": "retained_window_captured",
+            "checked_at": f"2026-10-18T00:00:{i:02}Z",
+            "quality": {
+                **quality,
+                "source_name": f"Synthetic publisher {i}",
+                "latest_available_date": "2026-09-30",
+            },
+        }
+        for i in range(33)
+    }
+    # Values equal under Python's loose equality must remain distinct JSON facts.
+    coverage["CUR:indicator0"]["quality"]["unknown_publication_time_count"] = False
+    coverage["CUR:indicator1"]["quality"]["known_source_gap"] = True
+    coverage["CUR:indicator2"]["quality"]["source_name"] = "naïve ≠ unsafe"
+    source["feed_status"]["coverage"] = coverage
+    saved = deepcopy(source)
+    assert len(encoded(coverage).encode()) > 16000
+    projected = phase_context(source, phase)
+    packed = projected["feed_status"]["coverage"]
+    assert packed["encoding"] == "coverage-table-v1"
+
+    def overlay(base, delta):
+        for index, value in delta.items():
+            path = packed["columns"][int(index)]
+            target = base
+            for key in path[:-1]:
+                target = target.setdefault(key, {})
+            target[path[-1]] = deepcopy(value)
+        return base
+
+    restored = {
+        k: overlay(deepcopy(packed["defaults"]), delta) for k, delta in packed["series"].items()
+    }
+    assert encoded(restored) == encoded(coverage) and source == saved
+    assert projected["working_memory"] == source["working_memory"]
+    assert projected["broker_snapshots"] == source["broker_snapshots"]
+    assert len(encoded(projected).encode()) < (16000 if phase == "triage" else 28000)
+
+
 def test_long_article_selects_a_relevant_passage_beyond_the_leading_excerpt():
     article = (
         "Unrelated opening paragraphs. " * 300

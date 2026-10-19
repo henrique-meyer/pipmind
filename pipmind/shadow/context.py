@@ -6,13 +6,68 @@ from copy import deepcopy
 from pipmind.contracts import ContractError, loads
 from pipmind.shadow.common import ShadowError, encoded
 
-CONTEXT_VERSION = "selected-evidence-v1"
+CONTEXT_VERSION = "selected-evidence-v2"
 STOP = frozenset(
     (
         "a an and are as at be by for from has have in is it of on or "
         "that the this to was were with"
     ).split()
 )
+
+
+def factor_coverage(coverage):
+    """Lossless defaults and indexed field paths for repeated per-series facts."""
+    if (
+        not isinstance(coverage, dict)
+        or not coverage
+        or not all(isinstance(row, dict) for row in coverage.values())
+    ):
+        return coverage
+
+    def factor(rows):
+        shared = {}
+        for key in sorted(set.intersection(*(set(row) for row in rows))):
+            values = [row[key] for row in rows]
+            if all(encoded(value) == encoded(values[0]) for value in values[1:]):
+                shared[key] = values[0]
+                for row in rows:
+                    row.pop(key)
+            elif all(isinstance(value, dict) for value in values):
+                defaults = factor(values)
+                if defaults:
+                    shared[key] = defaults
+                    for row in rows:
+                        if not row[key]:
+                            row.pop(key)
+        return shared
+
+    series = deepcopy(coverage)
+    defaults = factor(list(series.values()))
+
+    def leaves(value, path=()):
+        for key, child in value.items():
+            if isinstance(child, dict) and child:
+                yield from leaves(child, (*path, key))
+            else:
+                yield (*path, key), child
+
+    flattened = {key: dict(leaves(row)) for key, row in series.items()}
+    columns = sorted({path for row in flattened.values() for path in row})
+    indexes = {path: str(i) for i, path in enumerate(columns)}
+    candidate = {
+        "encoding": "coverage-table-v1",
+        "defaults": defaults,
+        "columns": [list(path) for path in columns],
+        "series": {
+            key: {indexes[path]: value for path, value in row.items()}
+            for key, row in flattened.items()
+        },
+    }
+    return (
+        candidate
+        if len(encoded(candidate).encode()) < len(encoded(coverage).encode())
+        else coverage
+    )
 
 
 def query_terms(text):
@@ -142,6 +197,8 @@ def phase_context(context, phase):
         "price_aggregate",
     )
     view = {key: deepcopy(context[key]) for key in keys if key in context}
+    if isinstance(view.get("feed_status"), dict) and "coverage" in view["feed_status"]:
+        view["feed_status"]["coverage"] = factor_coverage(view["feed_status"]["coverage"])
     view["context_version"] = CONTEXT_VERSION
     view["coverage"] = {
         "history": "retained in SQL; selected evidence is not exhaustive",

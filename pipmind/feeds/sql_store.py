@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pipmind.contracts import event_facts, loads, stamp, validate_event
 from pipmind.feeds.common import FeedError, identity
-from pipmind.feeds.store import KINDS, contracts, encoded
+from pipmind.feeds.store import KINDS, contracts, encoded, merge_state
 from pipmind.shadow.common import ShadowError
 from pipmind.shadow.sql import connector, transaction
 
@@ -76,8 +76,8 @@ class SqlFeedStore:
                 yield cur
         except ShadowError as error:
             code = (
-                "feed_store_profile_changed"
-                if str(error) == "feed_store_profile_changed"
+                str(error)
+                if str(error) in {"feed_store_profile_changed", "conflicting_normalized_event"}
                 else "feed_store_unavailable"
             )
             raise FeedError(code) from None
@@ -151,24 +151,63 @@ class SqlFeedStore:
             ]
 
     def emit(self, db, producer, payload, available):
-        envelope = {
-            "schema_version": 1,
-            "kind": KINDS[producer],
-            "message_id": payload["event_id"],
-            "available_at": stamp(available),
-            "payload": payload,
-        }
-        validate_event(envelope, contracts())
-        facts = encoded(event_facts(envelope))
-        db.execute("SELECT facts FROM pf_events WHERE k=%s", (payload["event_id"],))
-        old = db.fetchone()
-        if old and old[0] != facts:
-            raise FeedError("conflicting_normalized_event")
-        if not old:
-            db.execute(
-                "INSERT pf_events(producer,k,facts,envelope) VALUES(%s,%s,%s,%s)",
-                (producer, payload["event_id"], facts, encoded(envelope)),
+        self.emit_many(db, producer, [payload], available)
+
+    def emit_many(self, db, producer, payloads, available):
+        if producer not in KINDS or len(payloads) > 500:
+            raise FeedError("feed_batch_bound")
+        rows = {}
+        for payload in payloads:
+            envelope = {
+                "schema_version": 1,
+                "kind": KINDS[producer],
+                "message_id": payload["event_id"],
+                "available_at": stamp(available),
+                "payload": payload,
+            }
+            validate_event(envelope, contracts())
+            key, facts = payload["event_id"], encoded(event_facts(envelope))
+            if not key.isascii() or len(key) > 512:
+                raise FeedError("invalid_feed_event_id")
+            if key in rows and rows[key]["facts"] != facts:
+                raise ShadowError("conflicting_normalized_event")
+            rows.setdefault(
+                key, {"ordinal": len(rows), "k": key, "facts": facts, "envelope": encoded(envelope)}
             )
+        if not rows:
+            return
+        batch = encoded(list(rows.values()))
+        if len(batch.encode()) > 8 * 1024 * 1024:
+            raise FeedError("feed_batch_bound")
+        # One parameterized server batch avoids hundreds of network round trips
+        # while holding the shared feed lock. Events and the caller's cursors
+        # still commit in the same transaction; no partial page is acknowledged.
+        db.execute(
+            """
+            DECLARE @batch TABLE(ordinal int PRIMARY KEY,
+                                k varchar(512) COLLATE Latin1_General_100_BIN2 UNIQUE,
+                                facts nvarchar(max),envelope nvarchar(max));
+            INSERT @batch SELECT ordinal,k,facts,envelope FROM OPENJSON(%s)
+                WITH(ordinal int '$.ordinal',k varchar(512) '$.k', facts nvarchar(max) '$.facts',
+                     envelope nvarchar(max) '$.envelope');
+            IF EXISTS(SELECT 1 FROM @batch b JOIN pf_events e ON e.k=b.k
+                      WHERE e.facts COLLATE Latin1_General_100_BIN2 <>
+                            b.facts COLLATE Latin1_General_100_BIN2 OR e.facts IS NULL)
+                SELECT CAST(0 AS bit);
+            ELSE BEGIN
+                INSERT pf_events(producer,k,facts,envelope)
+                    SELECT TOP(500) %s,b.k,b.facts,b.envelope FROM @batch b
+                    WHERE NOT EXISTS(SELECT 1 FROM pf_events e WHERE e.k=b.k) ORDER BY b.ordinal;
+                SELECT CAST(1 AS bit);
+            END
+            """,
+            (batch, producer),
+        )
+        while db.description is None:
+            if not db.nextset():
+                raise ShadowError("feed_batch_result_missing")
+        if not db.fetchone()[0]:
+            raise ShadowError("conflicting_normalized_event")
 
     def complete(self, producer, key, payload, now):
         with self.transaction() as db:
@@ -183,19 +222,17 @@ class SqlFeedStore:
         with self.transaction() as db:
             db.execute("UPDATE pf_inbox SET status='quarantined' WHERE k=%s", (key,))
 
-    def complete_batch(self, producer, key, payloads, now, *, cursor=None):
+    def complete_batch(self, producer, key, payloads, now, *, cursor=None, state_patch=None):
         with self.transaction() as db:
             db.execute("SELECT status,producer FROM pf_inbox WHERE k=%s", (key,))
             row = db.fetchone()
-            if row and tuple(row) == ("complete", producer) and cursor:
-                self.save(*cursor, db=db)
             if not row or tuple(row) != ("pending", producer):
                 return
-            for payload in payloads:
-                self.emit(db, producer, payload, now)
+            self.emit_many(db, producer, payloads, now)
             db.execute("UPDATE pf_inbox SET status='complete' WHERE k=%s", (key,))
             if cursor:
                 self.save(*cursor, db=db)
+            merge_state(self, db, state_patch)
 
     def reprocess(self, key):
         with self.transaction() as db:
@@ -214,8 +251,7 @@ class SqlFeedStore:
 
     def page(self, producer, payloads, key, cursor, now):
         with self.transaction() as db:
-            for payload in payloads:
-                self.emit(db, producer, payload, now)
+            self.emit_many(db, producer, payloads, now)
             self.save(key, cursor, db=db)
 
     def events(self, after=0, limit=100):

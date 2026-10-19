@@ -22,6 +22,15 @@ def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def merge_state(store, db, patch):
+    if patch is not None:
+        key, values = patch
+        current = store.state(key, {}, db=db)
+        if not isinstance(current, dict) or not isinstance(values, dict):
+            raise FeedError("invalid_feed_state_patch")
+        store.save(key, {**current, **values}, db=db)
+
+
 class FeedStore:
     def __init__(self, path, *, mode="local-read", profile="synthetic"):
         if str(path) == ":memory:" or mode not in {"local-read", "fixture"}:
@@ -151,6 +160,10 @@ class FeedStore:
                 )
             ]
 
+    def emit_many(self, db, producer, payloads, available):
+        for payload in payloads:
+            self.emit(db, producer, payload, available)
+
     def emit(self, db, producer, payload, available):
         kind = KINDS[producer]
         envelope = {
@@ -183,11 +196,9 @@ class FeedStore:
         with self.transaction() as db:
             db.execute("UPDATE inbox SET status='quarantined' WHERE key=?", (key,))
 
-    def complete_batch(self, producer, key, payloads, now, *, cursor=None):
+    def complete_batch(self, producer, key, payloads, now, *, cursor=None, state_patch=None):
         with self.transaction() as db:
             row = db.execute("SELECT status,producer FROM inbox WHERE key=?", (key,)).fetchone()
-            if row == ("complete", producer) and cursor:
-                self.save(*cursor, db=db)
             if row != ("pending", producer):
                 return
             for payload in payloads:
@@ -195,6 +206,7 @@ class FeedStore:
             db.execute("UPDATE inbox SET status='complete' WHERE key=?", (key,))
             if cursor:
                 self.save(*cursor, db=db)
+            merge_state(self, db, state_patch)
 
     def page(self, producer, payloads, key, cursor, now):
         with self.transaction() as db:

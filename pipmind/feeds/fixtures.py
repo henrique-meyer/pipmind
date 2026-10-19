@@ -207,6 +207,7 @@ def run_fixtures(path=FIXTURE):
             ]
         )
         social.x = XReads(x_reads, "synthetic")
+        store.save("x:cursor:11", {"since": "99", "next": None, "newest": None, "seen": []})
         social.poll(
             role, {"handle": data["institution"]["username"], "user_id": data["institution"]["id"]}
         )

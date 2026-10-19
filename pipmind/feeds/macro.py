@@ -242,6 +242,8 @@ class Macro:
                 result = self.normalize(pending["raw"], pending["received_at"])
                 self.store.complete("macro", pending["key"], result, self.now())
             except (ContractError, KeyError, TypeError) as error:
+                if isinstance(error, FeedError) and str(error).startswith("feed_store_"):
+                    raise
                 self.store.alert(
                     "macro",
                     str(error) if isinstance(error, FeedError) else "invalid_macro_row",

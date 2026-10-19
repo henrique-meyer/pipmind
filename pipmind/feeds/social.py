@@ -290,6 +290,24 @@ class Social:
             raise FeedError("x_account_not_resolved")
         key = "x:cursor:" + user_id
         progress = self.store.state(key, {"since": None, "next": None, "newest": None, "seen": []})
+        if progress["since"] is None and progress["newest"]:
+            # Earlier builds walked old timeline pages during first activation.
+            # Keep that exact unfinished cursor as audit evidence and anchor
+            # live reads at the newest already retained ID. No retained post
+            # is removed, and posts after the anchor still paginate completely.
+            with self.store.transaction() as db:
+                self.store.save(
+                    "x:initial_history:" + user_id,
+                    {
+                        "cursor": progress,
+                        "complete_history_proven": False,
+                        "policy": "latest_page_seed",
+                        "at": stamp(now),
+                    },
+                    db=db,
+                )
+                progress = {"since": progress["newest"], "next": None, "newest": None, "seen": []}
+                self.store.save(key, progress, db=db)
         for _ in range(5):  # Continue remaining pages on the next tick, without advancing since_id.
             page = self.x.timeline(user_id, since=progress["since"], token=progress["next"])
             if page.get("errors") or not isinstance(page.get("data", []), list):
@@ -329,6 +347,7 @@ class Social:
                     }
                 )
             token = page.get("meta", {}).get("next_token")
+            initial = progress["since"] is None
             if token and (token in progress["seen"] or len(progress["seen"]) >= 1000):
                 raise FeedError("x_pagination_loop")
             progress = (
@@ -342,11 +361,24 @@ class Social:
                 }
             )
             with self.store.transaction() as db:
-                for payload in sorted(payloads, key=lambda p: (p["ts"], p["event_id"])):
-                    self.store.emit(db, "social", payload, now)
+                if initial:
+                    self.store.save(
+                        "x:initial_history:" + user_id,
+                        {
+                            "cursor": progress,
+                            "complete_history_proven": False,
+                            "policy": "latest_page_seed",
+                            "at": stamp(now),
+                        },
+                        db=db,
+                    )
+                    progress = {"since": newest, "next": None, "newest": None, "seen": []}
+                self.store.emit_many(
+                    db, "social", sorted(payloads, key=lambda p: (p["ts"], p["event_id"])), now
+                )
                 self.store.save(key, progress, db=db)
                 self.store.save("x:last_post:" + user_id, latest, db=db)
-            if not token:
+            if initial or not token:
                 break
 
     def step(self):
