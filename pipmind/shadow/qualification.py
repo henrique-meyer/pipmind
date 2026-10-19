@@ -138,6 +138,7 @@ class Recorder:
         self.last_error = None
 
     def capture(self, moment=None):
+        live_clock = moment is None
         moment = moment or now()
         spec = self.store.runtime(ACTIVE)
         if not spec or spec["state"] not in {"warming", "running"}:
@@ -154,6 +155,13 @@ class Recorder:
                 sample["feeds"] = self.feed_state()
         except Exception as error:
             sample["errors"].append(type(error).__name__)
+        # A broker worker can refresh its snapshot while these GETs run. Use
+        # receipt completion for freshness, never compare a new response with
+        # the earlier request-start clock and label it future/stale.
+        if live_clock:
+            moment = now()
+            slot = int(moment.timestamp()) // spec["interval"]
+            sample["at"] = stamp(moment)
         with self.store.transaction() as c:
             current = self.store._runtime(c, ACTIVE)
             if (

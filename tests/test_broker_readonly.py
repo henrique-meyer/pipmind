@@ -171,3 +171,85 @@ def test_missing_evidence_and_startup_backlog_cannot_pass_readiness():
         MOMENT,
     )
     assert {"startup_backlog", "broker_evidence_gap", "broker_not_ready"} <= set(r)
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_symbol_secret_accepts_arm_literal_object_and_legacy_array(tmp_path, monkeypatch, wrapped):
+    import json
+
+    from pipmind.gateway.config import symbols_from_env
+
+    rows = [
+        {
+            "instrument": "EUR/USD",
+            "market_id": 42,
+            "unit": "base_units",
+            "quantity_factor": "1",
+            "minimum": "1000",
+            "increment": "1",
+        }
+    ]
+    path = tmp_path / "symbols.json"
+    path.write_text(json.dumps({"symbols": rows} if wrapped else rows))
+    monkeypatch.setenv("PIPMIND_GATEWAY_SYMBOLS", str(path))
+    assert symbols_from_env().symbol("EUR/USD").market_id == 42
+
+
+def test_symbol_wrapper_rejects_unexpected_metadata(tmp_path, monkeypatch):
+    from pipmind.gateway.config import symbols_from_env
+
+    path = tmp_path / "symbols.json"
+    path.write_text('{"symbols": [], "unexpected": true}')
+    monkeypatch.setenv("PIPMIND_GATEWAY_SYMBOLS", str(path))
+    with pytest.raises(GatewayError, match="invalid_symbol_map"):
+        symbols_from_env()
+
+
+def test_stream_overflow_reports_loss_then_drains_retained_batch_despite_new_callbacks():
+    from pipmind.gateway.stream import LightstreamerPrices
+
+    stream = LightstreamerPrices(broker())
+    stream.epoch = 3
+    for n in range(stream.queue.maxsize + 1):
+        stream._enqueue(3, {"sequence": n})
+    with pytest.raises(GatewayError, match="stream_queue_overflow"):
+        stream.drain()
+    stream._enqueue(3, {"sequence": "overflow-again"})
+    retained = stream.drain()
+    assert len(retained) == stream.queue.maxsize
+    assert retained[0] == {"sequence": 0}
+    assert stream.queue.empty()
+    stream._enqueue(3, {"sequence": "fresh"})
+    assert stream.drain() == [{"sequence": "fresh"}]
+
+
+def test_live_gateway_handoff_uses_completion_clock_for_new_snapshot_facts(monkeypatch):
+    import io
+    import json
+
+    import pipmind.shadow.service as service
+
+    completed = MOMENT + timedelta(seconds=1)
+    snapshots = [
+        {"schema_version": 1, "as_of": completed.isoformat(), "currency": "USD", "balance": 100},
+        {"schema_version": 1, "as_of": completed.isoformat(), "positions": []},
+    ]
+    body = {"dispatch_enabled": False, "prices": [], "snapshots": snapshots}
+    monkeypatch.setattr(
+        service,
+        "build_opener",
+        lambda *a: SimpleNamespace(open=lambda *a, **kw: io.BytesIO(json.dumps(body).encode())),
+    )
+    store = Mock()
+    store.checkpoint.return_value = 0
+    consumer = service.GatewayConsumer(
+        store,
+        "http://127.0.0.1:8081",
+        "x" * 32,
+        "test",
+        handoff_interval=300,
+        completion_clock=lambda: completed,
+    )
+    assert consumer.poll(MOMENT) == 2
+    store.refresh_broker_facts.assert_called_once_with(*snapshots, completed)
+    assert store.accept.call_args.args[2] == completed

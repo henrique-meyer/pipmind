@@ -17,6 +17,7 @@ class LightstreamerPrices:
         self.client_factory, self.subscription_factory = client_factory, subscription_factory
         self.queue, self.client, self.subscriptions = Queue(maxsize=1000), None, []
         self.epoch, self.overflow, self.generation = 0, False, None
+        self.overflow_reported = False
 
     def _enqueue(self, epoch, value):
         try:
@@ -62,7 +63,12 @@ class LightstreamerPrices:
     def drain(self):
         if self.overflow:
             self.overflow = False
-            raise GatewayError("stream_queue_overflow")
+            # Report a loss once before draining the retained bounded batch.
+            # New callbacks can overflow the still-full queue between calls;
+            # raising repeatedly would prevent recovery and strand those ticks.
+            if not self.overflow_reported:
+                self.overflow_reported = True
+                raise GatewayError("stream_queue_overflow")
         values = []
         for _ in range(1000):
             try:
@@ -71,6 +77,7 @@ class LightstreamerPrices:
                 break
             if epoch == self.epoch:
                 values.append(value)
+        self.overflow_reported = False
         return values
 
     def stop(self):

@@ -2145,3 +2145,53 @@ def test_qualification_warmup_retains_read_failures_without_starting_the_day(min
     assert sample["errors"] == ["TimeoutError"] and "sample_read_failed" in sample["readiness"]
     with pytest.raises(ShadowError, match="qualification_already_active"):
         q.arm(mind, "other-day", ["EUR/USD"], "synthetic-build", moment)
+
+
+def test_qualification_freshness_uses_read_completion_not_earlier_request_time(mind, monkeypatch):
+    from pipmind.shadow import qualification as q
+
+    clock = [utc("2026-10-19T22:00:00Z")]
+    start = clock[0]
+    monkeypatch.setenv("BUILD_SHA", "synthetic-build")
+    monkeypatch.setattr(q, "now", lambda: clock[0])
+    mind.set_paused(False)
+    q.arm(mind, "read-completion", ["EUR/USD"], "synthetic-build", start)
+
+    def state():
+        return {
+            **mind.status(),
+            "last_error": None,
+            "reasoning_worker": {"alive": True, "loop_alive": True, "supervisor_alive": True},
+        }
+
+    def read(gateway, path):
+        clock[0] += timedelta(seconds=1)
+        at = clock[0].isoformat()
+        if path == "/evidence":
+            return {
+                "last_error": None,
+                "evidence": {
+                    "as_of": at,
+                    "from": start.isoformat(),
+                    "binding_sha256": "b" * 64,
+                    "environment": "demo",
+                    "complete": True,
+                    "activity_count": 0,
+                    "responses": {},
+                },
+            }
+        return {
+            "dispatch_enabled": False,
+            "broker_verified": True,
+            "worker_alive": True,
+            "last_cycle": at,
+            "prices": [{"instrument": "EUR/USD", "stale": False}],
+            "snapshots": [{"as_of": at}, {"as_of": at}],
+            "last_error": None,
+        }
+
+    monkeypatch.setattr(q, "read_gateway", read)
+    q.Recorder(mind, None, state).capture()
+    result = mind.runtime(q.ACTIVE)
+    assert result["state"] == "running" and result["last_readiness"] == []
+    assert utc(result["start"]) == clock[0] > start

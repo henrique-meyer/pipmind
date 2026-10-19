@@ -169,6 +169,13 @@ def symbols_from_env():
         path = Path(os.environ["PIPMIND_GATEWAY_SYMBOLS"])
         if path.stat().st_size > 65_536:
             raise GatewayError("symbol_map_too_large")
-        return SymbolMap(loads(path.read_bytes()))
+        value = loads(path.read_bytes())
+        # Object wrapper keeps JSON arrays literal through ARM's generated
+        # resource expressions. Local/M2 array files remain compatible.
+        if isinstance(value, dict):
+            if set(value) != {"symbols"}:
+                raise GatewayError("invalid_symbol_map")
+            value = value["symbols"]
+        return SymbolMap(value)
     except (KeyError, OSError):
         raise GatewayError("missing_symbol_map") from None
