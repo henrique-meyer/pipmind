@@ -220,6 +220,11 @@ def validate_stream(path, *, contracts=None, staging=None):
                     index = sqlite3.connect(Path(folder) / "relationships.sqlite")
                     try:
                         _validate(bundle, index)
+                        index.commit()
+                        bundle.validation_disk_bytes = (
+                            payload.stat().st_size
+                            + (Path(folder) / "relationships.sqlite").stat().st_size
+                        )
                         yield bundle
                     finally:
                         index.close()

@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC
+from time import perf_counter
 from uuid import uuid4
 
 from pipmind.contracts import (
@@ -785,6 +786,7 @@ class SqlMind:
     def stream_retained(self):
         """One consistent checkpoint, with at most one SQL record in Python."""
         with self.transaction() as cur:
+            started = perf_counter()
             head = self._head(cur)
             cur.execute(
                 "SELECT COALESCE(MAX(pk),0) FROM pm_outcomes WHERE trader=%s", (self.trader,)
@@ -798,7 +800,10 @@ class SqlMind:
                 while row := cur.fetchone():
                     yield loads(row[0]), row[1]
 
-            yield head, records()
+            try:
+                yield head, records()
+            finally:
+                head["checkpoint_lock_seconds"] = perf_counter() - started
 
     def clone_stream(self, bundle, moment, binding, expected_identity, *, interrupt=None):
         """Publish a completely validated file stream in one rollback-safe transaction."""
@@ -821,6 +826,7 @@ class SqlMind:
         }
         manifest = bundle.manifest
         with self.transaction() as cur:
+            started = perf_counter()
             cur.execute("SELECT 1 FROM pm_minds WHERE trader=%s", (self.trader,))
             if cur.fetchone():
                 raise ShadowError("clone_requires_empty_destination")
@@ -855,8 +861,10 @@ class SqlMind:
                 ),
                 encoded(fresh),
             )
+            transaction_seconds = perf_counter() - started
         return {
             "paused": True,
+            "destination_transaction_seconds": transaction_seconds,
             "source_checkpoint": manifest["checkpoint"]["checkpoint_id"],
             "transformations": [
                 "new_lineage",

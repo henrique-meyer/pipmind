@@ -1855,6 +1855,13 @@ def test_stream_corruption_during_sql_consumption_rolls_back_every_row(mind, tmp
 
     from pipmind.shadow.stream_bundle import export_experience_file, import_experience_file
 
+    with mind.transaction() as cur:
+        for identifier in ("padding", "corrupt-later"):
+            mind._insert(
+                cur,
+                metadata(identifier, "journal", MOMENT.isoformat(), mind.trader),
+                "Exact retained history " * 3000,
+            )
     path = tmp_path / "source.zip"
     export_experience_file(mind, path, MOMENT)
     destination = SqlMind(mind.connect, "corruption-" + uuid4().hex)
@@ -1862,7 +1869,7 @@ def test_stream_corruption_during_sql_consumption_rolls_back_every_row(mind, tmp
 
     def corrupt(bundle, *args, **kwargs):
         with zipfile.ZipFile(bundle.archive.fp.name) as archive:
-            item = archive.getinfo("mind/playbook.md")
+            item = archive.getinfo("mind/journal/" + digest("corrupt-later") + ".md")
             offset = item.header_offset + 30 + len(item.filename.encode())
         modified = False
 

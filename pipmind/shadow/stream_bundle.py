@@ -196,8 +196,8 @@ def export_experience_file(store, path, moment, *, interrupt=None):
             output.flush()
             os.fsync(output.fileno())
             release_cache(output)
-        with validate_stream(staged, contracts=store.contracts, staging=folder):
-            pass
+        with validate_stream(staged, contracts=store.contracts, staging=folder) as bundle:
+            temporary_bytes = staged.stat().st_size + bundle.validation_disk_bytes
         # Atomic link fails if destination exists, unlike replace/rename on Unix.
         os.link(staged, path)
         return {
@@ -206,6 +206,8 @@ def export_experience_file(store, path, moment, *, interrupt=None):
             "bytes": path.stat().st_size,
             "checkpoint": manifest["checkpoint"]["checkpoint_id"],
             "complete": True,
+            "temporary_disk_bytes": temporary_bytes,
+            "checkpoint_lock_seconds": head.get("checkpoint_lock_seconds"),
         }
 
 
@@ -222,6 +224,7 @@ def import_experience_file(store, path, moment, binding, expected_identity, *, i
             report = store.clone_stream(
                 bundle, moment, binding, expected_identity, interrupt=interrupt
             )
+            report["temporary_disk_bytes"] = bundle.validation_disk_bytes
             if compatibility["prompt_version"] != PROMPT_VERSION:
                 report["transformations"].append("legacy_context_retrieval_rebuilt")
             return report

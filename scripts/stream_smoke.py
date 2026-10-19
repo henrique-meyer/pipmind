@@ -76,6 +76,10 @@ def main():
         "peak_container_bytes": cgroup_peak,
         "export_seconds": round(exported - started, 3),
         "import_seconds": round(imported - exported, 3),
+        "checkpoint_lock_seconds": round(report["checkpoint_lock_seconds"], 3),
+        "destination_transaction_seconds": round(result["destination_transaction_seconds"], 3),
+        "export_temporary_disk_bytes": report["temporary_disk_bytes"],
+        "import_temporary_disk_bytes": result["temporary_disk_bytes"],
     }
     path.unlink()
     print(json.dumps(summary))

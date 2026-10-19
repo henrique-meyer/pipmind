@@ -196,6 +196,8 @@ def main():
                 "ALL",
                 "--security-opt",
                 "no-new-privileges",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,size=1m,mode=1777",
                 "-v",
                 str(work) + ":/exports",
                 "-v",
