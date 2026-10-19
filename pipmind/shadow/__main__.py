@@ -105,7 +105,7 @@ def main():
             if args.format == "stream-v3":
                 from pipmind.shadow.stream_bundle import export_experience_file
 
-                print(encoded(export_experience_file(store, args.output, now())))
+                print(encoded(export_experience_file(store, args.output)))
             else:
                 write_private(args.output, export_experience(store, now()))
         elif args.command == "clone":

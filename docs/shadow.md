@@ -171,8 +171,13 @@ No persistent export service, new Azure resource or capacity increase is needed.
 Qualification measures process RSS and total container usage separately; a
 synthetic near-cap test does not certify headroom beside every live workload.
 
-Export holds the source SQL checkpoint lock while writing its records; clone
-holds its destination lock until commit. Schedule a reviewed paused checkpoint
+When transaction snapshot isolation is already enabled, export uses that existing
+capability for one consistent read without taking the source application lock.
+It never changes database options. Without that capability, export coordinates
+writers with the existing source lock. A failed snapshot refuses the operation;
+it never switches versions midway. This follows SQL's
+[transaction snapshot semantics](https://learn.microsoft.com/en-us/sql/t-sql/statements/set-transaction-isolation-level-transact-sql).
+Clone holds its destination lock until commit. Schedule a reviewed paused checkpoint
 when normal workers lack memory headroom or a long lock would disrupt them.
 The commands never silently pause, resize or truncate a source. Measure lock
 time, temporary disk, transfer, SQL clone growth and total container usage at the

@@ -12,7 +12,7 @@ from uuid import uuid4
 from pipmind.contracts import ROOT, stamp, utc
 from pipmind.portability import BundleError
 from pipmind.shadow.bundle import RETRIEVAL_VERSION, SUPPORTED_CONTEXTS
-from pipmind.shadow.common import ShadowError, digest, encoded
+from pipmind.shadow.common import ShadowError, digest, encoded, now
 from pipmind.shadow.model import PROMPT_VERSION
 from pipmind.stream_portability import (
     MAX_ENTRIES,
@@ -108,7 +108,7 @@ def _path(meta):
     return f"mind/{folder}/{digest(meta['record_id'])}.md"
 
 
-def export_experience_file(store, path, moment, *, interrupt=None):
+def export_experience_file(store, path, moment=None, *, interrupt=None):
     """Atomic no-overwrite publication after complete validation of a SQL checkpoint."""
     path = private_path(path)
     with operation(path.parent) as folder:
@@ -121,6 +121,7 @@ def export_experience_file(store, path, moment, *, interrupt=None):
                 output, "w", compression=zipfile.ZIP_STORED, allowZip64=False
             ) as archive:
                 with store.stream_retained() as (head, records):
+                    moment = moment or now()
                     for meta, body in records:
                         when = utc(meta["ts"])
                         if when > moment:
@@ -208,6 +209,8 @@ def export_experience_file(store, path, moment, *, interrupt=None):
             "complete": True,
             "temporary_disk_bytes": temporary_bytes,
             "checkpoint_lock_seconds": head.get("checkpoint_lock_seconds"),
+            "checkpoint_transaction_seconds": head.get("checkpoint_transaction_seconds"),
+            "checkpoint_isolation": head.get("checkpoint_isolation"),
         }
 
 

@@ -19,7 +19,7 @@ from pipmind.contracts import (
 from pipmind.shadow.common import ShadowError, digest, encoded, terms
 from pipmind.shadow.context import query_terms, record_view, relevance, semantic_text
 from pipmind.shadow.maintenance import POLICY, policy_context, transition, working_digest
-from pipmind.shadow.sql import transaction
+from pipmind.shadow.sql import stream_transaction, transaction
 
 PARTS = {
     "identity",
@@ -783,11 +783,15 @@ class SqlMind:
             return head, records
 
     @contextmanager
-    def stream_retained(self):
+    def stream_retained(self, *, snapshot=True):
         """One consistent checkpoint, with at most one SQL record in Python."""
-        with self.transaction() as cur:
+        with stream_transaction(self.connect, "shadow:" + self.trader, snapshot=snapshot) as (
+            cur,
+            isolation,
+        ):
             started = perf_counter()
             head = self._head(cur)
+            head["checkpoint_isolation"] = isolation
             cur.execute(
                 "SELECT COALESCE(MAX(pk),0) FROM pm_outcomes WHERE trader=%s", (self.trader,)
             )
@@ -803,7 +807,9 @@ class SqlMind:
             try:
                 yield head, records()
             finally:
-                head["checkpoint_lock_seconds"] = perf_counter() - started
+                duration = perf_counter() - started
+                head["checkpoint_transaction_seconds"] = duration
+                head["checkpoint_lock_seconds"] = duration if isolation == "locked" else 0.0
 
     def clone_stream(self, bundle, moment, binding, expected_identity, *, interrupt=None):
         """Publish a completely validated file stream in one rollback-safe transaction."""

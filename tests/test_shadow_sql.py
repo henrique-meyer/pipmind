@@ -1839,7 +1839,7 @@ def test_stream_checkpoint_serializes_source_writer_without_losing_new_history(m
         finally:
             finished.set()
 
-    with mind.stream_retained() as (_, records):
+    with mind.stream_retained(snapshot=False) as (_, records):
         worker = threading.Thread(target=writer)
         worker.start()
         assert entered.wait(1) and not finished.wait(0.25)
@@ -1891,3 +1891,73 @@ def test_stream_corruption_during_sql_consumption_rolls_back_every_row(mind, tmp
     with destination.transaction() as cur:
         cur.execute("SELECT COUNT(*) FROM pm_minds WHERE trader=%s", (destination.trader,))
         assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.skipif(
+    os.environ.get("PIPMIND_SQL_LOCAL") != "true",
+    reason="database option setup is restricted to disposable local SQL",
+)
+def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind):
+    import threading
+
+    from pipmind.shadow.common import encoded
+
+    name = "stream_snapshot_" + uuid4().hex
+    admin = mind.connect()
+    admin.autocommit = True
+    control = admin.cursor()
+    control.execute(f"CREATE DATABASE [{name}]")
+    try:
+        control.execute(f"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON")
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        migrate(connect)
+        source = SqlMind(connect, "snapshot-source")
+        source.initialize(
+            "Exact identity",
+            {"version": "v1", "text": "Exact playbook"},
+            MOMENT.isoformat(),
+            binding=digest("source"),
+        )
+        finished, errors = threading.Event(), []
+
+        def writer():
+            try:
+                with source.transaction() as cur:
+                    source._insert(
+                        cur,
+                        metadata("new-history", "journal", MOMENT.isoformat(), source.trader),
+                        "Committed after snapshot",
+                    )
+                    source._write_working(
+                        cur,
+                        {"views": ["New state"], "position_theses": [], "waiting_for": []},
+                        MOMENT,
+                    )
+                    cur.execute(
+                        "UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (source.trader,)
+                    )
+            except Exception as error:
+                errors.append(type(error).__name__)
+            finally:
+                finished.set()
+
+        with source.stream_retained() as (head, records):
+            assert head["checkpoint_isolation"] == "snapshot" and head["revision"] == 0
+            worker = threading.Thread(target=writer)
+            worker.start()
+            assert finished.wait(4), "snapshot reader blocked the source writer"
+            captured = list(records)
+            assert len(captured) == 3 and not errors
+            original_working = next(
+                body for meta, body in captured if meta["part"] == "working_memory"
+            )
+            assert original_working == encoded(head["working"])
+            assert loads(original_working)["views"] == []
+        worker.join(5)
+        assert head["checkpoint_lock_seconds"] == 0
+        assert source.head()["revision"] == 1
+        assert source.head()["working"]["views"] == ["New state"]
+        assert len(source.retained()[1]) == 4
+    finally:
+        control.execute(f"DROP DATABASE [{name}]")
+        admin.close()
