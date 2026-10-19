@@ -171,3 +171,35 @@ def test_missing_evidence_and_startup_backlog_cannot_pass_readiness():
         MOMENT,
     )
     assert {"startup_backlog", "broker_evidence_gap", "broker_not_ready"} <= set(r)
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_symbol_secret_accepts_arm_literal_object_and_legacy_array(tmp_path, monkeypatch, wrapped):
+    import json
+
+    from pipmind.gateway.config import symbols_from_env
+
+    rows = [
+        {
+            "instrument": "EUR/USD",
+            "market_id": 42,
+            "unit": "base_units",
+            "quantity_factor": "1",
+            "minimum": "1000",
+            "increment": "1",
+        }
+    ]
+    path = tmp_path / "symbols.json"
+    path.write_text(json.dumps({"symbols": rows} if wrapped else rows))
+    monkeypatch.setenv("PIPMIND_GATEWAY_SYMBOLS", str(path))
+    assert symbols_from_env().symbol("EUR/USD").market_id == 42
+
+
+def test_symbol_wrapper_rejects_unexpected_metadata(tmp_path, monkeypatch):
+    from pipmind.gateway.config import symbols_from_env
+
+    path = tmp_path / "symbols.json"
+    path.write_text('{"symbols": [], "unexpected": true}')
+    monkeypatch.setenv("PIPMIND_GATEWAY_SYMBOLS", str(path))
+    with pytest.raises(GatewayError, match="invalid_symbol_map"):
+        symbols_from_env()
