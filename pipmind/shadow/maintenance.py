@@ -77,6 +77,8 @@ def transition(before, after, dispositions, moment, *, initial=False):
         raise ShadowError("working_memory_missing_thesis")
     if initial and before["position_theses"] != after["position_theses"]:
         raise ShadowError("working_memory_initial_theses")
+    if len(refs) > 256 or len(encoded(dispositions).encode()) > 32768:
+        raise ShadowError("working_memory_bound")
     return refs
 
 

@@ -178,7 +178,13 @@ def record_view(meta, body, query=""):
             for i, value in enumerate(data["before"][field])
         ]
         words = set(query_terms_all(query))
-        rows.sort(key=lambda row: len(words & set(query_terms_all(row["before"]))), reverse=True)
+        rows.sort(
+            key=lambda row: (
+                row["key"] in query.split(),
+                len(words & set(query_terms_all(row["before"]))),
+            ),
+            reverse=True,
+        )
         selected = rows[:2]
         for row in selected:
             row["disposition"] = next(

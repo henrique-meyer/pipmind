@@ -1225,7 +1225,9 @@ def test_exact_checkpoint_focus_retrieves_old_condition_after_newer_revisions(mi
         "review": "no-unresolved-ambiguity",
     }
     report = mind.maintain_working(plan, MOMENT)
-    result = mind.search(report["checkpoint"] + " | Specific condition 7 invalidation 7", MOMENT)[0]
+    result = mind.search(
+        report["checkpoint"] + " | w7 Specific condition 7 invalidation 7", MOMENT
+    )[0]
     assert result["partial"] and result["metadata"]["record_id"] == report["checkpoint"]
     assert old["waiting_for"][7] in result["body"]
     assert old["waiting_for"][7] in encoded(mind.retained()[1])
