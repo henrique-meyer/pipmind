@@ -40,6 +40,27 @@ def mind():
     return store
 
 
+def test_expanded_feed_status_retains_raw_facts_before_prompt_factoring(mind):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.context import phase_context
+
+    status = {
+        "coverage": {
+            f"series:{i}": {"quality": {"detail": "retained fact " * 80}, "value": i}
+            for i in range(33)
+        },
+        "checked_at": MOMENT.isoformat(),
+    }
+    assert 16384 < len(encoded(status).encode()) < 131072
+    mind.set_runtime("feed_status", status)
+    assert mind.runtime("feed_status") == status
+    projected = phase_context({"feed_status": mind.runtime("feed_status")}, "triage")
+    assert len(encoded(projected).encode()) < 16384
+    with pytest.raises(ShadowError, match="invalid_runtime_status"):
+        mind.set_runtime("feed_status", {"coverage": "x" * 131072})
+    assert mind.runtime("feed_status") == status
+
+
 @pytest.mark.parametrize("case_id", SHADOW_CASES)
 def test_starter_cases_through_actual_sql_shadow_runtime(mind, case_id):
     cases = [
