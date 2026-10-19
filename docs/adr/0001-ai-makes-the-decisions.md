@@ -20,11 +20,11 @@ Code does the work around that decision:
 - enforce an outer hard boundary, a daily-loss stop and a kill switch
 - submit the resulting order, idempotently, and reconcile against the broker
 
-The model's own playbook is data. Changing a rule is a new playbook version, not a deploy. See [ADR 0004](0004-persistent-mind.md) and [ADR 0005](0005-suggestions-and-overrides.md).
+The model's playbook is data. Under the owner's 2026-10-19 clarification, a model-proposed rule changes active policy only after explicit owner confirmation of its exact diff; the controlled activation service writes a new version. See [ADR 0004](0004-persistent-mind.md), [ADR 0005](0005-suggestions-and-overrides.md) and [ADR 0006](0006-owner-confirmed-policy.md).
 
 ## Consequences
 
-- Behavior can change overnight, in public, without a release.
+- Approved policy can change without an application release; nightly proposals alone cannot change active rules.
 - The safety layer has to be small and tested, because it is the only strategy that code is allowed to impose.
 - Shadow mode and the replay harness are how we inspect decisions before any order exists.
 - A keyword list is not a fallback when the cheap model is down. If triage cannot run, the core does not open new risk.

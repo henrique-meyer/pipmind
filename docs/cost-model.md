@@ -1,5 +1,7 @@
 # Cost model
 
+The [planned private owner chat and policy approval workflow](architecture.md#private-owner-chat-and-policy-approval) adds no deployed service in PIP-16. Future chat/explanation and proposal-generation model calls must remain opt-in and be measured explicitly; the existing runtime allowance is not a verified allowance for unlimited owner conversations. Price any required UI hosting or access changes before their separate deployment approval.
+
 The hosted demo uses the [demo deployment profile](architecture.md#demo-instance): one Azure Container App containing two containers, Azure SQL S0, default managed networking, Blob Storage, a free static frontend, built-in app secrets, and essential monitoring. The application also supports separately sized production deployments.
 
 PIP-13 deploys the approved [hosted shadow layout](shadow.md#hosted-m4-approval-and-live-qualification), preserving the existing landing alongside a private backend. The owner selected **monthly** FXMacroData billing to validate the service first. Annual billing below remains a comparison, not the selected subscription.

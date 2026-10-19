@@ -13,7 +13,7 @@ The kill switch and a trading pause are the second kind of request.
 
 Two owner channels enter the core. They do not share a queue.
 
-**Suggestions.** The model reads the suggestion with the rest of its context. It may adopt it into the playbook, put it on trial, or reject it. Each outcome is stored with a reason. Later reviews record how that suggestion lined up with the market, so the model has a track record of the owner's ideas and can weigh the next one. A suggestion never places an order by itself.
+**Suggestions.** The model discusses the suggestion and recommends adoption, trial or revision, or rejects it, with a reason. Adoption/trial prepares an exact-diff proposal; under [ADR 0006](0006-owner-confirmed-policy.md), explicit authenticated owner confirmation is required before activation. Each outcome and its approval provenance are stored. Later reviews record how the suggestion lined up with the market without treating pending/rejected ideas as active policy. A suggestion or policy approval never places an order by itself.
 
 **Overrides.** The core executes the instruction exactly and does not ask the model to agree. An override is logged with an expiry, or as "until lifted". Journal rows carry an override tag. The nightly self-review may mention that the override happened, and it may not create, sharpen or retire a rule from override-tagged outcomes.
 

@@ -2,6 +2,25 @@
 
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
+## PIP-16 — Blank trader template and owner-confirmed policy chat
+
+- Story: [PIP-16](https://nitro.atlassian.net/browse/PIP-16)
+- Status: Starter and design complete; private chat and approval enforcement remain planned
+- Scope: reusable strategy-neutral Markdown starter and design for private owner chat, recorded-decision explanations, suggestions and exact-diff policy approval. SQL remains runtime/audit authority.
+- Acceptance: a paused new trader starts without invented experience or strategy; questions and suggestions cannot mutate policy; editable identity, playbook and standing strategy guidance change only after authenticated owner confirmation of a version-bound proposal. Self-review proposes changes rather than activating them. Routine bounded working memory and immutable audit records remain distinct.
+- Delivery boundary: this story delivers starter files and design. Private chat UI, durable approval enforcement and real-path verification are subsequent milestone work; existing shadow deployment, current PIP-14 qualification, credentials, cloud resources and trading permissions are unchanged.
+- Validation: reviewed the existing SQL initializer/CLI for exact UTF-8 input, fresh empty state and paused initialization; starter identity/playbook are 1,762/1,107 bytes within its input bound. Checked 13 Markdown files, 112 local links/anchors, fence balance, diff whitespace and Gitleaks; starter files use LF across platforms. Required PR CI covers existing offline/SQL/replay/container/infrastructure checks. No paid model/provider calls are needed, and no new UI/approval implementation or hosted initialization is claimed.
+
+### Owner conversation delivery requirements
+
+| Stage | Planned implementation and acceptance |
+| --- | --- |
+| Owner experience following M4 prerequisites | Private authorized chat and separate blank/clone/recovery onboarding; original-record explanations with dated evidence/policy, missing/ambiguous-ID handling, observation/proposal/refusal/fill distinctions and suggestion replies without policy mutation. Reuse existing SQL and model opt-in; preserve hosted qualification work and current deployment. |
+| M5 — Owner controls before trading-capable use | Durable version-bound proposals and explicit exact-diff confirmation; atomic approval/activation/history; rejection/expiry/conflict/replay/concurrency/failure checks; draft isolation, immutable boundaries and policy-bound in-flight decisions. Import/clone/recovery must retain audit through an explicitly supported format without copying approval authority. |
+| M7 — Review | Self-review proposes add/trial/sharpen/retire changes; existing evidence/override rules still apply. Demonstrate no policy change without confirmation and exactly-once approved application with retained provenance and monotonic versions. |
+
+There is no automatic consent or autonomous policy-edit mode in this design. Routine audited factual memory updates continue; reusable strategy instructions require approval regardless of storage location. Private chat/model usage needs measurement and opt-in rather than an assumed free allowance. UI hosting/public-route changes, new inference spend or resources require their own approved delivery scope. PIP-16 does not deploy a UI, enable calls, activate a new policy or change the current trader.
+
 ## PIP-15 — Compact model context and hosted token measurement
 
 - Story: [PIP-15](https://nitro.atlassian.net/browse/PIP-15)
@@ -98,7 +117,7 @@ These are requirements for future implementation stories, not claims that the sy
 | M4 — Shadow | After resource approval, use one Container App with engine and gateway containers at 0.25 vCPU / 0.5 GiB each, one replica, default networking, and SQL S0. Provision Microsoft Foundry resource/project and configurable model deployments; verify availability/quota/pricing, managed-identity access and project-backed inference through the Agent Framework Foundry connector. Measure CPU/memory, SQL latency/search, model tokens, and API charges; demonstrate zero orders. |
 | M5 — Safety/recovery | Verify shared SQL ownership and stale-owner rejection across overlapping revisions, shutdown/takeover reconciliation, SQL-outage refusal, authenticated controls that run independently of model calls, external heartbeat, and backup restore. Set numerical risk limits before demo orders. |
 | M6 — Demo orders | Point explicitly at the broker's demo environment. Exercise round-trip orders, ambiguous-result recovery, persistent deduplication, and broker-snapshot reconciliation. Hosting in a production profile does not select a live broker account. |
-| M7 — Self-review | Version the SQL-backed playbook, preserve the five-part mind, and publish review diffs while excluding override evidence. |
+| M7 — Self-review | Propose owner-confirmed SQL-backed playbook revisions, preserve the five-part mind, and publish applied diffs while excluding override evidence. |
 | M8 — Public launch | Static Web Apps Free reads sanitized Blob snapshots without broker/model access. Validate cache/staleness behavior, private archive permissions, provider display rights, secret-free frontend, monitoring, and the $180 planning alerts. |
 
 The demo uses built-in Container Apps secrets, scoped container environment references, SQL/Blob managed identity access, TLS, and appropriate firewall rules. It accepts shared app identity/lifecycle and one-instance availability, with managed SQL durability and recovery checks. The planning estimate is $59.14/month hosting and $151.31/$159.64 total under annual/monthly FXMacroData billing, before tax and any display add-on; assumptions and exclusions are in the [cost model](cost-model.md).

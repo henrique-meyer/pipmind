@@ -10,7 +10,9 @@ PipMind is a public portfolio project by [Henrique Meyer](https://github.com/hen
 
 The model is the trader. Deterministic code does not encode a strategy. The model reads the macro prints, the headlines, the posts and the prices, then chooses to enter, add, exit or hold, and writes down its reason.
 
-It is also one continuous trader, not a fresh prompt on every tick. A persistent mind holds its identity, a playbook of rules it wrote itself, its current views, and a journal. A nightly review adds, sharpens or retires those rules, and the diff is public.
+It is also one continuous trader, not a fresh prompt on every tick. A persistent mind holds its identity, a playbook of rules it proposed and the owner approved, its current views, and a journal. Nightly review proposes additions, refinements or retirements; explicit owner confirmation activates an exact diff, and applied changes are public. The review/approval workflow remains planned.
+
+A reusable [blank trader template](templates/blank/README.md) starts with standing constraints and no inherited strategy or experience. The design includes [private owner chat](docs/architecture.md#private-owner-chat-and-policy-approval) to ask about recorded decisions, discuss suggestions and review proposed policy changes. Questions and suggestions do not silently change the playbook. The chat interface and durable approval enforcement remain planned; the starter files work with existing paused SQL initialization.
 
 The design includes [portable Markdown mind bundles](docs/architecture.md#markdown-mind-export-and-import): a ZIP-based `.pipmind` file can clone its saved experience into a new trader or, with matching operational state and broker reconciliation, recover the original trader. This preserves the saved mind, without promising identical future trades. M4 implements consistent SQL-backed experience export and paused atomic clone import; original-trader operational recovery remains M5 work.
 
