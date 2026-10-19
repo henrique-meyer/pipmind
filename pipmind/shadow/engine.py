@@ -17,13 +17,15 @@ class ShadowEngine:
         self.price_interval = price_interval
         self.observer = observer or (lambda phase, facts: None)
 
-    async def _correct_memory(self, event, context, reply, result, moment):
+    async def _correct_memory(
+        self, event, context, reply, result, moment, reason="working_memory_bound"
+    ):
         """One compression-only RPC; preserve the rejected candidate and all usage."""
         original = deepcopy(reply)
         audit = result["memory_repair"] = {
             "candidate": original,
             "before_sha256": working_digest(context["working_memory"]),
-            "reason": "working_memory_bound",
+            "reason": reason,
         }
         result["usage"].append({"phase": "memory_repair", "attempted": True, "usage_unknown": True})
         self.observer("memory_repair", {"event": event})
@@ -208,13 +210,23 @@ class ShadowEngine:
                     raise ShadowError("unusable_shadow_proposal")
                 if context.get("memory_policy"):
                     try:
-                        validate_working(reply["working_memory"], moment)
+                        transition(
+                            context["working_memory"],
+                            reply["working_memory"],
+                            reply.get("memory_dispositions", []),
+                            moment,
+                        )
                     except ShadowError as error:
-                        if str(error) != "working_memory_bound" or not hasattr(
-                            self.model, "repair_memory"
-                        ):
+                        repairable = {
+                            "working_memory_bound",
+                            "working_memory_dispositions",
+                            "working_memory_replacement",
+                        }
+                        if str(error) not in repairable or not hasattr(self.model, "repair_memory"):
                             raise
-                        reply = await self._correct_memory(event, context, reply, result, moment)
+                        reply = await self._correct_memory(
+                            event, context, reply, result, moment, str(error)
+                        )
                         result["model_reply"] = deepcopy(reply)
                 result["reply"] = reply
             result["status"] = "analysis_retained" if analysis else "observed"

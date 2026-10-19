@@ -331,6 +331,7 @@ def create_app(
 
     async def work():
         while not lifecycle["failed"]:
+            progressed = False
             try:
                 active.clear()
                 observe("source_poll", {})
@@ -376,7 +377,9 @@ def create_app(
                 runtime["last_error"] = "shadow_worker_failed"
                 await pause_until_durable(runtime["last_error"])
                 phase.update(name="idle", started=None)
-            await asyncio.sleep(2)
+            # Continue an ordered backlog immediately. Idle/error polling keeps
+            # its backoff, and each step still refreshes broker/feed facts.
+            await asyncio.sleep(0 if progressed and runtime["last_error"] is None else 2)
 
     @asynccontextmanager
     async def lifespan(app):

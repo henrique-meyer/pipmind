@@ -54,3 +54,38 @@ def test_driver_callback_keeps_peer_chain_validation():
     assert pytds.tls.verify_cb(None, None, 0, 0, 1)
     assert not pytds.tls.verify_cb(None, None, 20, 0, 0)
     assert not validate_host(None, b"sql.example")
+
+
+def test_trust_context_reuse_is_bounded_and_invalidated_by_ca_replacement(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import Mock
+
+    import pipmind.shadow.tls as tls
+
+    trust = tmp_path / "trust.pem"
+    trust.write_text("Synthetic trust store")
+    factory = Mock(side_effect=lambda _: object())
+    monkeypatch.setattr(tls, "_factory", factory)
+    tls._context.cache_clear()
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            contexts = list(pool.map(lambda _: tls.shared_context(trust), range(30)))
+        assert all(c is contexts[0] for c in contexts) and factory.call_count == 1
+        trust.write_text("A replaced synthetic trust store")
+        assert tls.shared_context(trust) is not contexts[0] and factory.call_count == 2
+        for i in range(6):
+            path = tmp_path / str(i)
+            path.write_text("Synthetic store")
+            tls.shared_context(path)
+        assert tls._context.cache_info().currsize == 4
+        missing = tmp_path / "missing.pem"
+        with pytest.raises(FileNotFoundError):
+            tls.shared_context(missing)
+        factory.side_effect = ValueError("Synthetic invalid trust store")
+        calls = factory.call_count
+        for _ in range(2):
+            with pytest.raises(ValueError, match="invalid trust"):
+                tls.shared_context(trust)
+        assert factory.call_count == calls + 2
+    finally:
+        tls._context.cache_clear()
