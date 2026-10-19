@@ -68,13 +68,13 @@ Done when a trading day of live events produces a journal and zero broker orders
 
 M4 also maintains bounded current state with audited before/after dispositions and retrieval of historical detail; unresolved conditions and confirmed theses must survive consolidation. Bounds/transition failures hold the pending input and pause reasoning. Playbook self-revision stays in M7.
 
-PIP-16 supplies a [blank starter](../templates/blank/README.md) compatible with existing paused initialization and the [private owner chat design](architecture.md#private-owner-chat-and-policy-approval). Subsequent owner-interface work provides separate blank/clone/recovery onboarding, authorized evidence-grounded explanations and suggestion discussion. It does not reset the hosted trader or close PIP-14 qualification. The UI and durable proposal/confirmation path remain planned; a template's instructions are not enforced SQL approvals.
+PIP-16 supplies a [blank starter](../templates/blank/README.md) compatible with existing paused initialization and the [private owner chat design](architecture.md#private-owner-chat-and-confirmed-edits). Future owner-interface work adds separate blank/clone/recovery onboarding, evidence-grounded explanations, suggestions and confirmed direct chat edits. It does not reset the hosted trader, close PIP-14 qualification or change autonomous nightly/market/experience learning. The UI and durable chat-edit path remain planned.
 
 ## M5 — Safety and reconciliation
 
 Outer hard boundary with real numbers in configuration, daily-loss stop fed by `AccountSnapshot`, single-instance lease, remote kill switch, suggestion channel and override channel.
 
-Implement the private owner policy-approval path before trading-capable use: version/hash-bound exact-diff proposals, authenticated owner confirmation, atomic approval/activation/history, immutable-boundary validation and stale/concurrent/replayed/expired request refusal. Test grounded chat answers and suggestion rejection/revision without policy mutation, draft isolation, failure rollback, in-flight decisions and clone/recovery authority separation through actual SQL paths. Questions and ordinary acknowledgments cannot approve changes; chat cannot place orders. Routine bounded memory maintenance remains separate from policy editing.
+Owner-chat controls add version-bound exact-diff confirmation only for edits made through chat. Verify atomic apply/audit, stale/expired/replayed/concurrent request refusal, interruption rollback, immutable-boundary checks and clone/recovery separation through actual SQL paths. Grounded questions/suggestion discussion remain distinct from direct edits. Test that an autonomous revision invalidates a conflicting pending chat diff and that pending/rejected chat edits never block or silently execute through existing nightly review/learning. M7's autonomous self-review contract remains unchanged.
 
 Reconciliation takes positions and balances from gateway snapshots. A mismatch halts new risk.
 
@@ -90,9 +90,9 @@ Done when a scripted round-trip is flat at the end and the core's position match
 
 ## M7 — Self-review
 
-The nightly review can propose adding a rule, placing one on trial, sharpening one, or retiring one. Every proposal requires explicit owner confirmation of the exact diff against the current base before the controlled activation service changes active policy. Retirement requires repeated evidence. Applied versions and approval provenance are stored, and a public applied-diff document is produced. Override-tagged rows do not count as evidence.
+The nightly review can add a rule, sharpen one, or retire one. Retirement requires repeated evidence. Playbook versions are stored, and a public diff document is produced. Override-tagged rows do not count as evidence.
 
-Done when a fixture journal shows proposed add/sharpen/trial changes with no mutation before confirmation, exactly-once approved activation, rejection/expiry/conflict with no policy change, and a refused retirement that cited only one outcome. Activate the M1 self-review cases against the implementation, including valid repeated-evidence retirement, override exclusion and evidence grounding. Verify supported clone/recovery round trips preserve current/retired rule versions, review/suggestion/approval history, evidence references and override exclusions while pending source consent grants no destination authority; subsequent approved revisions continue monotonic versions.
+Done when a fixture journal shows an add, a sharpen, and a refused retirement that cited only one outcome. Activate the M1 self-review cases against the implementation, including valid repeated-evidence retirement, override exclusion and evidence grounding. Verify clone/recovery round trips preserve current/retired rule versions, review and suggestion history, evidence references and override exclusions; subsequent reviews continue monotonic versions.
 
 ## M8 — Public launch
 

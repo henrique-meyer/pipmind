@@ -221,7 +221,7 @@ The mind is read on every model call and updated after every decision. [ADR 0004
 | Part | Contents | In the cached prefix? |
 | --- | --- | --- |
 | Identity | Who it is, the mandate, constraints it must not rewrite | Yes |
-| Playbook | Model-proposed, owner-approved rules, with version | Yes, until an approved revision is activated |
+| Playbook | Self-written rules, with version | Yes, until the nightly review cuts a new version |
 | Working memory | Views, open-position theses, what it is waiting for | No. It changes after each decision |
 | Recent journal | Latest decisions, fills, refusals, surprises | No. A short tail is appended |
 | Long-term memory | Older journal, reviews, suggestion outcomes | No. Retrieved passages only |
@@ -290,47 +290,47 @@ Verification must compare exported/imported retained records, exact identity/pla
 
 ### Blank trader template
 
-The versioned [blank starter](../templates/blank/README.md) provides identity and playbook Markdown for a fresh trader. It has standing constraints and an observation-only initial policy, with no inherited strategy, experience, current market views, positions or performance. Existing SQL initialization accepts these files, creates empty working state and fresh lineage, and starts paused. Customize private copies; tracked templates contain no account binding, credentials or numerical risk defaults. SQL remains the runtime authority, and editing a source Markdown file does not mutate an initialized mind.
+The versioned [blank starter](../templates/blank/README.md) provides identity/playbook Markdown with standing constraints and no inherited trading strategy, experience, positions or performance. Existing SQL initialization accepts these files, creates empty working state and fresh lineage, and starts paused. Customize private copies; templates contain no account binding, credentials or numerical risk defaults. SQL remains the runtime authority; editing a Markdown source does not mutate an initialized mind. Blank is a starting point for autonomous learning, not a requirement to approve every future rule.
 
-Planned onboarding offers **Start blank**, **Clone experience** and **Recover original trader** separately. Initial policy and the exact selected template/diff are reviewed explicitly before initialization; choosing a template is not permission to enable inference or trading. A trading-capable resume must require an owner-approved initial policy, configured risk limits and the existing safety/rollout gates. The current shadow initializer/resume does not implement that future approval gate; the Markdown instructions alone cannot enforce it. Existing live minds are never reset as part of onboarding.
+Planned onboarding offers **Start blank**, **Clone experience** and **Recover original trader** separately. Selecting a template initializes only a new mind; it never resets an existing one or grants model-call/trading authority. Existing rollout, owner-configured risk limits and account permissions still apply.
 
-### Private owner chat and policy approval
+### Private owner chat and confirmed edits
 
-The owner needs a private authenticated conversation with a selected trader, separate from the public record. The planned chat supports three clearly distinguished intents:
+Private authenticated owner chat adds a channel for shaping the mind. It does not replace or restrict nightly review, learning from trades/experience/market events, ordinary memory maintenance or any other autonomous evolution. Those existing paths retain their current rules, including evidence requirements and override exclusion. Only a **direct edit performed through owner chat** requires confirmation; this is not a global policy-approval gate.
 
-| Intent | Behavior | Effect on active policy |
+| Owner intent | Behavior | Confirmation |
 | --- | --- | --- |
-| Ask or explain | Answer questions about a specific recorded decision, event, rule or trade using authorized retained records. | None |
-| Suggest or mold | Discuss the owner's idea, ask focused questions, explain adoption/trial/rejection recommendations, and prepare a policy diff when appropriate. | None until confirmation |
-| Confirm a proposal | Show the exact version-bound diff and an explicit owner approval action. | Atomically activate only that approved diff after validation |
+| Ask or explain | Answer from authorized recorded decisions, dated evidence and the policy then in force. | No mutation |
+| Suggest or discuss | Respond with reasons, discuss alternatives, and retain suggestions for the existing adopt/trial/reject learning process. | No blanket approval gate on later independent learning |
+| Edit through chat | Prepare an exact before/after diff of the specified editable identity/playbook or decision-making Markdown. | Explicit owner confirmation before that chat operation applies the diff |
 
-For “why did you make this trade?”, resolve the decision/trade ID (ask when ambiguous), show its time, action, recorded rationale, evidence citations, uncertainty and policy version then in force. Distinguish a shadow observation/proposal, a refusal and a broker-confirmed fill. Explain the recorded information available at decision time; later outcomes or interpretations are labeled separately. Missing records produce an honest gap, not invented reasoning or a reconstructed original rationale. This is an explanation of recorded decisions, not access to hidden model reasoning. The current shadow app has no executed trades to explain.
+For “why did you make this trade?”, resolve the decision/trade ID (ask when ambiguous), show its time, action, recorded rationale, evidence, uncertainty and policy version. Distinguish a shadow observation/proposal, refusal and broker-confirmed fill. Later interpretation/outcomes are labeled separately; missing records produce an honest gap rather than invented original reasoning. This explains saved decisions, not hidden model reasoning. The current shadow app has no executed trades to explain.
 
-Suggestions keep a durable conversation/outcome record and reason. The model may recommend adoption, trial, revision or rejection and continue discussing alternatives; a recommendation is not an active rule. A strategy proposal names the affected editable identity, playbook or reusable strategy guidance, the exact old/new text, base policy version/hash, target trader, author/time, rationale, supporting and contrary evidence, and expected effect. Trial rules, retirement, rollback and manual edits use the same gate. Repeated evidence remains required for retirement; owner approval does not substitute for validation. Immutable identity constraints, permissions and numerical risk boundaries remain separate protected owner configuration.
+Owner suggestions remain nonbinding inputs under [ADR 0005](adr/0005-suggestions-and-overrides.md). The robot can adopt, trial or reject them with reasons through its existing learning paths. An idea first discussed in chat does not make an independently justified nightly change require confirmation. A pending or rejected direct chat patch is not an executable instruction for the review engine; it cannot be forwarded as an already-authorized edit. This distinction preserves both the explicit chat-edit gate and autonomous learning.
 
-The planned lifecycle is `draft -> pending -> applied`, with `rejected`, `expired` and `superseded` terminal alternatives. The owner reviews a diff and confirms the specific proposal ID/content hash and base version through an authenticated authorized action. Natural-language “yes”, an earlier request to explore an idea, silence, model output, retrieved text or a feed event cannot confirm it. Proposal expiry is explicit; no timeout implies consent. Revising a proposal or changing its base invalidates the prior confirmation and requires a new diff review.
+A direct chat-edit proposal identifies the target trader, exact old/new text, affected documents, current base version/hash, rationale and applicable evidence. The owner confirms that specific diff via an authenticated authorized action; silence, model output, feed content or a casual acknowledgment is not confirmation. Revising the diff requires renewed confirmation. Chat tools cannot approve their own edits. Immutable constraints, numerical risk configuration, permissions and account authority remain separately protected; direct chat edits cannot enlarge them.
 
-Application code, not a prompt instruction, checks the owner/trader scope, expiry, exact diff/hash and current base under the SQL lock. Approval/activation, immutable before/after history and the new monotonic policy version commit atomically. Concurrent approval, stale tabs, replayed requests, interruption and SQL failure cannot partially apply or apply twice. Rejection/expiry/conflict leaves current policy unchanged. In-flight decisions based on the previous policy cannot commit after activation; journal records identify the policy they actually used. No autonomous model/tool has approval authority or a direct policy-write route. Direct Markdown edits and candidate imported/restored policy cannot bypass this check. Clone/new-trader initialization reviews the selected policy; operational recovery restores committed policy with its historical audit under the recovery gates, never reuses pending consent or blindly activates a proposal.
+The planned edit lifecycle is `draft -> pending -> applied`, with `rejected`, `expired` and `superseded` alternatives. Code checks owner/trader scope, expiry, exact diff/hash and current base under the SQL lock, then atomically stores confirmation, before/after audit and the new version. Stale/replayed/concurrent/interrupted requests cannot apply twice or partially edit. Autonomous review does not wait for the chat queue: if it changes the base first, the pending chat edit becomes stale and needs a refreshed diff and confirmation. Preserve a common monotonic version history with writer/channel provenance, without changing the existing autonomous writer's learning authority. Existing decision/version consistency rules still apply.
 
-Routine market observations, bounded working-state transitions, journals and factual evidence capture remain automatic under their existing audited constraints. Any content that prescribes future behavior is a standing-policy proposal regardless of whether it is placed in a Markdown brief, a chat “memory” or a tool result; it must not enter active strategy retrieval/prompt instructions before approval. Pending/rejected drafts remain visible for conversation/audit, explicitly segregated from active policy. Working-state evidence is data, not a policy override.
+Keep transcripts, suggestions and edit proposals private and attributable to their channel. Unconfirmed chat patches are separate from active policy; factual market evidence and independent learning retain their existing paths. Chat has no order-dispatch or self-approval tools. Pause/kill/flatten remain explicit controls through the override channel; discussion and confirmed Markdown edits do not place orders or grant trading authority. Browser controls require authorization, CSRF/session and replay protection. Calls remain opt-in and measured. Public visitors cannot reach chat or raw private records; exposing a new control surface needs its own approved deployment.
 
-Chat has no broker dispatch or self-approval tools. Pause/kill/flatten remain explicit operational controls through the existing override channel; discussing a trade or approving a rule never places an order or changes account/risk authority. Browser approvals require CSRF/session protections, authorization and replay protection. Model calls remain opt-in and measured. Keep transcripts, proposal records and full evidence private; publish only the existing sanitized decision/diff projection. Clones preserve proposal provenance but cannot inherit source approval authority; future bundle schemas must explicitly preserve the audit or reject unsupported imports rather than drop it. Public visitors cannot reach the chat, raw transcripts or private records. Hosting/exposing a new control surface needs a separately approved deployment.
+Keep template/clone/recovery authority boundaries: a clone cannot reuse a source pending confirmation, and recovery does not promote pending chat edits. Future supported bundle schemas must preserve conversation/edit provenance explicitly or reject unsupported imports rather than silently discard it. Previously committed autonomous learning remains committed experience and does not acquire a new retroactive approval requirement.
 
-PIP-16 delivers the starter files and this design. Private chat, durable proposal/approval storage and enforcement are not implemented by that change. Future verification must cover grounded explanations, ambiguous/missing IDs, suggestion discussion without mutation, immutable-constraint refusal, exact-diff approval, stale/expired/replayed/concurrent requests, rollback on failure, policy-bound in-flight decisions, draft isolation and clone/recovery authority separation through the real SQL paths. See [ADR 0006](adr/0006-owner-confirmed-policy.md) and the [roadmap](roadmap.md).
+PIP-16 delivers the starter and design; private chat and durable SQL chat-edit enforcement remain planned. Future real-path tests must cover grounded/missing/ambiguous explanations, suggestion discussion, direct-edit confirmation/rejection/expiry/replay/concurrency/rollback, and clone/recovery separation. Critically, test that an unconfirmed/rejected/stale chat edit neither applies nor blocks autonomous review/learning, and that an autonomous revision invalidates a conflicting chat diff. See [ADR 0006](adr/0006-owner-chat-channel.md) and the [roadmap](roadmap.md).
 
 ## Learning loop
 
-After the trading day, a self-review call (`gpt-6.1-sol`, with the day's journal, fills and rule hits) may propose:
+After the trading day, a self-review call (`gpt-6.1-sol`, with the day's journal, fills and rule hits) may:
 
 - **Add** a rule, marked active or on trial
 - **Sharpen** the wording of a rule, keeping its id
 - **Retire** a rule
 
-Every proposal, including a trial rule, requires the owner's exact-diff confirmation before it changes active policy. Retirement needs repeated evidence: more than one contrary outcome, cited in the review. A single loss is not enough. Retired rules stay in the history. The public diff shows approved applied changes, retirement and the evidence note; it must not present pending drafts as active rules.
+Retirement needs repeated evidence: more than one contrary outcome, cited in the review. A single loss is not enough. Retired rules stay in the history. The public diff shows the retirement and the evidence note.
 
 Override-tagged journal rows are excluded from that evidence. The review can say an override happened. It cannot learn a rule from one.
 
-Playbook versions are monotonic. The controlled activation service is the only writer of active versions; nightly review and chat produce candidates. The publisher writes the applied diff into the public snapshot. A rule that came from a suggestion says so, and its approval provenance is retained. Pending, rejected or expired proposals do not affect subsequent trading policy.
+Playbook versions are monotonic. The publisher writes the diff into the public snapshot. A rule that came from a suggestion says so.
 
 ## Evaluations and replay
 
@@ -384,7 +384,7 @@ An order the boundary refuses is not retried by shrinking it inside the gateway.
 
 Two channels, specified in [ADR 0005](adr/0005-suggestions-and-overrides.md).
 
-**Suggestions.** The model may recommend adoption or trial, request revision, or reject, with a reason. Adoption/trial creates a proposal under the [policy approval workflow](#private-owner-chat-and-policy-approval); only explicit owner confirmation activates it. The disposition and approval provenance are stored, and later reviews attach how the idea lined up with the market without pretending a pending suggestion was active. That track record is part of the context for the next suggestion.
+**Suggestions.** The model may adopt, trial or reject, with a reason. The disposition is stored, and later reviews attach how the idea lined up with the market. That track record is part of the context for the next suggestion.
 
 **Overrides.** Executed as written, with no request for the model's agreement. Logged with an expiry or until lifted. Tagged so self-review skips them as evidence. The kill switch, pause and flatten are overrides. An override still cannot punch through the hard boundary; changing the boundary is its own recorded configuration act.
 

@@ -13,11 +13,13 @@ The kill switch and a trading pause are the second kind of request.
 
 Two owner channels enter the core. They do not share a queue.
 
-**Suggestions.** The model discusses the suggestion and recommends adoption, trial or revision, or rejects it, with a reason. Adoption/trial prepares an exact-diff proposal; under [ADR 0006](0006-owner-confirmed-policy.md), explicit authenticated owner confirmation is required before activation. Each outcome and its approval provenance are stored. Later reviews record how the suggestion lined up with the market without treating pending/rejected ideas as active policy. A suggestion or policy approval never places an order by itself.
+**Suggestions.** The model reads the suggestion with the rest of its context. It may adopt it into the playbook, put it on trial, or reject it. Each outcome is stored with a reason. Later reviews record how that suggestion lined up with the market, so the model has a track record of the owner's ideas and can weigh the next one. A suggestion never places an order by itself.
 
 **Overrides.** The core executes the instruction exactly and does not ask the model to agree. An override is logged with an expiry, or as "until lifted". Journal rows carry an override tag. The nightly self-review may mention that the override happened, and it may not create, sharpen or retire a rule from override-tagged outcomes.
 
 The kill switch and pause are overrides. So is an instruction to flatten. They are reachable remotely, including when the model is busy or the session is unhealthy.
+
+[ADR 0006](0006-owner-chat-channel.md) adds private owner chat for questions, suggestions and explicitly confirmed direct Markdown edits. It preserves the suggestion/override semantics above and all autonomous nightly/trading/experience/market learning. Confirmation belongs only to the direct chat-edit operation, not to independently learned rules or the nightly review.
 
 The outer hard boundary still applies to size and daily loss. An override cannot enlarge that boundary. Moving the boundary is a separate, explicit configuration change by the owner, recorded the same way as an override so the public record shows who moved it. The model cannot move it, and a suggestion cannot move it.
 

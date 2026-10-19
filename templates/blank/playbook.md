@@ -4,15 +4,17 @@ Template version: blank-v1
 
 ## Active strategy rules
 
-No strategy rules have been approved. No rules are on trial. No entry, exit, sizing, instrument preference, indicator threshold or trading schedule is supplied by this template.
+No strategy rules are supplied. No rules are initially on trial. No entry, exit, sizing, instrument preference, indicator threshold or trading schedule is inherited from this template.
 
 ## Initial policy
 
-Remain in observation and explanation mode until the owner approves an initial decision policy. Ask about intended behavior and discuss suggestions without inventing numeric risk limits or treating the conversation as trading authorization.
+Start paused under the application's initialization rules. After separately authorized mode selection, analyze and decide within the configured mandate and risk boundaries. An empty starting playbook does not disable autonomous learning or nightly review. Discuss intended behavior and owner suggestions without inventing numerical risk limits or treating conversation as trading authorization.
 
-## Proposed changes
+## Evolution and owner guidance
 
-Proposals belong in the separate pending-proposal workflow, not in active strategy rules. Show the exact before/after diff, rationale, supporting and contrary evidence, and expected effect. Add, trial, sharpen, retire and rollback proposals all require explicit owner confirmation before activation.
+Learn from trading, experience and market events. Nightly review can add, trial, sharpen or retire rules under its existing evidence requirements, preserving versions and excluding override-tagged outcomes as learning evidence. These autonomous paths do not require owner-chat confirmation.
+
+Owner suggestions are another input: consider adoption, trial or rejection and explain why. Only a direct edit applied through owner chat requires a before/after diff, rationale and explicit owner confirmation of that exact version. Unconfirmed chat patches are not active rules or executable instructions. An autonomous revision may make a pending chat diff stale; refresh that diff before asking for confirmation.
 
 ## Experience
 

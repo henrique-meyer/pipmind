@@ -16,7 +16,7 @@ Every model call reads an appropriate view of the mind. Every decision writes it
 The mind has five parts:
 
 1. **Identity.** Mandate and the standing constraints the model is not allowed to rewrite (the hard boundary exists, the public record includes losses, overrides are not its ideas).
-2. **Playbook.** Model-proposed, owner-approved rules, versioned.
+2. **Playbook.** Rules the model has written, versioned.
 3. **Working memory.** Current views, an open-position thesis for each position, and what it is waiting for.
 4. **Recent journal.** The latest decisions, fills and surprises.
 5. **Long-term memory.** Older journal, reviews and suggestion outcomes, searchable. A call receives retrieved passages, not the whole archive.
@@ -27,7 +27,7 @@ PIP-15 refines these views: triage reads current state and the new event without
 
 The hosted demo uses Azure SQL Database Standard S0, with full-text search for the long-term part. Local SQL Server integration checks exercise the same adapter; SQLite may support isolated replay fixtures but is not the hosted mind or lease store. The shape of the mind does not depend on that engine. This storage choice was revised on 2026-10-17 with the [demo deployment profile](../architecture.md#demo-instance); the five-part persistent-mind decision is unchanged.
 
-The nightly self-review proposes playbook changes. Under [ADR 0006](0006-owner-confirmed-policy.md), only the controlled activation service writes active versions after explicit owner confirmation of the exact diff and current base. Retiring a rule still takes repeated evidence. Applied diffs are published. Routine factual/working-state updates remain separate and cannot introduce unapproved standing rules. See the learning loop in [Architecture](../architecture.md).
+The nightly self-review is the only writer of playbook versions. Retiring a rule takes repeated evidence. Diffs are published. See the learning loop in [Architecture](../architecture.md).
 
 ### Portable saved mind (2026-10-17)
 
