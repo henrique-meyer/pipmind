@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-10-19
-- Extends: ADR 0005 with a private conversation and confirmed direct-edit path. Existing autonomous learning decisions remain in force.
+- Extends: ADRs 0004/0005 with a private conversation and separately confirmed owner-edit writer. Existing autonomous learning decisions remain in force.
 
 ## Context
 

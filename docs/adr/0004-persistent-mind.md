@@ -27,7 +27,7 @@ PIP-15 refines these views: triage reads current state and the new event without
 
 The hosted demo uses Azure SQL Database Standard S0, with full-text search for the long-term part. Local SQL Server integration checks exercise the same adapter; SQLite may support isolated replay fixtures but is not the hosted mind or lease store. The shape of the mind does not depend on that engine. This storage choice was revised on 2026-10-17 with the [demo deployment profile](../architecture.md#demo-instance); the five-part persistent-mind decision is unchanged.
 
-The nightly self-review is the only writer of playbook versions. Retiring a rule takes repeated evidence. Diffs are published. See the learning loop in [Architecture](../architecture.md).
+The nightly self-review is the autonomous writer of playbook versions. Retiring a rule takes repeated evidence. Diffs are published. [ADR 0006](0006-owner-chat-channel.md) adds separately confirmed direct owner-chat edits; it does not gate nightly review or any other existing autonomous learning. See the learning loop in [Architecture](../architecture.md).
 
 ### Portable saved mind (2026-10-17)
 
