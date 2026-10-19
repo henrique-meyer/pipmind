@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from pipmind.contracts import ContractError
 from pipmind.feeds.common import FeedError, identity, json_body, url
 from pipmind.feeds.macro import Macro
-from pipmind.feeds.store import encoded
+from pipmind.feeds.store import encoded, merge_state
 
 
 def normalize_page(payload, mapping, macro, received):
@@ -121,7 +121,9 @@ class CanonicalBackfill:
                     },
                 ),
             )
-        except (ContractError, KeyError, TypeError):
+        except (ContractError, KeyError, TypeError) as error:
+            if isinstance(error, FeedError) and str(error).startswith("feed_store_"):
+                raise
             self.store.quarantine(key)
             raise
         return bool(events)
@@ -142,6 +144,29 @@ class CanonicalBackfill:
         )
         cursor = self.store.state(key, {"offset": 0, "complete": False})
         if cursor["complete"]:
+            # Older releases committed quality metadata in a second transaction.
+            # Repair that derived view from the retained cursor, without another
+            # provider read, event mutation or pagination rewind.
+            if not cursor.get("quality_recorded") and "quality" in cursor:
+                with self.store.transaction() as db:
+                    retained = self.store.state(key, {}, db=db)
+                    if retained.get("complete") and not retained.get("quality_recorded"):
+                        merge_state(
+                            self.store,
+                            db,
+                            (
+                                "canonical:quality",
+                                {
+                                    mapping["currency"] + ":" + mapping["indicator"]: {
+                                        "status": retained["status"],
+                                        "quality": retained["quality"],
+                                        "checked_at": retained["captured_at"],
+                                        "complete_history_proven": False,
+                                    }
+                                },
+                            ),
+                        )
+                        self.store.save(key, {**retained, "quality_recorded": True}, db=db)
             return False
         offset = cursor["offset"]
         if type(offset) is not int or not 0 <= offset <= 10000:
@@ -199,19 +224,24 @@ class CanonicalBackfill:
                         "status": "retained_window_captured" if not more else "partial",
                         "quality": payload.get("data_quality", {}),
                         "captured_at": moment.isoformat(),
+                        "quality_recorded": True,
+                    },
+                ),
+                state_patch=(
+                    "canonical:quality",
+                    {
+                        mapping["currency"] + ":" + mapping["indicator"]: {
+                            "status": "partial" if more else "retained_window_captured",
+                            "quality": payload.get("data_quality", {}),
+                            "checked_at": moment.isoformat(),
+                            "complete_history_proven": False,
+                        }
                     },
                 ),
             )
-            with self.store.transaction() as db:
-                quality = self.store.state("canonical:quality", {}, db=db)
-                quality[mapping["currency"] + ":" + mapping["indicator"]] = {
-                    "status": "partial" if more else "retained_window_captured",
-                    "quality": payload.get("data_quality", {}),
-                    "checked_at": moment.isoformat(),
-                    "complete_history_proven": False,
-                }
-                self.store.save("canonical:quality", quality, db=db)
-        except (ContractError, KeyError, TypeError):
+        except (ContractError, KeyError, TypeError) as error:
+            if isinstance(error, FeedError) and str(error).startswith("feed_store_"):
+                raise
             self.store.quarantine(capture_key)
             self.store.alert("macro", "canonical_page_quarantined", moment)
             raise

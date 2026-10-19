@@ -208,12 +208,13 @@ def create_app(
                 for _ in range(100):
                     # The engine uses synchronous SQL. Keep blocked database
                     # connections off the ASGI loop, including during outages.
-                    if not await asyncio.to_thread(lambda: asyncio.run(engine.step())):
+                    progressed = await asyncio.to_thread(lambda: asyncio.run(engine.step()))
+                    runtime.update(
+                        last_progress=stamp(now()),
+                        last_error="source_unavailable" if source_errors else None,
+                    )
+                    if not progressed:
                         break
-                runtime.update(
-                    last_progress=stamp(now()),
-                    last_error="source_unavailable" if source_errors else None,
-                )
             except (ShadowError, ContractError):
                 runtime["last_error"] = "shadow_step_unavailable"
             await asyncio.sleep(2)

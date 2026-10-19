@@ -360,7 +360,12 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
 
 
 @pytest.mark.parametrize(
-    "versions", [("shadow-context-v1", "sql-memory-v1"), ("shadow-context-v2", "sql-memory-v2")]
+    "versions",
+    [
+        ("shadow-context-v1", "sql-memory-v1"),
+        ("shadow-context-v2", "sql-memory-v2"),
+        ("shadow-context-v3", "sql-memory-v2"),
+    ],
 )
 def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind, versions):
     import io
@@ -447,7 +452,24 @@ def test_sql_feed_inbox_outbox_cursor_atomicity_and_reprocessing(mind):
         store.complete_batch("macro", key, [good, bad], MOMENT, cursor=(key, "complete"))
     assert store.state(key) == "accepted"
     assert not any(row["event"]["message_id"] == key for row in store.events())
-    store.complete_batch("macro", key, [good], MOMENT, cursor=(key, "complete"))
+    patch_key = "atomic-patch:" + uuid4().hex
+    store.complete_batch(
+        "macro",
+        key,
+        [good],
+        MOMENT,
+        cursor=(key, "complete"),
+        state_patch=(patch_key, {"checked": True}),
+    )
+    store.complete_batch(
+        "macro",
+        key,
+        [good],
+        MOMENT,
+        cursor=(key, "accepted"),
+        state_patch=(patch_key, {"checked": False}),
+    )
+    assert store.state(patch_key) == {"checked": True}
     reopened = SqlFeedStore(mind.connect)
     assert reopened.source_id() == store.source_id()
     assert reopened.state(key) == "complete"
@@ -537,6 +559,173 @@ def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primar
     assert all(SqlMind(mind.connect, r["trader"]).head()["paused"] for r in report["results"])
     assert mind.status() == baseline
     assert report["human_review"].startswith("pending")
+
+
+@pytest.mark.parametrize("operation", ["feed", "inputs", "terms"])
+def test_sql_batches_leave_peer_progress_possible_under_network_latency(mind, operation):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from pipmind.contracts import stamp
+    from pipmind.feeds.fixtures import pulse
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    acquired = threading.Event()
+    enabled = False
+
+    class Cursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def __getattr__(self, key):
+            return getattr(self.cursor, key)
+
+        def execute(self, sql, *args):
+            time.sleep(0.1)  # Representative network latency, not a database benchmark.
+            self.cursor.execute(sql, *args)
+            if enabled and sql.startswith("DECLARE @r"):
+                acquired.set()
+            return self
+
+    class Connection:
+        def __init__(self):
+            self.db = mind.connect()
+
+        def __getattr__(self, key):
+            return getattr(self.db, key)
+
+        def cursor(self):
+            return Cursor(self.db.cursor())
+
+    if operation == "feed":
+        slow, peer = SqlFeedStore(Connection), SqlFeedStore(mind.connect)
+        payloads = [{**pulse("news", MOMENT), "event_id": uuid4().hex} for _ in range(100)]
+        before = max((r["sequence"] for r in peer.events(limit=500)), default=0)
+        key = "batch:" + uuid4().hex
+
+        def action():
+            slow.page("news", payloads, key, 100, MOMENT)
+
+        query = peer.status
+    else:
+        slow = SqlMind(Connection, mind.trader)
+        query = mind.status
+        if operation == "inputs":
+            events = []
+            for sequence in range(1, 101):
+                identifier = uuid4().hex
+                events.append(
+                    {
+                        "sequence": sequence,
+                        "event": {
+                            "schema_version": 1,
+                            "kind": "ClockEvent",
+                            "message_id": identifier,
+                            "available_at": stamp(MOMENT),
+                            "payload": {
+                                "schema_version": 1,
+                                "event_id": identifier,
+                                "ts": stamp(MOMENT),
+                                "reason": "daily_brief",
+                            },
+                        },
+                    }
+                )
+
+            def action():
+                slow.accept("batch-latency", events, MOMENT)
+        else:
+
+            def action():
+                with slow.transaction() as cur:
+                    slow._insert(
+                        cur,
+                        metadata("latency-memory", "memory", stamp(MOMENT), mind.trader),
+                        " ".join("token" + str(i) for i in range(80)),
+                    )
+
+    enabled = True
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(action)
+        assert acquired.wait(10)
+        query()  # Must obtain the same application lock within its normal five seconds.
+        future.result(timeout=15)
+    if operation == "feed":
+        assert peer.state(key) == 100
+        assert [r["event"]["message_id"] for r in peer.events(after=before, limit=500)] == [
+            p["event_id"] for p in payloads
+        ]
+    elif operation == "inputs":
+        assert mind.status()["pending"] == 100
+    else:
+        assert mind.search("token11", MOMENT)[0]["metadata"]["record_id"] == "latency-memory"
+
+
+def test_sql_feed_bulk_collision_rolls_back_page_and_cursor(mind):
+    from pipmind.feeds.common import FeedError
+    from pipmind.feeds.fixtures import pulse
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    store = SqlFeedStore(mind.connect)
+    original = {**pulse("news", MOMENT), "event_id": uuid4().hex, "headline": "Case Sensitive"}
+    store.page("news", [original], "seed:" + uuid4().hex, 1, MOMENT)
+    before = store.events(limit=500)
+    key = "rollback:" + uuid4().hex
+    new = {**original, "event_id": uuid4().hex}
+    with pytest.raises(FeedError, match="conflicting_normalized_event"):
+        store.page("news", [new, {**original, "headline": "case sensitive"}], key, 2, MOMENT)
+    assert store.state(key) is None and store.events(limit=500) == before
+
+
+def test_status_reports_committed_progress_before_a_backlog_batch_finishes(mind):
+    import threading
+
+    from fastapi.testclient import TestClient
+
+    from pipmind.contracts import stamp
+    from pipmind.shadow.service import create_app
+
+    started, release = threading.Event(), threading.Event()
+    identifiers = [uuid4().hex for _ in range(2)]
+    events = [
+        {
+            "sequence": i + 1,
+            "event": {
+                "schema_version": 1,
+                "kind": "ClockEvent",
+                "message_id": key,
+                "available_at": stamp(MOMENT),
+                "payload": {
+                    "schema_version": 1,
+                    "event_id": key,
+                    "ts": stamp(MOMENT),
+                    "reason": "daily_brief",
+                },
+            },
+        }
+        for i, key in enumerate(identifiers)
+    ]
+    mind.accept("heartbeat-test", events, MOMENT)
+    mind.set_paused(False)
+
+    class Model:
+        async def triage(self, event, *args):
+            if event["message_id"] == identifiers[1]:
+                started.set()
+                while not release.is_set():
+                    await asyncio.sleep(0.01)
+            return {"wake": False, "summary": "Synthetic heartbeat check"}, {"synthetic": True}
+
+    token = "synthetic-heartbeat-token-" + uuid4().hex
+    with TestClient(create_app(mind, Model(), token, scheduled_wakes=False)) as client:
+        try:
+            assert started.wait(15)
+            status = client.get("/status", headers={"Authorization": "Bearer " + token}).json()
+            assert status["outcomes"] == 1 and status["last_progress"] is not None
+            assert status["last_error"] is None
+        finally:
+            release.set()
 
 
 def test_many_retained_records_use_runtime_bundle_and_keep_override_provenance(mind):

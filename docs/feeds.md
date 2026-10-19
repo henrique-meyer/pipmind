@@ -4,6 +4,10 @@ The `macro`, `news` and `social` workers normalize external inputs into `Release
 
 ## Hosted coverage and configuration changes
 
+Hosted event pages use one bounded, parameterized SQL batch, preserving input order, fact-conflict refusal and atomic event/cursor commits. Source pages must not hold the shared lock for hundreds of network round trips. Storage failures leave valid captures pending rather than quarantining them as invalid data.
+
+An X account's first activation seeds only its latest page (at most 100 posts). Its newest ID anchors live reads; all later posts retain complete pagination and durable restart recovery. An unfinished older-history cursor is retained privately under `x:initial_history:<user-id>`, including cursors created by earlier unbounded startup behavior. Already retained posts are never deleted. This does not prove complete past history; a separately chosen historical backfill needs its own cost/coverage review. There is no spend-based dropping of posts after the live anchor.
+
 Private recipes are validated against the provider catalogue and real responses before enabling them. Preserve each series' native units: a GDP level is not a quarterly growth rate, and a payroll employment level is not its monthly change. `ff_title: null` explicitly disables an unverified consensus crosswalk. Calendar matches still require the exact currency, title and scheduled instant; missing consensus remains unknown.
 
 `bootstrap_latest: true` retains one latest published observation when a series falls outside the configured backfill window, then continues normal window paging and live ingestion. It has a separate durable marker, preserves stream/page cursors and never claims complete history. Original pages and publication evidence remain retained. A provider's second-level precision is conservatively exposed as `minute` in the existing v1 precision enum; the exact timestamp and original precision remain retained. News parsing supports RDF publication dates and explicit timezone offsets. HTTP article citations are retained exactly but never fetched; network targets still require HTTPS.

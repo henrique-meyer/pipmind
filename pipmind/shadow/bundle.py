@@ -16,6 +16,7 @@ RETRIEVAL_VERSION = "sql-memory-v2"
 SUPPORTED_CONTEXTS = {
     ("shadow-context-v1", "sql-memory-v1"),
     ("shadow-context-v2", "sql-memory-v2"),
+    ("shadow-context-v3", "sql-memory-v2"),
     (PROMPT_VERSION, RETRIEVAL_VERSION),
 }
 

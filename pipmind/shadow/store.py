@@ -83,8 +83,12 @@ class SqlMind:
             ),
         )
         pk = cur.fetchone()[0]
-        for term in terms(semantic_text(record_view(meta, body)["body"])):
-            cur.execute("INSERT pm_terms VALUES(%s,%s)", (term, pk))
+        index_terms = terms(semantic_text(record_view(meta, body)["body"]))
+        if index_terms:
+            cur.execute(
+                "INSERT pm_terms(term,record_pk) SELECT value,%s FROM OPENJSON(%s)",
+                (pk, encoded(index_terms)),
+            )
 
     def initialize(self, identity, playbook, moment, *, binding, records=()):
         if (
@@ -168,6 +172,8 @@ class SqlMind:
             )
             row = cur.fetchone()
             previous = row[0] if row else 0
+            had_cursor = row is not None
+            inputs = {}
             for item in batch:
                 if not isinstance(item, dict) or not {"sequence", "event"} <= set(item):
                     raise ShadowError("invalid_input_page")
@@ -177,40 +183,69 @@ class SqlMind:
                 if validate_event(envelope, self.contracts) > moment:
                     raise ShadowError("input_not_yet_available")
                 identifier = event_id(envelope)
-                if len(identifier) > 256 or len(encoded(envelope).encode()) > 131072:
+                if (
+                    len(identifier.encode("utf-16-le")) > 512
+                    or len(encoded(envelope).encode()) > 131072
+                ):
                     raise ShadowError("shadow_input_bound")
                 facts = digest(encoded(event_facts(envelope)))
-                cur.execute(
-                    "SELECT facts FROM pm_inputs WHERE trader=%s AND id=%s",
-                    (self.trader, identifier),
-                )
-                old = cur.fetchone()
-                if old and old[0] != facts:
+                if identifier in inputs and inputs[identifier]["facts"] != facts:
                     raise ShadowError("conflicting_shadow_input")
-                if not old:
-                    cur.execute(
-                        "SELECT part,body FROM pm_records WHERE trader=%s AND id=%s",
-                        (self.trader, identifier),
-                    )
-                    inherited = cur.fetchone()
-                    status = "pending"
-                    if inherited:
-                        try:
-                            matches = (
-                                inherited[0] == "memory"
-                                and digest(encoded(event_facts(loads(inherited[1])))) == facts
-                            )
-                        except (ValueError, KeyError, TypeError):
-                            matches = False
-                        if not matches:
-                            raise ShadowError("shadow_record_identity_collision")
-                        status = "historical"
-                    cur.execute(
-                        "INSERT pm_inputs(trader,id,facts,envelope,status) VALUES(%s,%s,%s,%s,%s)",
-                        (self.trader, identifier, facts, encoded(envelope), status),
-                    )
+                inputs.setdefault(
+                    identifier,
+                    {
+                        "ordinal": len(inputs),
+                        "id": identifier,
+                        "facts": facts,
+                        "envelope": encoded(envelope),
+                    },
+                )
                 previous = seq
-            if row:
+            packet = encoded(list(inputs.values()))
+            if len(packet.encode()) > 8 * 1024 * 1024:
+                raise ShadowError("shadow_input_page_bound")
+            cur.execute(
+                """
+                SELECT b.id,i.id,i.facts,r.id,r.part,r.body FROM OPENJSON(%s)
+                    WITH(id nvarchar(256) '$.id') b
+                LEFT JOIN pm_inputs i ON i.trader=%s AND i.id=b.id COLLATE Latin1_General_100_BIN2
+                LEFT JOIN pm_records r ON r.trader=%s AND r.id=b.id COLLATE Latin1_General_100_BIN2
+                    AND i.id IS NULL
+                """,
+                (packet, self.trader, self.trader),
+            )
+            fresh = []
+            for identifier, existing, facts, inherited, part, body in cur.fetchall():
+                item = inputs[identifier]
+                if existing is not None:
+                    if facts != item["facts"]:
+                        raise ShadowError("conflicting_shadow_input")
+                    continue
+                item["status"] = "pending"
+                if inherited is not None:
+                    try:
+                        matches = (
+                            part == "memory"
+                            and digest(encoded(event_facts(loads(body)))) == item["facts"]
+                        )
+                    except (ValueError, KeyError, TypeError):
+                        matches = False
+                    if not matches:
+                        raise ShadowError("shadow_record_identity_collision")
+                    item["status"] = "historical"
+                fresh.append(item)
+            if fresh:
+                cur.execute(
+                    """
+                    INSERT pm_inputs(trader,id,facts,envelope,status)
+                        SELECT TOP(500) %s,id,facts,envelope,status FROM OPENJSON(%s)
+                        WITH(ordinal int '$.ordinal',id nvarchar(256) '$.id',
+                             facts char(64) '$.facts',envelope nvarchar(max) '$.envelope',
+                             status varchar(16) '$.status') ORDER BY ordinal
+                    """,
+                    (self.trader, encoded(fresh)),
+                )
+            if had_cursor:
                 cur.execute(
                     "UPDATE pm_cursors SET seq=%s WHERE trader=%s AND source=%s",
                     (previous, self.trader, source),

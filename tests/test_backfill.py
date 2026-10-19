@@ -58,6 +58,116 @@ def test_canonical_expansion_preserves_unknown_times_and_distinct_vintages(tmp_p
     assert all(x["received_at"] == "2026-10-18T12:00:00Z" for x in events)
 
 
+@pytest.mark.parametrize("mode", ["latest", "window"])
+def test_storage_outage_leaves_valid_canonical_capture_pending_for_retry(
+    tmp_path, monkeypatch, mode
+):
+    store = FeedStore(tmp_path / "retry.db")
+    reads = SimpleNamespace(
+        get=lambda *a, **kw: SimpleNamespace(status=200, body=encoded(page()).encode(), headers={})
+    )
+    backfill = CanonicalBackfill(
+        store,
+        reads,
+        "https://provider.invalid",
+        "synthetic",
+        SimpleNamespace(match=lambda *a: None),
+        lambda: MOMENT,
+    )
+
+    def run():
+        if mode == "latest":
+            return backfill.latest(MAPPING)
+        return backfill.page(MAPPING, "2026-01-01", "2026-10-18")
+
+    original = store.complete_batch
+
+    def unavailable(*args, **kwargs):
+        raise FeedError("feed_store_unavailable")
+
+    monkeypatch.setattr(store, "complete_batch", unavailable)
+    with pytest.raises(FeedError, match="feed_store_unavailable"):
+        run()
+    with store.transaction() as db:
+        key = db.execute("SELECT key FROM inbox").fetchone()[0]
+    assert store.capture(key)["status"] == "pending" and store.status()["quarantined"] == 0
+    monkeypatch.setattr(store, "complete_batch", original)
+    run()
+    assert store.capture(key)["status"] == "complete" and len(store.events()) == 2
+
+
+def test_quality_failure_rolls_back_events_cursor_and_completion_together(tmp_path, monkeypatch):
+    store = FeedStore(tmp_path / "quality.db")
+    reads = SimpleNamespace(
+        get=lambda *a, **kw: SimpleNamespace(status=200, body=encoded(page()).encode(), headers={})
+    )
+    backfill = CanonicalBackfill(
+        store,
+        reads,
+        "https://provider.invalid",
+        "synthetic",
+        SimpleNamespace(match=lambda *a: None),
+        lambda: MOMENT,
+    )
+    original = store.save
+
+    def fail_quality(key, *args, **kwargs):
+        if key == "canonical:quality":
+            raise FeedError("feed_store_unavailable")
+        return original(key, *args, **kwargs)
+
+    monkeypatch.setattr(store, "save", fail_quality)
+    with pytest.raises(FeedError, match="feed_store_unavailable"):
+        backfill.page(MAPPING, "2026-01-01", "2026-10-18")
+    assert not store.events() and store.state("canonical:quality") is None
+    with store.transaction() as db:
+        assert (
+            db.execute("SELECT COUNT(*) FROM state WHERE key LIKE 'canonical:%'").fetchone()[0] == 0
+        )
+        key = db.execute("SELECT key FROM inbox").fetchone()[0]
+    assert store.capture(key)["status"] == "pending"
+    monkeypatch.setattr(store, "save", original)
+    backfill.page(MAPPING, "2026-01-01", "2026-10-18")
+    assert (
+        store.state("canonical:quality")["USD:synthetic_cpi"]["quality"] == page()["data_quality"]
+    )
+    assert len(store.events()) == 2
+
+
+def test_legacy_completed_cursor_repairs_quality_without_network_or_rewind(tmp_path):
+    store = FeedStore(tmp_path / "legacy.db")
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(args[0])
+        return SimpleNamespace(status=200, body=encoded(page()).encode(), headers={})
+
+    backfill = CanonicalBackfill(
+        store,
+        SimpleNamespace(get=get),
+        "https://provider.invalid",
+        "synthetic",
+        SimpleNamespace(match=lambda *a: None),
+        lambda: MOMENT,
+    )
+    backfill.page(MAPPING, "2026-01-01", "2026-10-18")
+    with store.transaction() as db:
+        key, raw = db.execute(
+            "SELECT key,value FROM state WHERE key LIKE 'canonical:%' AND key<>'canonical:quality'"
+        ).fetchone()
+        cursor = __import__("json").loads(raw)
+        cursor.pop("quality_recorded")
+        store.save(key, cursor, db=db)
+        db.execute("DELETE FROM state WHERE key='canonical:quality'")
+    before = store.events()
+    backfill.page(MAPPING, "2026-01-01", "2026-10-18")
+    assert len(calls) == 1 and store.events() == before
+    assert store.state(key) == {**cursor, "quality_recorded": True}
+    assert (
+        store.state("canonical:quality")["USD:synthetic_cpi"]["quality"] == page()["data_quality"]
+    )
+
+
 def test_canonical_page_restart_keeps_raw_capture_and_cursor_together(tmp_path):
     store = FeedStore(tmp_path / "feeds.db")
     seen = []

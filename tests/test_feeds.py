@@ -331,6 +331,7 @@ def test_changed_holder_with_x_failure_stops_old_personal(store, clock, data, ca
 
 
 def test_pagination_resume_after_failure_cannot_skip_older_page(store, clock, calendar, data):
+    store.save("x:cursor:11", {"since": "99", "next": None, "newest": None, "seen": []})
     reads = FakeReads(
         [response({"data": [data["posts"][0]], "meta": {"next_token": "next"}}), response({}, 503)]
     )
@@ -339,7 +340,7 @@ def test_pagination_resume_after_failure_cannot_skip_older_page(store, clock, ca
     with pytest.raises(FeedError):
         social.poll(role(), account)
     cursor = store.state("x:cursor:11")
-    assert cursor["since"] is None and cursor["next"] == "next"
+    assert cursor["since"] == "99" and cursor["next"] == "next"
     reads.replies.append(response({"data": [data["posts"][1]], "meta": {}}))
     Social(FeedStore(store.path), reads, XReads(reads, "synthetic"), [], calendar, clock.now).poll(
         role(), account
@@ -349,6 +350,33 @@ def test_pagination_resume_after_failure_cannot_skip_older_page(store, clock, ca
         "pagination_token=next" in reads.calls[-1]
         and "exclude=replies%2Cretweets" in reads.calls[-1]
     )
+
+
+def test_initial_social_seed_bounds_history_and_retains_unfinished_cursor(
+    store, clock, calendar, data
+):
+    reads = FakeReads([response({"data": [data["posts"][0]], "meta": {"next_token": "older"}})])
+    social = Social(store, reads, XReads(reads, "synthetic"), [], calendar, clock.now)
+    account = {"handle": "ExampleBank", "user_id": "11"}
+    social.poll(role(), account)
+    assert len(reads.calls) == 1 and len(store.events()) == 1
+    assert store.state("x:cursor:11")["since"] == data["posts"][0]["id"]
+    assert store.state("x:initial_history:11")["cursor"]["next"] == "older"
+    assert store.state("x:initial_history:11")["complete_history_proven"] is False
+
+
+def test_partial_initial_history_is_archived_before_live_anchor_advances(
+    store, clock, calendar, data
+):
+    previous = {"since": None, "next": "older", "newest": "101", "seen": ["older"]}
+    store.save("x:cursor:11", previous)
+    reads = FakeReads([response({"data": [data["posts"][0]], "meta": {}})])
+    Social(store, reads, XReads(reads, "synthetic"), [], calendar, clock.now).poll(
+        role(), {"handle": "ExampleBank", "user_id": "11"}
+    )
+    assert store.state("x:initial_history:11")["cursor"] == previous
+    assert "since_id=101" in reads.calls[0] and "pagination_token=" not in reads.calls[0]
+    assert store.state("x:cursor:11")["since"] == "102"
 
 
 def test_invalid_page_rolls_back_events_and_cursor(store, clock, calendar, data):
