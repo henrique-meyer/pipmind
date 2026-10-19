@@ -4,6 +4,8 @@ import asyncio
 import hmac
 import os
 from contextlib import asynccontextmanager
+from copy import deepcopy
+from time import monotonic
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -14,6 +16,8 @@ from fastapi.responses import JSONResponse
 from pipmind.contracts import ContractError, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
+from pipmind.shadow.model import FoundryModel
+from pipmind.shadow.worker import ReasoningWorker
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -179,17 +183,109 @@ def create_app(
     scheduled_wakes=True,
     price_interval=60,
     clock_interval=900,
+    worker_timeout=120,
 ):
     if not isinstance(token, str) or len(token) < 32:
         raise ShadowError("shadow_token_minimum_32_characters")
     if not 60 <= clock_interval <= 86400:
         raise ShadowError("invalid_clock_interval")
-    engine = ShadowEngine(store, model, price_interval=price_interval)
+    if not 0.01 <= worker_timeout <= 600:
+        raise ShadowError("invalid_worker_timeout")
     runtime = {"last_progress": None, "last_error": None}
+    phase = {"name": "idle", "since": None, "started": None, "error_type": None, "serial": 0}
+    active = {}
+    lifecycle = {"task": None, "stopping": False, "failed": False}
+    worker = ReasoningWorker() if background else None
+
+    def observe(name, facts):
+        if name == "context":
+            phase["error_type"] = None
+        if name.endswith("_projection"):
+            active.pop("trace", None)
+            active.pop("response", None)
+        phase.update(name=name, since=stamp(now()), started=monotonic(), serial=phase["serial"] + 1)
+        active.update(facts)
+
+    engine = ShadowEngine(store, model, price_interval=price_interval, observer=observe)
+    if isinstance(model, FoundryModel):
+        model.observer = observe
+
+    async def hold_worker(reason, expected_phase=None):
+        # Only durable pending data is held. A late result loses its revision
+        # authority; it cannot overwrite a newer decision or this pause.
+        state = await asyncio.to_thread(store.head)
+        if expected_phase is not None and phase["serial"] != expected_phase:
+            return False
+        if state["paused"]:
+            return True
+        event = await asyncio.to_thread(store.pending)
+        if expected_phase is not None and phase["serial"] != expected_phase:
+            return False
+        if not event:
+            await asyncio.to_thread(store.set_paused, True)
+            return True
+        same = active.get("event", {}).get("message_id") == event["message_id"]
+        if same and active.get("revision", state["revision"]) != state["revision"]:
+            return False  # A concurrent owner/commit changed the attempt's authority.
+        result = deepcopy(active.get("result", {})) if same else {}
+        trace = active.get("trace") if same else None
+        if trace:
+            trace = deepcopy(trace)
+            trace["usage_unknown"] = (
+                bool(trace.get("attempted")) and trace.get("input_tokens") is None
+            )
+            result["usage"] = [*result.get("usage", [])[:-1], trace]
+        if same and active.get("response") is not None:
+            result["model_reply"] = deepcopy(active["response"])
+        result.update(
+            mode="shadow",
+            event_id=event["message_id"],
+            dispatches=0,
+            worker_fault={
+                "phase": phase["name"],
+                "since": phase["since"],
+                "error_type": phase["error_type"],
+            },
+        )
+        try:
+            await asyncio.to_thread(store.hold, event, state["revision"], result, now(), reason)
+        except ShadowError as error:
+            if str(error) in {"shadow_revision_changed", "shadow_input_not_pending"}:
+                return False
+            raise
+        return True
+
+    async def watch():
+        while True:
+            await asyncio.sleep(min(1, worker_timeout / 2))
+            task = lifecycle["task"]
+            stopped = task is not None and task.done() and not lifecycle["stopping"]
+            stale = phase["started"] is not None and monotonic() - phase["started"] > worker_timeout
+            if (stopped or stale or not worker.alive()) and not lifecycle["stopping"]:
+                runtime["last_error"] = (
+                    "shadow_worker_stalled" if stale else "shadow_worker_stopped"
+                )
+                if stopped:
+                    exception = None if task.cancelled() else task.exception()
+                    phase["error_type"] = (
+                        "CancelledError"
+                        if task.cancelled()
+                        else (type(exception).__name__ if exception else "UnexpectedExit")
+                    )
+                try:
+                    if await hold_worker(runtime["last_error"], phase["serial"]):
+                        # Fail the existing liveness probe only after durable
+                        # pause succeeds. Ordinary SQL/provider outages retry.
+                        lifecycle["failed"] = True
+                        return
+                except (ShadowError, ContractError):
+                    runtime["last_error"] = "shadow_worker_pause_unavailable"
 
     async def work():
-        while True:
+        while not lifecycle["failed"]:
             try:
+                active.clear()
+                observe("source_poll", {})
                 source_errors = []
                 for source in (consumer, gateway):
                     if source:
@@ -208,15 +304,30 @@ def create_app(
                 for _ in range(100):
                     # The engine uses synchronous SQL. Keep blocked database
                     # connections off the ASGI loop, including during outages.
-                    progressed = await asyncio.to_thread(lambda: asyncio.run(engine.step()))
-                    runtime.update(
-                        last_progress=stamp(now()),
-                        last_error="source_unavailable" if source_errors else None,
-                    )
+                    active.clear()
+                    observe("step", {})
+                    progressed = await worker.run(engine.step())
+                    if progressed:
+                        runtime["last_progress"] = stamp(now())
+                    runtime["last_error"] = "source_unavailable" if source_errors else None
+                    phase.update(name="idle", started=None)
                     if not progressed:
                         break
             except (ShadowError, ContractError):
                 runtime["last_error"] = "shadow_step_unavailable"
+                phase.update(name="idle", started=None)
+            except asyncio.CancelledError:
+                if lifecycle["stopping"] or asyncio.current_task().cancelling():
+                    raise
+                phase["error_type"] = "CancelledError"
+                runtime["last_error"] = "shadow_worker_cancelled"
+                await hold_worker(runtime["last_error"])
+                phase.update(name="idle", started=None)
+            except Exception as error:
+                phase["error_type"] = type(error).__name__
+                runtime["last_error"] = "shadow_worker_failed"
+                await hold_worker(runtime["last_error"])
+                phase.update(name="idle", started=None)
             await asyncio.sleep(2)
 
     @asynccontextmanager
@@ -226,16 +337,29 @@ def create_app(
             yield
 
         async with feed_app.router.lifespan_context(feed_app) if feed_app else no_feeds():
+            if worker:
+                worker.start()
             task = asyncio.create_task(work()) if background else None
+            lifecycle["task"] = task
+            watcher = asyncio.create_task(watch()) if background else None
             try:
                 yield
             finally:
+                lifecycle["stopping"] = True
+                if watcher:
+                    watcher.cancel()
+                    try:
+                        await watcher
+                    except asyncio.CancelledError:
+                        pass
                 if task:
                     task.cancel()
                     try:
                         await task
                     except asyncio.CancelledError:
                         pass
+                if worker:
+                    await asyncio.to_thread(worker.close)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
@@ -290,7 +414,8 @@ def create_app(
 
     @app.get("/healthz")
     def health():
-        return {"application": "pipmind-shadow", "mode": "shadow", "trading": False}
+        body = {"application": "pipmind-shadow", "mode": "shadow", "trading": False}
+        return JSONResponse(body, status_code=503) if lifecycle["failed"] else body
 
     @app.get("/status")
     def status():
@@ -301,6 +426,19 @@ def create_app(
             "last_error": state.get("reasoning_hold", {}).get("reason")
             if state.get("reasoning_hold")
             else runtime["last_error"],
+            **(
+                {
+                    "reasoning_worker": {
+                        "alive": worker.alive() and not lifecycle["failed"],
+                        "phase": phase["name"],
+                        "phase_since": phase["since"],
+                        "event_id": active.get("event", {}).get("message_id"),
+                        "error_type": phase["error_type"],
+                    }
+                }
+                if worker
+                else {}
+            ),
         }
 
     @app.post("/inputs")
