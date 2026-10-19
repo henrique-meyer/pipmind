@@ -61,6 +61,10 @@ The isolated v5 candidate repeat has 36 episodes and 86 phase calls. Known count
 
 The expanded retained-context probe is separate from those synthetic matrices: v5 has one triage refusal at the 512-token ceiling and two decision timeouts. The triage-only v6 refinement yields three valid calls at 5,047 input tokens each and 169–264 output tokens (about **$0.00184** known uncached reference for all three). Its decision request is unchanged; this is not a new full-matrix or decision-reliability result. Full-day call volume, quality and billed costs remain unqualified.
 
+The corrected bounded-memory retained cohort executes 14 RPCs across eight attempts: six observations and two original pre-RPC projection failures, retained alongside successful repeats. Known counters total 77,428 input / 7,305 output tokens, an uncached reference of **$0.1556254**. Mean input is 4,257.75 triage / 7,227.67 decision tokens. Forced decisions do not establish live wake frequency; pre-RPC failures incur no model RPC, while earlier actual timeout trials keep their unknown usage. Complete SQL history remains retained. A successfully cloned checkpoint is about 12.36 MB, not a full-day storage estimate or invoice. See [the bounded-state measurements](shadow.md#bounded-state-hosted-measurements); the $35 allowance remains unqualified.
+
+The later owner-restart checkpoint audits 89 new live backlog outcomes: 88 observations and one actual triage timeout, across 134 calls. Known counters are 712,586 input / 60,008 output tokens, about **$1.1996** at uncached reference rates, excluding the timeout's unknown usage and invoice/cache differences. Mean known input is 4,346.81 triage / 7,334.82 decision tokens. The partial 35.5-minute observer also records status contention and limited memory headroom, and stops before its 100-outcome target at the owner's request. This historical RSS/X backlog does not establish steady-day volume or qualify the $35 monthly allowance; no capacity increase is applied.
+
 Planning assumptions for the size of a call:
 
 - **Decision.** 8,000 input tokens. 800 visible output tokens plus about 2,000 reasoning tokens, so 2,800 output tokens.
