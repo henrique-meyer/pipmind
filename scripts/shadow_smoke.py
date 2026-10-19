@@ -1,6 +1,7 @@
 """Real local SQL/container flow on an internal Docker network, without cloud calls."""
 
 import json
+import os
 import secrets
 import subprocess
 import tempfile
@@ -13,8 +14,8 @@ SQL_IMAGE = "pipmind-sql:local"
 APP_IMAGE = "pipmind-shadow:ci"
 
 
-def command(*args, check=True):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=180)
+def command(*args, check=True, timeout=180):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     if check and result.returncode:
         raise RuntimeError("shadow_container_command_failed")
     return result.stdout.strip() if result.returncode == 0 else None
@@ -175,6 +176,38 @@ def main():
             print(checks.stdout[-6000:], flush=True)
             if checks.returncode:
                 raise RuntimeError("shadow_sql_integration_tests_failed")
+            # File staging is a private disk bind, never RAM-backed /tmp.
+            stream = command(
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                network,
+                "--env-file",
+                str(app_env),
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "--memory",
+                "512m",
+                "--cpus",
+                "0.25",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "-v",
+                str(work) + ":/exports",
+                "-v",
+                str(ROOT / "scripts") + ":/checks:ro",
+                APP_IMAGE,
+                "python",
+                "-c",
+                "import runpy; runpy.run_path('/checks/stream_smoke.py',run_name='__main__')",
+                timeout=600,
+            )
+            summary["stream_experience"] = json.loads(stream)
+            print("PASS: complete streaming SQL clone within existing demo allocation", flush=True)
             code = (
                 "import os; from pipmind.shadow.sql import connector; "
                 "from pipmind.shadow.store import SqlMind; "

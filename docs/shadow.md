@@ -132,6 +132,52 @@ Neither the repeated synthetic cases nor the sizing sweep qualifies a full FX da
 
 ## Experience bundles and cloning
 
+The explicit `stream-v3` owner format extends complete experience portability
+without changing v1/v2 behavior or limits:
+
+```sh
+python -m pipmind.shadow export --format stream-v3 --output .data/exports/complete.pipmind
+python -m pipmind.shadow clone --format stream-v3 --input .data/exports/complete.pipmind --identity .data/identity.md
+```
+
+Its separate [manifest schema](../contracts/v1/bundle-stream-manifest.schema.json)
+identifies version 3 / `shadow-stream-v1`. Bounds are 256 MiB for both the entire
+archive and expanded content, 20,000 entries including the manifest, 1 MiB per
+Markdown entry and 2 MiB for the manifest. V3 accepts stored ZIP members only
+(an expansion ratio of 1:1, stricter than the existing 100:1 ceiling). Compressed
+legacy archives remain on the original validator. Limits are simultaneous;
+manifest overhead can become the limiting factor before the entry count.
+
+SQL cursor iteration captures one complete consistent checkpoint. Each record
+is written and hashed separately; no full-history byte dictionary is created.
+Validation bounds the ZIP directory before allocating its entries, rejects
+ambiguous ZIP layouts and unsafe paths/types, and checks exact inventory,
+hashes, schemas, complete coverage, timestamps and evidence relationships.
+Relationships use a bounded private disk index, not a second runtime store.
+The complete archive is validated before an atomic, exclusive file publication.
+Existing output files are never overwritten. An import owns a private validated
+copy through its single SQL commit, rechecks every payload while consuming it,
+and rolls back all destination state on interruption or corruption. Identity,
+playbook, source metadata and history remain exact; source working context is
+archived and the destination starts paused with separate authority.
+
+Use private **disk-backed** staging with at least 1 GiB free. RAM-backed staging
+is refused. One manual operation per staging directory runs at a time, and Linux
+cgroup headroom must exceed 96 MiB before starting. Large file cache is released
+between batches. A crashed operation can leave a private staging directory and
+lock; an owner must verify no operation is running before removing those files.
+No persistent export service, new Azure resource or capacity increase is needed.
+Qualification measures process RSS and total container usage separately; a
+synthetic near-cap test does not certify headroom beside every live workload.
+
+Export holds the source SQL checkpoint lock while writing its records; clone
+holds its destination lock until commit. Schedule a reviewed paused checkpoint
+when normal workers lack memory headroom or a long lock would disrupt them.
+The commands never silently pause, resize or truncate a source. Measure lock
+time, temporary disk, transfer, SQL clone growth and total container usage at the
+actual deployment before qualifying a retained-day clone. No inference or
+provider call is made by export/import; variable SQL I/O and transfer still apply.
+
 Runtime exports use manifest version 2 / `shadow-runtime-v1`, retaining the v1 Markdown/front-matter contracts. The v1 synthetic archive profile remains supported by its validator, but cannot activate a shadow clone. A single SQL checkpoint captures all retained records and metadata, with exact identity/playbook text, provenance, evidence, history and override tags. Checksums, inventory, chronology, compatibility and all references are validated; archives are never extracted as files.
 
 The bounded runtime profile permits 10,000 ZIP entries including the manifest, 32 MiB archive/expanded total, 1 MiB per Markdown entry, 2 MiB manifest and a 100:1 expansion ratio. Exports use stored ZIP entries, so high repetition cannot trigger ratio failures. A complete export exceeding a bound fails; it never silently truncates retained experience. Monitor retained counts/bytes and qualify the full-day export within these limits before declaring M4 complete. Larger retention/export workloads require an explicit format/capacity extension; they are not certified for the demo allocation by these fixtures.

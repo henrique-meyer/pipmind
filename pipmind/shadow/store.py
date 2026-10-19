@@ -1,5 +1,6 @@
 """Transactional five-part mind, immutable event inbox and bounded SQL retrieval."""
 
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC
 from uuid import uuid4
@@ -779,6 +780,92 @@ class SqlMind:
             )
             head["watermark"] = str(cur.fetchone()[0])
             return head, records
+
+    @contextmanager
+    def stream_retained(self):
+        """One consistent checkpoint, with at most one SQL record in Python."""
+        with self.transaction() as cur:
+            head = self._head(cur)
+            cur.execute(
+                "SELECT COALESCE(MAX(pk),0) FROM pm_outcomes WHERE trader=%s", (self.trader,)
+            )
+            head["watermark"] = str(cur.fetchone()[0])
+            cur.execute(
+                "SELECT meta,body FROM pm_records WHERE trader=%s ORDER BY pk", (self.trader,)
+            )
+
+            def records():
+                while row := cur.fetchone():
+                    yield loads(row[0]), row[1]
+
+            yield head, records()
+
+    def clone_stream(self, bundle, moment, binding, expected_identity, *, interrupt=None):
+        """Publish a completely validated file stream in one rollback-safe transaction."""
+        identity, version = None, None
+        for meta, body in bundle.records():
+            if meta["part"] == "identity":
+                identity = body
+            elif meta["part"] == "playbook":
+                version = meta["playbook_version"]
+            elif meta["part"] == "working_memory":
+                self.contracts.validate("working-memory", loads(body))
+        if identity != expected_identity:
+            raise ShadowError("clone_identity_policy_mismatch")
+        if not version or len(binding) != 64:
+            raise ShadowError("clone_configuration_required")
+        fresh = {
+            "views": [],
+            "position_theses": [],
+            "waiting_for": ["Refresh inherited context in shadow"],
+        }
+        manifest = bundle.manifest
+        with self.transaction() as cur:
+            cur.execute("SELECT 1 FROM pm_minds WHERE trader=%s", (self.trader,))
+            if cur.fetchone():
+                raise ShadowError("clone_requires_empty_destination")
+            parent = {
+                "trader_id": manifest["trader_id"],
+                "lineage_id": manifest["lineage_id"],
+                "checkpoint": manifest["checkpoint"],
+                "compatibility": manifest["compatibility"],
+            }
+            cur.execute(
+                "INSERT pm_minds VALUES(%s,%s,%s,0,1,%s,%s,%s,%s)",
+                (
+                    self.trader,
+                    str(uuid4()),
+                    binding,
+                    stamp(moment),
+                    encoded(fresh),
+                    version,
+                    encoded(parent),
+                ),
+            )
+            for meta, body in bundle.records():
+                if meta["part"] == "working_memory":
+                    meta = {**meta, "part": "memory"}
+                self._insert(cur, meta, body)
+                if interrupt:
+                    interrupt()
+            self._insert(
+                cur,
+                metadata(
+                    "working:" + digest(self.trader), "working_memory", stamp(moment), self.trader
+                ),
+                encoded(fresh),
+            )
+        return {
+            "paused": True,
+            "source_checkpoint": manifest["checkpoint"]["checkpoint_id"],
+            "transformations": [
+                "new_lineage",
+                "source_working_archived",
+                "active_working_reset",
+                "destination_binding_only",
+                "no_source_authority",
+            ],
+        }
 
     def status(self):
         with self.transaction() as cur:

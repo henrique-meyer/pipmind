@@ -32,7 +32,7 @@ def mind():
     fulltext(connect)
     store = SqlMind(connect, "test-" + uuid4().hex)
     store.initialize(
-        "Immutable identity\nnaïve ≠ unsafe\n",
+        "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
         {"version": "v1", "text": "# Exact playbook\n"},
         "2026-10-01T00:00:00Z",
         binding=digest("destination-only"),
@@ -204,7 +204,7 @@ def test_quiet_and_analysis_inputs_do_not_read_the_archive(mind, monkeypatch, an
     class Quiet:
         async def triage(self, incoming, context, store, moment):
             assert incoming == event
-            assert context["identity"] == "Immutable identity\nnaïve ≠ unsafe\n"
+            assert context["identity"] == "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
             assert context["playbook"]["version"] == "v1"
             assert context["working_memory"] == mind.head()["working"]
             assert not context["recent_journal"] and not context["retrieved_memories"]
@@ -516,14 +516,14 @@ def test_consistent_export_clone_preserves_history_and_rebuilds_retrieval(mind):
         data,
         MOMENT + timedelta(seconds=1),
         digest("different-account"),
-        "Immutable identity\nnaïve ≠ unsafe\n",
+        "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
     )
     assert report["paused"] and clone.head()["lineage"] != mind.head()["lineage"]
     assert clone.head()["binding"] != mind.head()["binding"]
     assert clone.head()["working"]["position_theses"] == []
     assert clone.status()["outcomes"] == clone.status()["pending"] == 0
     context = clone.context(MOMENT + timedelta(seconds=2))
-    assert context["identity"] == "Immutable identity\nnaïve ≠ unsafe\n"
+    assert context["identity"] == "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
     assert context["playbook"]["text"] == "# Exact playbook\n"
     source = {
         meta["record_id"]: (meta, body)
@@ -551,14 +551,14 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
             data,
             MOMENT,
             digest("new"),
-            "Immutable identity\nnaïve ≠ unsafe\n",
+            "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
             interrupt=interrupt,
         )
     with pytest.raises(ShadowError, match="mind_not_initialized"):
         clone.head()
     with pytest.raises(BundleError):
         import_experience(
-            clone, data[:-30], MOMENT, digest("new"), "Immutable identity\nnaïve ≠ unsafe\n"
+            clone, data[:-30], MOMENT, digest("new"), "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
         )
     assert before == mind.retained()
     with pytest.raises(ShadowError, match="clone_identity_policy_mismatch"):
@@ -599,7 +599,7 @@ def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind
         archive(),
         MOMENT + timedelta(seconds=1),
         digest("legacy-clone"),
-        "Immutable identity\nnaïve ≠ unsafe\n",
+        "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
     )
     assert "legacy_context_retrieval_rebuilt" in report["transformations"]
     assert clone.head()["parent"]["compatibility"] == manifest["compatibility"]
@@ -619,7 +619,7 @@ def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind
             archive(),
             MOMENT,
             digest("unknown"),
-            "Immutable identity\nnaïve ≠ unsafe\n",
+            "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
         )
 
 
@@ -1094,7 +1094,7 @@ def test_many_retained_records_use_runtime_bundle_and_keep_override_provenance(m
     assert len(bundle.records) == 153 and bundle.manifest["schema_version"] == 2
     destination = SqlMind(mind.connect, "many-" + uuid4().hex)
     import_experience(
-        destination, data, MOMENT, digest("new"), "Immutable identity\nnaïve ≠ unsafe\n"
+        destination, data, MOMENT, digest("new"), "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
     )
     assert sum(meta["override"] for meta, body in destination.retained()[1]) == 50
     assert len(destination.search("retained", MOMENT)) == 5
@@ -1389,7 +1389,7 @@ def test_bounded_state_multistep_growth_retains_every_checkpoint_and_complete_cl
     bundle = export_experience(mind, moment)
     target = SqlMind(mind.connect, "bounded-clone-" + uuid4().hex)
     import_experience(
-        target, bundle, moment, digest("separate"), "Immutable identity\nnaïve ≠ unsafe\n"
+        target, bundle, moment, digest("separate"), "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
     )
     originals = {
         meta["record_id"]: body for meta, body in records if meta["part"] != "working_memory"
@@ -1757,3 +1757,94 @@ def test_repeated_owner_maintenance_keeps_original_checkpoint_and_exact_prior_re
     checkpoint = loads(after[second["checkpoint"]][1])
     assert not checkpoint["initial"] and checkpoint["previous_checkpoint"] == first["checkpoint"]
     assert mind.head()["paused"] and mind.status()["dispatches"] == 0
+
+
+def test_stream_experience_large_sql_checkpoint_clone_and_atomic_rollback(mind, tmp_path):
+    from pipmind.shadow.stream_bundle import export_experience_file, import_experience_file
+    from pipmind.stream_portability import validate_stream
+
+    # Generated payloads stay in the private SQL/container test environment.
+    with mind.transaction() as cur:
+        for i in range(36):
+            mind._insert(
+                cur,
+                metadata(
+                    f"large:{i}", "journal", MOMENT.isoformat(), mind.trader, ["mind:identity"]
+                ),
+                f"Exact retained entry {i}: " + "a" * 1000000,
+            )
+    path = tmp_path / "complete.zip"
+    before = mind.head()
+    report = export_experience_file(mind, path, MOMENT)
+    assert report["bytes"] > 33554432 and report["records"] == 39
+    assert mind.head() == before
+
+    identity = "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+    destination = SqlMind(mind.connect, "stream-clone-" + uuid4().hex)
+    calls = 0
+
+    def interrupted():
+        nonlocal calls
+        calls += 1
+        if calls == 10:
+            raise RuntimeError("simulated interruption")
+
+    with pytest.raises(ShadowError):
+        import_experience_file(
+            destination, path, MOMENT, digest("new-binding"), identity, interrupt=interrupted
+        )
+    with destination.transaction() as cur:
+        for table in ("pm_minds", "pm_records", "pm_runtime", "pm_inputs", "pm_outcomes"):
+            cur.execute(f"SELECT COUNT(*) FROM {table} WHERE trader=%s", (destination.trader,))
+            assert cur.fetchone()[0] == 0
+    result = import_experience_file(destination, path, MOMENT, digest("new-binding"), identity)
+    assert result["paused"] and destination.head()["binding"] == digest("new-binding")
+    assert destination.head()["lineage"] != before["lineage"]
+    assert destination.head()["working"]["views"] == []
+    assert destination.status()["outcomes"] == destination.status()["pending"] == 0
+    with validate_stream(path) as bundle:
+        with destination.stream_retained() as (_, actual):
+            old = iter(bundle.records())
+            for index, (meta, body) in enumerate(actual):
+                if index == 39:
+                    assert meta["part"] == "working_memory"
+                    continue
+                expected_meta, expected_body = next(old)
+                if expected_meta["part"] == "working_memory":
+                    expected_meta = {**expected_meta, "part": "memory"}
+                assert (meta, body) == (expected_meta, expected_body)
+            assert next(old, None) is None
+    with pytest.raises(ShadowError, match="clone_requires_empty_destination"):
+        import_experience_file(destination, path, MOMENT, digest("new-binding"), identity)
+    assert mind.head() == before
+
+
+def test_stream_checkpoint_serializes_source_writer_without_losing_new_history(mind):
+    import threading
+
+    entered, finished = threading.Event(), threading.Event()
+    errors = []
+
+    def writer():
+        entered.set()
+        try:
+            with mind.transaction() as cur:
+                mind._insert(
+                    cur,
+                    metadata("after-checkpoint", "journal", MOMENT.isoformat(), mind.trader),
+                    "New history after the captured checkpoint",
+                )
+        except Exception as error:
+            errors.append(type(error).__name__)
+        finally:
+            finished.set()
+
+    with mind.stream_retained() as (_, records):
+        worker = threading.Thread(target=writer)
+        worker.start()
+        assert entered.wait(1) and not finished.wait(0.25)
+        captured = list(records)
+        assert "after-checkpoint" not in {meta["record_id"] for meta, _ in captured}
+    worker.join(10)
+    assert finished.is_set() and not errors
+    assert "after-checkpoint" in {meta["record_id"] for meta, _ in mind.retained()[1]}
