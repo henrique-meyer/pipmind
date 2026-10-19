@@ -520,44 +520,20 @@ class SqlMind:
             row = cur.fetchone()
             return loads(row[0]) if row else None
 
-    def context(self, moment, query=""):
+    def context(self, moment, query="", *, history=True, revision=None):
         with self.transaction() as cur:
             head = self._head(cur)
+            if revision is not None and (head["revision"] != revision or head["paused"]):
+                raise ShadowError("shadow_revision_changed")
             cur.execute(
                 "SELECT part,body FROM pm_records WHERE trader=%s "
                 "AND part IN ('identity','playbook')",
                 (self.trader,),
             )
             prefix = dict(cur.fetchall())
-            cur.execute(
-                "SELECT TOP(10) meta,body FROM pm_records WHERE trader=%s "
-                "AND part='journal' AND ts<=%s "
-                "AND COALESCE(JSON_VALUE(CASE WHEN ISJSON(body)=1 THEN body ELSE N'{}' END,"
-                "'$.status'),'')<>'price_coalesced' ORDER BY pk DESC",
-                (self.trader, moment.replace(tzinfo=None)),
-            )
-            recent = [record_view(loads(meta), body) for meta, body in reversed(cur.fetchall())]
-            # Current working views persist regardless of retrieval. A recent
-            # audit trace is not automatically relevant to the incoming event.
-            recent = [row for row in recent if not query or relevance(row, query)][-3:]
-            memories = self._search(cur, query, moment)
-            working = head["working"]
-            active_query = " ".join(
-                [
-                    *working["views"],
-                    *working["waiting_for"],
-                    *(
-                        row["instrument"] + " " + row["thesis"]
-                        for row in working["position_theses"]
-                    ),
-                ]
-            )
-            if active_query:
-                active = self._search(cur, active_query, moment)
-                combined = {
-                    row["metadata"]["record_id"]: row for row in [*memories[:3], *active[:3]]
-                }
-                memories = list(combined.values())
+            recent, memories = [], []
+            if history:
+                recent, memories = self._context_evidence(cur, head["working"], moment, query)
             return {
                 "revision": head["revision"],
                 "paused": head["paused"],
@@ -572,6 +548,32 @@ class SqlMind:
                     else {}
                 ),
             }
+
+    def _context_evidence(self, cur, working, moment, query):
+        cur.execute(
+            "SELECT TOP(10) meta,body FROM pm_records WHERE trader=%s "
+            "AND part='journal' AND ts<=%s "
+            "AND COALESCE(JSON_VALUE(CASE WHEN ISJSON(body)=1 THEN body ELSE N'{}' END,"
+            "'$.status'),'')<>'price_coalesced' ORDER BY pk DESC",
+            (self.trader, moment.replace(tzinfo=None)),
+        )
+        recent = [record_view(loads(meta), body) for meta, body in reversed(cur.fetchall())]
+        # Current working views persist regardless of retrieval. A recent
+        # audit trace is not automatically relevant to the incoming event.
+        recent = [row for row in recent if not query or relevance(row, query)][-3:]
+        memories = self._search(cur, query, moment)
+        active_query = " ".join(
+            [
+                *working["views"],
+                *working["waiting_for"],
+                *(row["instrument"] + " " + row["thesis"] for row in working["position_theses"]),
+            ]
+        )
+        if active_query:
+            active = self._search(cur, active_query, moment)
+            combined = {row["metadata"]["record_id"]: row for row in [*memories[:3], *active[:3]]}
+            memories = list(combined.values())
+        return recent, memories
 
     def _search(self, cur, query, moment):
         identifier, _, focus = query.partition(" | ")
