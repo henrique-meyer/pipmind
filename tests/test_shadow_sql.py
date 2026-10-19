@@ -32,7 +32,7 @@ def mind():
     fulltext(connect)
     store = SqlMind(connect, "test-" + uuid4().hex)
     store.initialize(
-        "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
+        "Immutable identity\nnaïve ≠ unsafe\n",
         {"version": "v1", "text": "# Exact playbook\n"},
         "2026-10-01T00:00:00Z",
         binding=digest("destination-only"),
@@ -204,7 +204,7 @@ def test_quiet_and_analysis_inputs_do_not_read_the_archive(mind, monkeypatch, an
     class Quiet:
         async def triage(self, incoming, context, store, moment):
             assert incoming == event
-            assert context["identity"] == "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+            assert context["identity"] == "Immutable identity\nnaïve ≠ unsafe\n"
             assert context["playbook"]["version"] == "v1"
             assert context["working_memory"] == mind.head()["working"]
             assert not context["recent_journal"] and not context["retrieved_memories"]
@@ -516,14 +516,14 @@ def test_consistent_export_clone_preserves_history_and_rebuilds_retrieval(mind):
         data,
         MOMENT + timedelta(seconds=1),
         digest("different-account"),
-        "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
+        "Immutable identity\nnaïve ≠ unsafe\n",
     )
     assert report["paused"] and clone.head()["lineage"] != mind.head()["lineage"]
     assert clone.head()["binding"] != mind.head()["binding"]
     assert clone.head()["working"]["position_theses"] == []
     assert clone.status()["outcomes"] == clone.status()["pending"] == 0
     context = clone.context(MOMENT + timedelta(seconds=2))
-    assert context["identity"] == "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+    assert context["identity"] == "Immutable identity\nnaïve ≠ unsafe\n"
     assert context["playbook"]["text"] == "# Exact playbook\n"
     source = {
         meta["record_id"]: (meta, body)
@@ -551,14 +551,14 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
             data,
             MOMENT,
             digest("new"),
-            "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
+            "Immutable identity\nnaïve ≠ unsafe\n",
             interrupt=interrupt,
         )
     with pytest.raises(ShadowError, match="mind_not_initialized"):
         clone.head()
     with pytest.raises(BundleError):
         import_experience(
-            clone, data[:-30], MOMENT, digest("new"), "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+            clone, data[:-30], MOMENT, digest("new"), "Immutable identity\nnaïve ≠ unsafe\n"
         )
     assert before == mind.retained()
     with pytest.raises(ShadowError, match="clone_identity_policy_mismatch"):
@@ -599,7 +599,7 @@ def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind
         archive(),
         MOMENT + timedelta(seconds=1),
         digest("legacy-clone"),
-        "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
+        "Immutable identity\nnaïve ≠ unsafe\n",
     )
     assert "legacy_context_retrieval_rebuilt" in report["transformations"]
     assert clone.head()["parent"]["compatibility"] == manifest["compatibility"]
@@ -619,7 +619,7 @@ def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind
             archive(),
             MOMENT,
             digest("unknown"),
-            "Immutable identity\nnaÃ¯ve â‰  unsafe\n",
+            "Immutable identity\nnaïve ≠ unsafe\n",
         )
 
 
@@ -1094,7 +1094,7 @@ def test_many_retained_records_use_runtime_bundle_and_keep_override_provenance(m
     assert len(bundle.records) == 153 and bundle.manifest["schema_version"] == 2
     destination = SqlMind(mind.connect, "many-" + uuid4().hex)
     import_experience(
-        destination, data, MOMENT, digest("new"), "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+        destination, data, MOMENT, digest("new"), "Immutable identity\nnaïve ≠ unsafe\n"
     )
     assert sum(meta["override"] for meta, body in destination.retained()[1]) == 50
     assert len(destination.search("retained", MOMENT)) == 5
@@ -1389,7 +1389,7 @@ def test_bounded_state_multistep_growth_retains_every_checkpoint_and_complete_cl
     bundle = export_experience(mind, moment)
     target = SqlMind(mind.connect, "bounded-clone-" + uuid4().hex)
     import_experience(
-        target, bundle, moment, digest("separate"), "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+        target, bundle, moment, digest("separate"), "Immutable identity\nnaïve ≠ unsafe\n"
     )
     originals = {
         meta["record_id"]: body for meta, body in records if meta["part"] != "working_memory"
@@ -1779,7 +1779,7 @@ def test_stream_experience_large_sql_checkpoint_clone_and_atomic_rollback(mind, 
     assert report["bytes"] > 33554432 and report["records"] == 39
     assert mind.head() == before
 
-    identity = "Immutable identity\nnaÃ¯ve â‰  unsafe\n"
+    identity = "Immutable identity\nnaïve ≠ unsafe\n"
     destination = SqlMind(mind.connect, "stream-clone-" + uuid4().hex)
     calls = 0
 
