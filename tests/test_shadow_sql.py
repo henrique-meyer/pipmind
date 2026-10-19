@@ -470,6 +470,27 @@ def test_sql_feed_inbox_outbox_cursor_atomicity_and_reprocessing(mind):
         state_patch=(patch_key, {"checked": False}),
     )
     assert store.state(patch_key) == {"checked": True}
+    recovery_key = "recovery:" + key
+    before = store.events()
+    store.complete_batch(
+        "macro",
+        key,
+        [good],
+        MOMENT,
+        cursor=(recovery_key, "complete"),
+        state_patch=(patch_key, {"recovered": True}),
+    )
+    store.complete_batch(
+        "macro",
+        key,
+        [good],
+        MOMENT,
+        cursor=(recovery_key, "rewound"),
+        state_patch=(patch_key, {"recovered": False}),
+    )
+    assert store.state(recovery_key) == "complete"
+    assert store.state(patch_key) == {"checked": True, "recovered": True}
+    assert store.events() == before
     reopened = SqlFeedStore(mind.connect)
     assert reopened.source_id() == store.source_id()
     assert reopened.state(key) == "complete"
