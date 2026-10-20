@@ -87,7 +87,9 @@ REPAIR_INSTRUCTIONS = (
     " prerequisites into an oversized string. Keep mapping reasons concise while"
     " preserving all distinct meaning. Use one current-state as-of date rather"
     " than repeating today's date in every entry; retain each source's actual"
-    " publication dates, numbers and verification distinctions. Shared missing-"
+    " publication dates, numbers, units, frequency/basis and verification distinctions."
+    " Explicitly preserve y/y versus m/m and levels versus changes for EACH observation;"
+    " do not rely on an ambiguous shared qualifier. Shared missing-"
     " evidence qualifications may be stated once with explicit named scope."
 )
 
