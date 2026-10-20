@@ -295,6 +295,43 @@ def test_wire_context_is_compact_audited_and_tools_cannot_reinflate_old_traces()
     )
 
 
+def test_calendar_daily_brief_guidance_is_conditional_and_never_added_to_triage():
+    from pipmind.shadow.model import CALENDAR_INSTRUCTIONS
+
+    class Agent:
+        async def run(self, message, *, options):
+            return SimpleNamespace(text='{"wake":false,"summary":"Synthetic"}')
+
+    captured = []
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kw: captured.append(kw["instructions"]) or Agent(),
+    )
+    event = {"kind": "ClockEvent", "payload": {"reason": "daily_brief"}}
+    source = context()
+    asyncio.run(model.triage(event, source, None, now()))
+    assert CALENDAR_INSTRUCTIONS not in captured[-1]
+
+    # Invalid synthetic final JSON is enough to capture the decision request;
+    # no network/client or model execution exists in this compiler check.
+    async def decision():
+        try:
+            await model.decide(event, source, {}, None, now())
+        except ModelFailure:
+            pass
+
+    asyncio.run(decision())
+    baseline = captured[-1]
+    source["feed_status"]["calendar"] = {"record_id": "calendar:synthetic"}
+    asyncio.run(model.triage(event, source, None, now()))
+    assert CALENDAR_INSTRUCTIONS not in captured[-1]
+    asyncio.run(decision())
+    assert captured[-1].replace(CALENDAR_INSTRUCTIONS, "") == baseline
+
+
 def test_oversized_mandatory_state_is_refused_without_truncation_or_model_request():
     called = []
     model = FoundryModel(
