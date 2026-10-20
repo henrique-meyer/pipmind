@@ -492,7 +492,7 @@ def test_archive_relevance_preserves_month_old_and_contrary_evidence_amid_legacy
 
 
 def test_clock_wake_checkpoint_survives_restart_without_duplicate_inputs(mind):
-    from pipmind.shadow.service import clock_wake
+    from pipmind.shadow.service import ClockConsumer, clock_wake
 
     clock_wake(mind, MOMENT)
     cursor = mind.checkpoint("clock")
@@ -502,6 +502,13 @@ def test_clock_wake_checkpoint_survives_restart_without_duplicate_inputs(mind):
     assert reopened.status()["pending"] == 1
     clock_wake(reopened, MOMENT + timedelta(minutes=16))
     assert reopened.status()["pending"] == 2
+    cached = ClockConsumer(reopened)
+    cached.poll(MOMENT + timedelta(minutes=16))
+    cached.poll(MOMENT + timedelta(minutes=16, seconds=1))
+    ClockConsumer(SqlMind(mind.connect, mind.trader)).poll(MOMENT + timedelta(minutes=16))
+    assert reopened.status()["pending"] == 2
+    cached.poll(MOMENT + timedelta(minutes=31))
+    assert reopened.status()["pending"] == 3
 
 
 def test_invalid_model_evidence_is_durably_refused_without_memory_mutation(mind):
@@ -764,6 +771,25 @@ def test_sql_feed_inbox_outbox_cursor_atomicity_and_reprocessing(mind):
     assert reopened.source_id() == store.source_id()
     assert reopened.state(key) == "complete"
     rows = reopened.events()
+    connections = []
+    connect = reopened.connect
+
+    def counted():
+        connections.append(True)
+        return connect()
+
+    reopened.connect = counted
+    frame = reopened.handoff(0, 100, include_calendar=True)
+    assert len(connections) == 1
+    reopened.connect = connect
+    assert frame == {
+        "events": rows,
+        "coverage": reopened.state("canonical:quality", {"status": "unverified"}),
+        "quarantined": reopened.status()["quarantined"],
+        "calendar": reopened.state("calendar:data"),
+    }
+    assert "calendar" not in reopened.handoff(rows[-1]["sequence"], 1)
+    assert reopened.events() == rows and reopened.state(key) == "complete"
     mind.accept(store.source_id(), rows, MOMENT)
     assert mind.checkpoint(store.source_id()) == rows[-1]["sequence"]
 
@@ -811,6 +837,8 @@ def test_feed_configuration_cutover_preserves_history_and_fences_stale_workers(m
         assert fresh.state(cursor) == {"since": "123", "next": "retained-page"}
         with pytest.raises(FeedError, match="profile_changed"):
             old.save(cursor, {"since": "0"})
+        with pytest.raises(FeedError, match="profile_changed"):
+            old.handoff(include_calendar=True)
         assert fresh.state(cursor)["since"] == "123"
         with fresh.transaction() as db:
             db.execute("SELECT v FROM pf_meta WHERE k='profile'")

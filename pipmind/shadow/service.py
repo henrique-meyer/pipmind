@@ -195,7 +195,17 @@ class LocalFeedConsumer:
 
     def poll(self, moment):
         try:
-            page = self.feeds.events(self.store.checkpoint(self.source), 100)
+            after = self.store.checkpoint(self.source)
+            due = (
+                self.calendar_checked is None
+                or (moment - self.calendar_checked).total_seconds() >= 60
+            )
+            frame = (
+                self.feeds.handoff(after, 100, include_calendar=due)
+                if hasattr(self.feeds, "handoff")
+                else None
+            )
+            page = frame["events"] if frame is not None else self.feeds.events(after, 100)
             moment = self.completion_clock() if self.completion_clock else moment
             if page:
                 self.store.accept(self.source, page, moment)
@@ -205,15 +215,25 @@ class LocalFeedConsumer:
             ):
                 from pipmind.shadow.calendar import retain_calendar
 
-                cached = self.feeds.state("calendar:data")
+                # The read can cross the cache boundary. Preserve the existing
+                # completion-time cadence instead of deferring a due calendar.
+                cached = (
+                    frame["calendar"]
+                    if frame is not None and "calendar" in frame
+                    else self.feeds.state("calendar:data")
+                )
                 observed = self.completion_clock() if self.completion_clock else moment
                 self.calendar_info = retain_calendar(self.store, cached, observed)
                 self.calendar_checked = observed
             self.store.set_runtime(
                 "feed_status",
                 {
-                    "coverage": self.feeds.state("canonical:quality", {"status": "unverified"}),
-                    "quarantined": self.feeds.status()["quarantined"],
+                    "coverage": frame["coverage"]
+                    if frame is not None
+                    else self.feeds.state("canonical:quality", {"status": "unverified"}),
+                    "quarantined": frame["quarantined"]
+                    if frame is not None
+                    else self.feeds.status()["quarantined"],
                     "checked_at": stamp(moment),
                     "calendar": self.calendar_info,
                 },
@@ -243,6 +263,21 @@ def clock_wake(store, moment, interval=900):
     store.accept("clock", [{"sequence": slot, "event": event}], moment)
 
 
+class ClockConsumer:
+    """Avoid rereading an already confirmed monotonic clock cursor each input."""
+
+    def __init__(self, store, interval=900):
+        self.store, self.interval, self.last_slot = store, interval, None
+
+    def poll(self, moment):
+        slot = int(moment.timestamp()) // self.interval
+        if slot != self.last_slot:
+            clock_wake(self.store, moment, self.interval)
+            # A failed/uncertain call must recheck durable SQL on retry. New
+            # service instances start empty and always recheck after restart.
+            self.last_slot = slot
+
+
 def create_app(
     store,
     model,
@@ -269,6 +304,7 @@ def create_app(
     active = {}
     lifecycle = {"task": None, "watcher": None, "stopping": False, "failed": False}
     worker = ReasoningWorker() if background else None
+    clocks = ClockConsumer(store, clock_interval)
 
     def observe(name, facts):
         if name == "context":
@@ -397,7 +433,7 @@ def create_app(
                         {"coverage": "source_unavailable", "checked_at": stamp(now())},
                     )
                 if scheduled_wakes:
-                    await asyncio.to_thread(clock_wake, store, now(), clock_interval)
+                    await asyncio.to_thread(clocks.poll, now())
                 for _ in range(1 if gateway and getattr(gateway, "handoff_interval", 0) else 100):
                     # The engine uses synchronous SQL. Keep blocked database
                     # connections off the ASGI loop, including during outages.
