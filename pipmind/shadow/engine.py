@@ -9,6 +9,7 @@ from pipmind.shadow.maintenance import (
     POLICY,
     entries,
     expand_repair_patch,
+    repair_budget,
     spacing_repair,
     transition,
     validate_working,
@@ -59,7 +60,10 @@ class ShadowEngine:
             audit["response"] = deepcopy(correction)
             if "replacements" in correction:
                 self.contracts.validate("memory-repair-patch", correction)
-                correction = expand_repair_patch(original, correction, event_id(event))
+                audit["patch_budget"] = repair_budget(original["working_memory"])
+                correction = expand_repair_patch(
+                    original, correction, event_id(event), before=context["working_memory"]
+                )
                 audit["expanded_response"] = deepcopy(correction)
                 for row in audit["response"]["replacements"]:
                     applied = entries(correction["working_memory"])[row["from"]]
