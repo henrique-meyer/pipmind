@@ -104,8 +104,11 @@ PATCH_INSTRUCTIONS = (
     " literal carry-forward mappings. Preserve ALL meaning of each replaced entry: dates,"
     " numbers, units/frequency/basis, prerequisites, uncertainty, contradictions and"
     " invalidation conditions. Do not resolve conditions, add facts or rely on omitted"
-    " qualifiers. Each replacement MUST fit 300 UTF-8 bytes; aim below 280 bytes."
-    " Shorten wording only. No tools. If meaning cannot fit, do not invent a resolution."
+    " qualifiers. Write compact note fragments, not full prose: aim for 220 UTF-8 bytes"
+    " per replacement, leaving substantial margin below the hard 300-byte limit. Use"
+    " concise punctuation and standard abbreviations; do not simply copy the oversized"
+    " candidate with a few words removed. Shorten wording only. No tools. If meaning"
+    " cannot fit, do not invent a resolution."
 )
 
 
