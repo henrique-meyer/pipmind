@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   # Let an active main release finish; newer pushes must not interrupt Azure deployment.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
