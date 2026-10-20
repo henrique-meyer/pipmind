@@ -1807,8 +1807,8 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
 
     correction = {
         "working_memory": after,
-        "memory_dispositions": [disposition("v0", "updated")],
-        "candidate_dispositions": [disposition("v0", "updated"), disposition("w0", "retained")],
+        "memory_dispositions": [disposition("v0", "updated"), disposition("w0", "updated")],
+        "candidate_dispositions": [disposition("v0", "updated"), disposition("w0", "merged")],
     }
 
     class Repair(FixtureModel):
@@ -1840,6 +1840,9 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
         journal = mind.outcome(event["message_id"])
         assert journal["status"] == "observed" and not mind.head()["paused"]
         assert mind.head()["working"] == after and mind.pending() is None
+        assert journal["reply"]["memory_dispositions"][-1]["disposition"] == "retained"
+        assert journal["memory_repair"]["response"] == correction
+        assert len(journal["memory_repair"]["mapping_normalizations"]) == 2
         for key in candidate.keys() - {"working_memory", "memory_dispositions"}:
             assert journal["reply"][key] == candidate[key]
     assert journal["memory_repair"]["candidate"] == candidate

@@ -8,7 +8,7 @@ import pytest
 from pipmind.contracts import ContractError, Contracts
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.engine import ShadowEngine
-from pipmind.shadow.maintenance import validate_working, working_sizes
+from pipmind.shadow.maintenance import transition, validate_working, working_sizes
 from pipmind.shadow.model import FoundryModel, ModelFailure
 
 
@@ -230,3 +230,76 @@ def test_correction_preserves_long_original_resolution_verbatim():
         )
     )
     assert reply["memory_dispositions"][-1] == resolved
+
+
+@pytest.mark.parametrize("label", ["updated", "merged"])
+@pytest.mark.parametrize("moved", [False, True])
+def test_exact_carry_forward_mapping_is_canonicalized_without_changing_raw_reply(label, moved):
+    context, candidate, correction = example()
+    candidate["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["candidate_dispositions"] = correction["candidate_dispositions"][:-1]
+    target = "w1" if moved else "w0"
+    if moved:
+        correction["working_memory"]["waiting_for"].insert(0, "Need dated confirmation")
+    for field in ("memory_dispositions", "candidate_dispositions"):
+        row = next(row for row in correction[field] if row["from"] == "w0")
+        row.update(to=target, disposition=label)
+    raw = deepcopy(correction)
+    # The validator itself remains strict about identity mappings.
+    with pytest.raises(ShadowError, match="working_memory_dispositions"):
+        transition(
+            context["working_memory"],
+            correction["working_memory"],
+            correction["memory_dispositions"],
+            now(),
+        )
+
+    async def repair(*args):
+        return correction, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    reply = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    assert correction == raw and result["memory_repair"]["response"] == raw
+    assert reply["working_memory"] == raw["working_memory"]
+    assert reply["memory_dispositions"][-1]["disposition"] == "retained"
+    assert len(result["memory_repair"]["mapping_normalizations"]) == 2
+    transition(
+        context["working_memory"], reply["working_memory"], reply["memory_dispositions"], now()
+    )
+
+
+@pytest.mark.parametrize("fault", ["changed_text", "cross_kind", "duplicate", "resolution"])
+def test_identity_mapping_normalization_never_repairs_semantic_or_ambiguous_faults(fault):
+    context, candidate, correction = example()
+    candidate["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["candidate_dispositions"] = correction["candidate_dispositions"][:-1]
+    row = correction["memory_dispositions"][1]
+    row["disposition"] = "updated"
+    if fault == "changed_text":
+        correction["working_memory"]["waiting_for"] = ["Need official text "]
+        row["disposition"] = "retained"
+    elif fault == "cross_kind":
+        correction["working_memory"]["views"].append("Need official text")
+        row["to"] = "v1"
+    elif fault == "duplicate":
+        correction["memory_dispositions"].append(deepcopy(row))
+    else:
+        row.update(to=None, disposition="resolved")
+
+    async def repair(*args):
+        return correction, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    with pytest.raises(ShadowError, match="working_memory_repair_failed"):
+        asyncio.run(
+            ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+                {"message_id": "input"}, context, candidate, result, now()
+            )
+        )
+    assert result["memory_repair"]["response"] == correction

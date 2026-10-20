@@ -455,6 +455,25 @@ progress are preserved. The prior warm-up remains retained and superseded; its
 replacement is warming on startup backlog. No formal 24-hour day or full M4
 qualification is established by this release.
 
+### Exact carry-forward mapping correction
+
+Prompt `shadow-context-v13` distinguishes literal carry-forwards from wording
+changes in both correction mapping arrays. Before validation, the engine converts
+an `updated` or `merged` label to `retained` only when its named source and
+same-kind target have exactly equal text. It records each label conversion and
+keeps the raw model response unchanged in the audit. No state text, decision,
+evidence or resolution is inferred or changed. Changed text, missing/duplicate
+mappings, cross-kind targets, new resolutions and oversized state still pass
+through the same strict validators and fail closed. This deterministic identity
+check prevents a redundant update label from holding an otherwise valid repair;
+it does not prove semantic preservation for actual rewrites.
+
+Backlog estimates require measured completions and new arrivals over comparable
+healthy intervals. Resumption alone is insufficient, and a paused interval is not
+a measure of active throughput. If arrivals meet or exceed completions, there is
+no finite clearance estimate at that rate. Existing pending-count, input-lag and
+other readiness gates remain unchanged.
+
 ## Full-session capture and readiness (PIP-14)
 
 Enable the private in-process recorder with `PIPMIND_SHADOW_QUALIFICATION_ENABLED=true`; it shares the existing engine process and SQL tables and adds no service, resource, capacity or grant. Set `PIPMIND_SHADOW_GATEWAY_INTERVAL=300` for the demo's paced durable handoff, while refreshing broker facts before every step. The recorder is independent of the reasoning batch and survives replica restarts through SQL state. It cannot send commands, change the mind or certify M4.

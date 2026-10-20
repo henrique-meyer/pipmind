@@ -7,6 +7,7 @@ from pipmind.shadow.common import ShadowError, now
 from pipmind.shadow.context import event_query
 from pipmind.shadow.maintenance import (
     POLICY,
+    entries,
     transition,
     validate_working,
     working_digest,
@@ -42,8 +43,37 @@ class ShadowEngine:
             result["usage"][-1] = usage
             audit["response"] = deepcopy(correction)
             self.contracts.validate("memory-repair", correction)
+            correction = deepcopy(correction)
             after = correction["working_memory"]
             audit["response_sizes"] = working_sizes(after)
+            # A literal carry-forward is not a semantic update. Canonicalize
+            # only this provable identity; leave the raw reply in the audit and
+            # let the unchanged transition validator reject every other fault.
+            targets = entries(after)
+            for field, source in (
+                ("memory_dispositions", context["working_memory"]),
+                ("candidate_dispositions", original["working_memory"]),
+            ):
+                sources = entries(source)
+                for row in correction[field]:
+                    origin, target = row["from"], row["to"]
+                    if (
+                        origin in sources
+                        and target in targets
+                        and origin[0] == target[0]
+                        and sources[origin] == targets[target]
+                        and row["disposition"] in {"updated", "merged"}
+                    ):
+                        audit.setdefault("mapping_normalizations", []).append(
+                            {
+                                "field": field,
+                                "from": origin,
+                                "to": target,
+                                "original_disposition": row["disposition"],
+                                "applied_disposition": "retained",
+                            }
+                        )
+                        row["disposition"] = "retained"
             if after["position_theses"] != original["working_memory"]["position_theses"]:
                 raise ShadowError("working_memory_repair_theses")
             # Every candidate entry must survive, possibly in a same-kind merge.

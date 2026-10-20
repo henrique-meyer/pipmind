@@ -11,7 +11,7 @@ from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
 from pipmind.shadow.maintenance import POLICY, working_sizes
 
-PROMPT_VERSION = "shadow-context-v12"
+PROMPT_VERSION = "shadow-context-v13"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -77,6 +77,8 @@ REPAIR_INSTRUCTIONS = (
     " combine wording without dropping meaning. Do not newly resolve an old waiting"
     " condition. Any already resolved BEFORE condition must retain its exact original"
     " disposition/evidence. Use only supplied evidence IDs. No tools or new facts."
+    " In BOTH mapping arrays, use retained when the target text is exactly unchanged;"
+    " updated/merged describes changed wording, never a literal carry-forward."
     " Preserve the immutable trading decision; your response cannot edit it."
     " Make a genuine consolidation, not a rewrite of the same long list. Each"
     " view AND each waiting_for string MUST fit 300 UTF-8 bytes independently;"
