@@ -480,14 +480,19 @@ consolidation. Both paths share the existing one-call, timeout and output budget
 there is no automatic retry loop or fallback that discards a failed attempt.
 
 Small entry overflows first try removing only optional ASCII spaces after
-semicolons/colons before letters. Words, punctuation and numbers stay in order;
-quoted/code-like text and numeric colon spacing are untouched. This requires all
+commas/semicolons/colons before letters. Words, punctuation and numbers stay in order;
+quoted/code-like text, URLs and numeric punctuation spacing are untouched. This requires all
 ordinary transitions to validate and uses zero model calls. When a model patch
 is needed, its raw proposal allows up to 1,000 characters for audit/validation;
 the same spacing operation may compact an overlong proposal before validation.
 If the expanded patch exceeds only the total limit, that representation-only
 operation also applies to its selected entries, even when each entry fits. All
-unselected entries remain exact. Residual overflow still holds; no words or
+unselected entries remain exact unless selected-entry formatting is insufficient.
+Then the engine may apply the same lossless formatter to literal carry-forwards,
+stopping when the bound fits. These are separate `format_only_normalizations`,
+never additional model edits: each must equal the safe formatter and gets an
+explicit same-kind mapping. Quoted/code-like text and numeric punctuation spacing
+remain protected; all theses and decision fields stay exact. Residual overflow still holds; no words or
 additional model calls are used to repair formatting.
 The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
@@ -503,7 +508,8 @@ qualifiers and JSON/Unicode overhead. The request schema names the exact keys/co
 and calculated text length; the normative raw-response contract remains intact
 for audit compatibility. These are model guidance; actual 300-byte entry
 and 3,200-byte total guards remain authoritative, and text is never clipped to an
-allocation. All unselected text and decision fields remain literal copies.
+allocation. The model cannot change unselected text; the separate audited
+lossless-formatting step above may normalize it. Decision fields remain exact.
 BEFORE-to-candidate mappings are composed with the indexed patch: a previously
 unmapped literal carry-forward receives a mapping only when that exact entry is
 now edited. Existing resolutions remain exact; missing provenance for another

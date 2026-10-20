@@ -14,9 +14,11 @@ MAX_TEXT_BYTES = 300
 
 
 def punctuation_spacing(text):
-    if any(mark in text for mark in "'\"`"):
+    if any(mark in text for mark in "'\"`\u2018\u2019\u201c\u201d") or re.search(
+        r"https?://|www\.", text
+    ):
         return text
-    return re.sub(r"([;:]) (?=[A-Za-z])", r"\1", text)
+    return re.sub(r"([,;:]) (?=[A-Za-z])", r"\1", text)
 
 
 def repair_budget(working):
@@ -90,21 +92,38 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
         after[field][int(key[1:])] = (
             punctuation_spacing(text) if len(text.encode()) > MAX_TEXT_BYTES else text
         )
+    proposed = entries(original)
+    format_edits = {}
     if len(encoded(after).encode()) > MAX_BYTES:
         # A model can miss the total by a few formatting bytes even though
-        # every entry fits. Compact only the explicitly selected patch texts;
-        # leave every unselected entry literal and retain the raw patch audit.
+        # every entry fits. Prefer selected patch texts; any literal carry-forward
+        # formatting below is separately mapped and audited, never a model edit.
         for key in edits:
             field = "views" if key[0] == "v" else "waiting_for"
             index = int(key[1:])
             after[field][index] = punctuation_spacing(after[field][index])
-    proposed = entries(original)
+        if before is not None and len(encoded(after).encode()) > MAX_BYTES:
+            for key, text in proposed.items():
+                if key in edits:
+                    continue
+                compact = punctuation_spacing(text)
+                if compact == text:
+                    continue
+                field = "views" if key[0] == "v" else "waiting_for"
+                after[field][int(key[1:])] = compact
+                format_edits[key] = {
+                    "reason": "Optional punctuation spacing removed; lexical content unchanged",
+                    "evidence_ids": [event_ref],
+                }
+                if len(encoded(after).encode()) <= MAX_BYTES:
+                    break
+    applied_edits = edits | format_edits
     dispositions = deepcopy(candidate.get("memory_dispositions", []))
     if before is not None:
         old = entries(before)
         mapped = {row["from"] for row in dispositions}
         for row in dispositions:
-            edit = edits.get(row["to"])
+            edit = applied_edits.get(row["to"])
             if edit and entries(after)[row["to"]] != proposed[row["to"]]:
                 if row["disposition"] == "retained":
                     row["disposition"] = "updated"
@@ -120,8 +139,8 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
             target = next(
                 (k for k, value in proposed.items() if k[0] == key[0] and value == text), None
             )
-            if target in edits:
-                edit = edits[target]
+            if target in applied_edits:
+                edit = applied_edits[target]
                 dispositions.append(
                     {
                         "from": key,
@@ -133,12 +152,12 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
                 )
     mappings = []
     for key in proposed:
-        edit = edits.get(key)
+        edit = applied_edits.get(key)
         mappings.append(
             {
                 "from": key,
                 "to": key,
-                "disposition": "updated" if edit else "retained",
+                "disposition": "updated" if entries(after)[key] != proposed[key] else "retained",
                 "reason": edit["reason"] if edit else "Exact candidate entry carried forward",
                 "evidence_ids": edit["evidence_ids"] if edit else [event_ref],
             }
@@ -153,20 +172,24 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
 def spacing_repair(before, candidate, event_ref, moment):
     """Try punctuation spacing only: no words, punctuation or numbers change.
 
-    Leave quoted/code-like text and numeric colon separators untouched. This
+    Leave quoted/code-like text and numeric punctuation spacing untouched. This
     representation-only repair is used only if all strict transitions qualify.
     """
     edits = []
     for key in repair_scope(candidate["working_memory"]):
         text = entries(candidate["working_memory"])[key]
         compact = punctuation_spacing(text)
-        if compact == text or len(compact.encode()) > MAX_TEXT_BYTES:
+        if len(compact.encode()) > MAX_TEXT_BYTES:
             return None
         edits.append(
             {
                 "from": key,
                 "text": compact,
-                "reason": "Optional punctuation spacing removed; lexical content unchanged",
+                "reason": (
+                    "Optional punctuation spacing removed; lexical content unchanged"
+                    if compact != text
+                    else "Exact candidate entry retained; no lexical change"
+                ),
                 "evidence_ids": [event_ref],
             }
         )
