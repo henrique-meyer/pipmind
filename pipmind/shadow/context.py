@@ -135,7 +135,40 @@ def record_view(meta, body, query=""):
     except (ContractError, RecursionError):
         data = None
     partial = False
-    if meta["part"] == "journal" and data is None and body.lstrip().startswith("{"):
+    if isinstance(data, dict) and data.get("kind") == "calendar-snapshot-v1":
+        # Index the reference, not a week's keywords into every archive search.
+        # Exact-ID native reads can request currency/title details with a focus.
+        snapshot = data["snapshot"]
+        rows = snapshot["rows"]
+        selected = []
+        if query:
+            from pipmind.feeds.macro import calendar_date
+
+            observed = calendar_date(meta["ts"])
+            words = set(query_terms_all(query))
+            selected = sorted(
+                rows,
+                key=lambda row: (
+                    len(words & set(query_terms_all(encoded(row)))),
+                    calendar_date(row["date"]) >= observed,
+                    -abs((calendar_date(row["date"]) - observed).total_seconds()),
+                ),
+                reverse=True,
+            )[:6]
+        text = encoded(
+            {
+                "kind": data["kind"],
+                "source": data["source"],
+                "scope": data["scope"],
+                "publication_time": None,
+                "fetched_at": snapshot["fetched_at"],
+                "rows": selected,
+                "total_rows": len(rows),
+                "details": "search_memory with this record_id | currency and event title",
+            }
+        )
+        partial = len(selected) < len(rows)
+    elif meta["part"] == "journal" and data is None and body.lstrip().startswith("{"):
         # Old prompt snapshots may contain a cut JSON audit record. Its raw
         # prefix is not a narrative; resolve the original SQL record instead.
         text = encoded({"status": "legacy_fragment_requires_source_lookup"})

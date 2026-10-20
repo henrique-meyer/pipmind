@@ -49,6 +49,14 @@ class FeedConsumer:
             raise ShadowError("invalid_shadow_source")
         self.store, self.url, self.token, self.source = store, url.rstrip("/"), token, source_id
         self.completion_clock = completion_clock
+        self.calendar_checked, self.calendar_info = None, {"status": "unavailable"}
+
+    def calendar(self, cached, moment):
+        from pipmind.shadow.calendar import retain_calendar
+
+        self.calendar_info = retain_calendar(self.store, cached, moment)
+        self.calendar_checked = moment
+        return self.calendar_info
 
     def poll(self, moment):
         after = self.store.checkpoint(self.source)
@@ -71,6 +79,10 @@ class FeedConsumer:
                     "coverage": page.get("coverage", "unverified"),
                     "quarantined": page.get("quarantined"),
                     "checked_at": stamp(moment),
+                    "calendar": self.calendar(page.get("calendar"), moment)
+                    if self.calendar_checked is None
+                    or (moment - self.calendar_checked).total_seconds() >= 60
+                    else self.calendar_info,
                 },
             )
             return len(page["events"])
@@ -176,6 +188,7 @@ class LocalFeedConsumer:
         self.store, self.feeds = store, feeds
         self.source = feeds.source_id()
         self.completion_clock = completion_clock
+        self.calendar_checked, self.calendar_info = None, {"status": "unavailable"}
 
     def poll(self, moment):
         try:
@@ -183,12 +196,23 @@ class LocalFeedConsumer:
             moment = self.completion_clock() if self.completion_clock else moment
             if page:
                 self.store.accept(self.source, page, moment)
+            if (
+                self.calendar_checked is None
+                or (moment - self.calendar_checked).total_seconds() >= 60
+            ):
+                from pipmind.shadow.calendar import retain_calendar
+
+                cached = self.feeds.state("calendar:data")
+                observed = self.completion_clock() if self.completion_clock else moment
+                self.calendar_info = retain_calendar(self.store, cached, observed)
+                self.calendar_checked = observed
             self.store.set_runtime(
                 "feed_status",
                 {
                     "coverage": self.feeds.state("canonical:quality", {"status": "unverified"}),
                     "quarantined": self.feeds.status()["quarantined"],
                     "checked_at": stamp(moment),
+                    "calendar": self.calendar_info,
                 },
             )
             return len(page)

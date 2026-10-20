@@ -61,6 +61,62 @@ def test_expanded_feed_status_retains_raw_facts_before_prompt_factoring(mind):
     assert mind.runtime("feed_status") == status
 
 
+def test_calendar_snapshots_keep_full_history_and_are_native_search_evidence(mind):
+    from pipmind.shadow.calendar import retain_calendar
+    from pipmind.shadow.common import encoded
+
+    cached = {
+        "fetched_at": MOMENT.isoformat(),
+        "rows": [
+            {
+                "title": "Synthetic future CPI",
+                "country": "USD",
+                "impact": "High",
+                "date": (MOMENT + timedelta(days=1)).isoformat(),
+                "forecast": "2.0%",
+                "previous": "1.9%",
+            }
+        ],
+    }
+    baseline = mind.head()
+    first = retain_calendar(mind, cached, MOMENT)
+    assert retain_calendar(mind, cached, MOMENT) == first
+    second = retain_calendar(
+        mind, {**cached, "rows": [{**cached["rows"][0], "forecast": "2.1%"}]}, MOMENT
+    )
+    assert first["record_id"] != second["record_id"]
+    assert mind.head() == baseline  # no working revision, account, or authority mutation
+    found = mind.search(first["record_id"] + " | USD CPI", MOMENT)
+    assert len(found) == 1 and found[0]["metadata"]["record_id"] == first["record_id"]
+    assert '"forecast":"2.0%"' in found[0]["body"]
+    assert '"publication_time":null' in found[0]["body"]
+    assert encoded(first).count("forecast") == 0  # only a reference enters every prompt
+    assert (
+        retain_calendar(mind, {**cached, "fetched_at": "2099-01-01T00:00:00Z"}, MOMENT)["status"]
+        == "future_snapshot"
+    )
+    from pipmind.shadow.service import LocalFeedConsumer
+
+    class Feeds:
+        def source_id(self):
+            return "synthetic-calendar-source"
+
+        def events(self, *args):
+            return []
+
+        def state(self, key, default=None):
+            return cached if key == "calendar:data" else default
+
+        def status(self):
+            return {"quarantined": 0}
+
+    consumer = LocalFeedConsumer(mind, Feeds())
+    assert consumer.poll(MOMENT) == 0
+    assert mind.runtime("feed_status")["calendar"]["record_id"] == first["record_id"]
+    consumer.poll(MOMENT + timedelta(seconds=1))
+    assert mind.runtime("feed_status")["calendar"]["record_id"] == first["record_id"]
+
+
 @pytest.mark.parametrize("case_id", SHADOW_CASES)
 def test_starter_cases_through_actual_sql_shadow_runtime(mind, case_id):
     cases = [

@@ -251,6 +251,17 @@ explicit. A captured REST window is not proof of complete source history. Signed
 public callback routing still needs specific approval; SSE and REST backfill do
 not certify that backup route. PMI headline coverage is not structured PMI actuals.
 
+Calendar cache snapshots also become immutable, dated SQL evidence. Model feed
+facts carry only the snapshot's record ID, fetch time and row count. Decisions
+can use `search_memory` with `record_id | currency and event title` to retrieve
+relevant schedule/consensus rows. Projections disclose omitted rows, while the
+complete original remains in SQL and experience exports. Snapshots do not flood
+ordinary news retrieval with a week's keywords. Unknown publication time stays
+unknown; future scheduled dates are observations of a schedule, not released
+actuals. Revised snapshots get distinct IDs without changing earlier evidence,
+working memory, account authority or input ordering. Cached references refresh
+at most once a minute; the provider retains its hourly polling limit.
+
 The gateway reads a bounded Reuters FX headline window every minute using its
 existing read-only session. It validates the vendor publication time separately
 from receipt, retains revisions with distinct content identities, and hands the

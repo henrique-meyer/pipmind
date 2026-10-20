@@ -17,6 +17,47 @@ def row(identifier, part="journal", body=None):
     }
 
 
+def test_calendar_references_do_not_crowd_news_search_and_focused_reads_return_schedule():
+    record = row(
+        "calendar:synthetic",
+        part="memory",
+        body={
+            "kind": "calendar-snapshot-v1",
+            "source": "forexfactory",
+            "publication_time": None,
+            "scope": "Schedule and consensus, not actual releases.",
+            "snapshot": {
+                "fetched_at": "2026-09-15T00:00:00Z",
+                "rows": [
+                    {
+                        "title": f"Other item {i}",
+                        "country": "EUR",
+                        "date": "2026-09-16T08:00:00Z",
+                        "impact": "Low",
+                    }
+                    for i in range(12)
+                ]
+                + [
+                    {
+                        "title": "Housing Starts",
+                        "country": "USD",
+                        "date": "2026-09-16T12:30:00Z",
+                        "impact": "High",
+                        "forecast": "1.3M",
+                    }
+                ],
+            },
+        },
+    )
+    reference = record_view(record["metadata"], record["body"])
+    assert "Housing Starts" not in reference["body"] and reference["partial"]
+    focused = record_view(record["metadata"], record["body"], "USD Housing Starts")
+    values = __import__("json").loads(focused["body"])
+    assert values["total_rows"] == 13 and len(values["rows"]) == 6
+    assert values["rows"][0]["forecast"] == "1.3M" and focused["partial"]
+    assert values["publication_time"] is None and "not actual" in values["scope"]
+
+
 def legacy():
     return row(
         "old-decision",
