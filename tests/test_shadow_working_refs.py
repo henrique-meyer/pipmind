@@ -85,6 +85,12 @@ def test_literal_strings_and_position_theses_keep_their_normative_meaning():
         Contracts().validate("model-reply", decoded)
 
 
+def test_reference_range_cannot_expand_with_an_invalid_legacy_before_state():
+    before = {**state(), "views": [f"legacy {i}" for i in range(9)]}
+    with pytest.raises(ShadowError, match="working_memory_reference"):
+        expand_reply(reply({**before, "views": [8]}), before)
+
+
 def test_wire_schema_is_separate_from_the_unchanged_persistent_contract():
     contracts = Contracts()
     original = deepcopy(contracts.schemas["working-memory"])

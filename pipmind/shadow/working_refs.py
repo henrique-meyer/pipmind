@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 from pipmind.shadow.common import ShadowError
+from pipmind.shadow.maintenance import MAX_ENTRIES
 
 VERSION = "working-refs-v1"
 SCHEMA_ID = "urn:pipmind:wire:working-refs-v1"
@@ -21,7 +22,7 @@ def wire_schema(schema):
         result["properties"][field]["items"] = {
             "anyOf": [
                 result["properties"][field]["items"],
-                {"type": "integer", "minimum": 0, "maximum": 7},
+                {"type": "integer", "minimum": 0, "maximum": MAX_ENTRIES - 1},
             ]
         }
     return result
@@ -42,7 +43,7 @@ def expand_reply(reply, before):
         for index, value in enumerate(values):
             if type(value) is not int:  # bools and floats are never references.
                 continue
-            if not isinstance(original, list) or not 0 <= value < len(original):
+            if not isinstance(original, list) or not 0 <= value < min(MAX_ENTRIES, len(original)):
                 raise ShadowError("working_memory_reference")
             if not isinstance(original[value], str):
                 raise ShadowError("working_memory_reference")
