@@ -219,16 +219,34 @@ class FeedStore:
                 self.emit(db, producer, payload, now)
             self.save(key, cursor, db=db)
 
-    def events(self, after=0, limit=100):
+    def events(self, after=0, limit=100, *, db=None):
+        if db is None:
+            with self.transaction() as connection:
+                return self.events(after, limit, db=connection)
+        return [
+            {"sequence": seq, "producer": producer, "event": loads(event)}
+            for seq, producer, event in db.execute(
+                "SELECT sequence,producer,envelope FROM events WHERE sequence>? "
+                "ORDER BY sequence LIMIT ?",
+                (after, limit),
+            )
+        ]
+
+    def handoff(self, after=0, limit=100, *, include_calendar=False):
+        """Same read frame as hosted SQL, without consuming or rewriting inputs."""
+        if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 500:
+            raise FeedError("invalid_event_page")
         with self.transaction() as db:
-            return [
-                {"sequence": seq, "producer": producer, "event": loads(event)}
-                for seq, producer, event in db.execute(
-                    "SELECT sequence,producer,envelope FROM events WHERE sequence>? "
-                    "ORDER BY sequence LIMIT ?",
-                    (after, limit),
-                )
-            ]
+            frame = {
+                "events": self.events(after, limit, db=db),
+                "coverage": self.state("canonical:quality", {"status": "unverified"}, db=db),
+                "quarantined": db.execute(
+                    "SELECT COUNT(*) FROM inbox WHERE status='quarantined'"
+                ).fetchone()[0],
+            }
+            if include_calendar:
+                frame["calendar"] = self.state("calendar:data", db=db)
+            return frame
 
     def status(self):
         with self.transaction() as db:

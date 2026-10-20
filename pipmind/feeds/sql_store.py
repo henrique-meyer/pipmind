@@ -263,18 +263,31 @@ class SqlFeedStore:
             self.emit_many(db, producer, payloads, now)
             self.save(key, cursor, db=db)
 
-    def events(self, after=0, limit=100):
+    def events(self, after=0, limit=100, *, db=None):
         if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 500:
             raise FeedError("invalid_event_page")
+        if db is None:
+            with self.transaction() as cursor:
+                return self.events(after, limit, db=cursor)
+        db.execute(
+            "SELECT TOP(%s) seq,producer,envelope FROM pf_events WHERE seq>%s ORDER BY seq",
+            (limit, after),
+        )
+        return [
+            {"sequence": seq, "producer": producer, "event": loads(event)}
+            for seq, producer, event in db.fetchall()
+        ]
+
+    def handoff(self, after=0, limit=100, *, include_calendar=False):
+        """One profile-checked read frame; never advance the consumer cursor."""
         with self.transaction() as db:
-            db.execute(
-                "SELECT TOP(%s) seq,producer,envelope FROM pf_events WHERE seq>%s ORDER BY seq",
-                (limit, after),
-            )
-            return [
-                {"sequence": seq, "producer": producer, "event": loads(event)}
-                for seq, producer, event in db.fetchall()
-            ]
+            page = self.events(after, limit, db=db)
+            quality = self.state("canonical:quality", {"status": "unverified"}, db=db)
+            db.execute("SELECT COUNT(*) FROM pf_inbox WHERE status='quarantined'")
+            frame = {"events": page, "coverage": quality, "quarantined": db.fetchone()[0]}
+            if include_calendar:
+                frame["calendar"] = self.state("calendar:data", db=db)
+            return frame
 
     def status(self):
         with self.transaction() as db:

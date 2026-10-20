@@ -501,6 +501,18 @@ Enable the private in-process recorder with `PIPMIND_SHADOW_QUALIFICATION_ENABLE
 
 Ordered backlog steps continue immediately after successful progress; idle/error polling retains its backoff. Every step still refreshes source/broker facts and commits one input in order. No historical input is skipped to meet the lag threshold. Encrypted SQL connections reuse a bounded verified TLS trust-store context, invalidated when its CA file changes. SQL sessions, managed-identity authentication, hostname/chain verification and separate TLS connections remain unchanged. This avoids repeated native CA allocations; sustained container memory still requires measurement.
 
+Local feed handoff reads the next bounded event page, coverage, quarantine count
+and any due calendar in one profile-checked store transaction. It does not read
+unused event totals or alert lists on each input. Events/cursors and provider
+polling schedules are unchanged; a read that crosses the calendar refresh
+boundary still fetches the now-due calendar. Confirmed UTC clock slots are
+memoized only after a successful durable check/acceptance. Boundaries, failures
+and service restarts recheck SQL, preserving duplicate suppression. Every input
+still refreshes actual broker facts; no source backlog is hidden or deferred.
+These changes reduce redundant reads without changing model settings, memory
+bounds, receipt timestamps, capacities or full-day readiness gates. Measure net
+incoming/completed work after deployment before estimating a start.
+
 An authenticated owner operation calls `pipmind.shadow.qualification.arm(store, run_id, instruments, build, moment)` with a fresh private run ID. Only one warming/running request is allowed. The immutable request and minute samples live under namespaced private SQL runtime keys; slot insertion and cursor advance are atomic, so overlapping revisions cannot overwrite samples. The private `/status` reports the run and recorder liveness/error. All source minds, events, failures, outcomes and dependencies remain intact.
 
 Warm-up capture begins immediately. A precisely declared continuous **24-hour open-FX window** starts automatically only when the engine/work/supervisor and feed workers are alive, broker demo/market verification, the request's quote policy and fresh snapshots/order evidence pass, no activity is reported, and startup backlog is at most 100 pending inputs with oldest receipt lag at most 300 seconds. The window uses named `America/New_York` weekend boundaries, including DST; it cannot include closed weekend hours. Time-zone data uses the Python-maintained Apache-2.0 `tzdata` package for portable behavior. Warm-up exceeding 24 hours fails explicitly rather than waiting indefinitely.
