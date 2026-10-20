@@ -10,7 +10,7 @@ INSTRUCTIONS = (
     " Decision working_memory.views/waiting_for may use integer i to copy the COMPLETE"
     " expanded BEFORE entry at the same-kind index i EXACTLY. Prefer references for"
     " unchanged entries; strings are new/changed text. Return complete ordered arrays."
-    " Theses and dispositions keep their ordinary schemas."
+    " Theses and dispositions keep their ordinary schemas. Limits apply AFTER expansion."
 )
 
 
