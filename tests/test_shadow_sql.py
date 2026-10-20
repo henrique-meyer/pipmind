@@ -1761,8 +1761,15 @@ def test_private_http_rejects_malformed_and_forged_owner_inputs_without_advancin
         assert mind.pending() is None
 
 
-@pytest.mark.parametrize("failed_correction", [False, True])
-@pytest.mark.parametrize("invalid_candidate", ["oversized", "missing_dispositions", "entry_patch"])
+@pytest.mark.parametrize(
+    "invalid_candidate,failed_correction",
+    [
+        (kind, failed)
+        for kind in ("oversized", "missing_dispositions", "entry_patch")
+        for failed in (False, True)
+    ]
+    + [("entry_spacing", False)],
+)
 def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
     mind, failed_correction, invalid_candidate
 ):
@@ -1792,7 +1799,7 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
     if invalid_candidate == "missing_dispositions":
         candidate["working_memory"]["views"] = ["USD uncertainty remains"]
         candidate.pop("memory_dispositions", None)
-    if invalid_candidate == "entry_patch":
+    if invalid_candidate in {"entry_patch", "entry_spacing"}:
         candidate["memory_dispositions"] = [
             {
                 "from": "v0",
@@ -1802,9 +1809,15 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
                 "evidence_ids": [event["message_id"]],
             }
         ]
+    if invalid_candidate == "entry_spacing":
+        candidate["working_memory"]["views"] = ["USD: " + "x" * 274 + "; risk; wait; uncertainty"]
     model.responses[event["message_id"]]["reply"] = candidate
     model.responses[event["message_id"]]["triage"]["wake"] = True
     after = {**before, "views": ["USD uncertainty retained"]}
+    if invalid_candidate == "entry_spacing":
+        after["views"] = [
+            candidate["working_memory"]["views"][0].replace(": ", ":").replace("; ", ";")
+        ]
 
     def disposition(key, state):
         return {
@@ -1853,7 +1866,7 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
     assert (
         asyncio.run(ShadowEngine(mind, live, clock=lambda: MOMENT).step()) is not failed_correction
     )
-    assert live.calls == 1
+    assert live.calls == (0 if invalid_candidate == "entry_spacing" else 1)
     if failed_correction:
         assert mind.head()["paused"] and mind.pending() == event
         assert mind.head()["working"] == before and mind.outcome(event["message_id"]) is None
@@ -1865,12 +1878,14 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
         journal = mind.outcome(event["message_id"])
         assert journal["status"] == "observed" and not mind.head()["paused"]
         assert mind.head()["working"] == after and mind.pending() is None
-        if invalid_candidate == "entry_patch":
+        if invalid_candidate in {"entry_patch", "entry_spacing"}:
             assert journal["reply"]["memory_dispositions"] == candidate["memory_dispositions"]
             assert (
                 journal["memory_repair"]["response"]["replacements"][0]["text"] == after["views"][0]
             )
             assert journal["memory_repair"]["expanded_response"]["working_memory"] == after
+            if invalid_candidate == "entry_spacing":
+                assert journal["memory_repair"]["method"] == "punctuation_spacing"
         else:
             assert journal["reply"]["memory_dispositions"][-1]["disposition"] == "retained"
             assert journal["memory_repair"]["response"] == correction
@@ -1884,7 +1899,10 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
         else "working_memory_dispositions"
     )
     assert [row["phase"] for row in journal["usage"]] == ["triage", "decision", "memory_repair"]
-    assert journal["usage"][-1]["input_tokens"] == 123 and journal["dispatches"] == 0
+    assert journal["usage"][-1]["input_tokens"] == (
+        0 if invalid_candidate == "entry_spacing" else 123
+    )
+    assert journal["dispatches"] == 0
     retained = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
     assert all(
         retained[meta["record_id"]] == (meta, body)

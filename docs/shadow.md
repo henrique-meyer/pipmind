@@ -479,6 +479,16 @@ transition checks run unchanged. Total/count overflow still uses full
 consolidation. Both paths share the existing one-call, timeout and output budget;
 there is no automatic retry loop or fallback that discards a failed attempt.
 
+Small entry overflows first try removing only optional ASCII spaces after
+semicolons/colons before letters. Words, punctuation and numbers stay in order;
+quoted/code-like text and numeric colon spacing are untouched. This requires all
+ordinary transitions to validate and uses zero model calls. When a model patch
+is needed, its raw proposal allows up to 1,000 characters for audit/validation;
+the same spacing operation may compact an overlong proposal before validation.
+The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
+The exact candidate, raw patch, expanded applied text and spacing conversions
+remain auditable; residual overflow or any dependency/transition fault holds.
+
 Backlog estimates require measured completions and new arrivals over comparable
 healthy intervals. Resumption alone is insufficient, and a paused interval is not
 a measure of active throughput. If arrivals meet or exceed completions, there is

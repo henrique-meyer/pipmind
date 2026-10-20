@@ -1,15 +1,22 @@
 """Bounded current state, with explicit dispositions instead of silent clipping."""
 
+import re
 from copy import deepcopy
 from functools import lru_cache
 
-from pipmind.contracts import Contracts, utc
+from pipmind.contracts import ContractError, Contracts, utc
 from pipmind.shadow.common import ShadowError, digest, encoded
 
 POLICY = "bounded-working-v1"
 MAX_BYTES = 3200
 MAX_ENTRIES = 8
 MAX_TEXT_BYTES = 300
+
+
+def punctuation_spacing(text):
+    if any(mark in text for mark in "'\"`"):
+        return text
+    return re.sub(r"([;:]) (?=[A-Za-z])", r"\1", text)
 
 
 def repair_scope(working):
@@ -34,7 +41,10 @@ def expand_repair_patch(candidate, patch, event_ref):
     after = deepcopy(original)
     for key, row in edits.items():
         field = "views" if key[0] == "v" else "waiting_for"
-        after[field][int(key[1:])] = row["text"]
+        text = row["text"]
+        after[field][int(key[1:])] = (
+            punctuation_spacing(text) if len(text.encode()) > MAX_TEXT_BYTES else text
+        )
     proposed = entries(original)
     dispositions = deepcopy(candidate.get("memory_dispositions", []))
     mappings = []
@@ -54,6 +64,44 @@ def expand_repair_patch(candidate, patch, event_ref):
         "memory_dispositions": dispositions,
         "candidate_dispositions": mappings,
     }
+
+
+def spacing_repair(before, candidate, event_ref, moment):
+    """Try punctuation spacing only: no words, punctuation or numbers change.
+
+    Leave quoted/code-like text and numeric colon separators untouched. This
+    representation-only repair is used only if all strict transitions qualify.
+    """
+    edits = []
+    for key in repair_scope(candidate["working_memory"]):
+        text = entries(candidate["working_memory"])[key]
+        compact = punctuation_spacing(text)
+        if compact == text or len(compact.encode()) > MAX_TEXT_BYTES:
+            return None
+        edits.append(
+            {
+                "from": key,
+                "text": compact,
+                "reason": "Optional punctuation spacing removed; lexical content unchanged",
+                "evidence_ids": [event_ref],
+            }
+        )
+    if not edits:
+        return None
+    patch = {"replacements": edits}
+    expanded = expand_repair_patch(candidate, patch, event_ref)
+    try:
+        transition(before, expanded["working_memory"], expanded["memory_dispositions"], moment)
+        transition(
+            candidate["working_memory"],
+            expanded["working_memory"],
+            expanded["candidate_dispositions"],
+            moment,
+            initial=True,
+        )
+    except (ShadowError, ContractError, KeyError):
+        return None
+    return patch
 
 
 def working_sizes(working):

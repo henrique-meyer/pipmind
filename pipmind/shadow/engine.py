@@ -9,6 +9,7 @@ from pipmind.shadow.maintenance import (
     POLICY,
     entries,
     expand_repair_patch,
+    spacing_repair,
     transition,
     validate_working,
     working_digest,
@@ -28,7 +29,7 @@ class ShadowEngine:
     async def _correct_memory(
         self, event, context, reply, result, moment, reason="working_memory_bound"
     ):
-        """One compression-only RPC; preserve the rejected candidate and all usage."""
+        """At most one compression RPC; preserve the candidate and all usage."""
         original = deepcopy(reply)
         audit = result["memory_repair"] = {
             "candidate": original,
@@ -38,15 +39,38 @@ class ShadowEngine:
         result["usage"].append({"phase": "memory_repair", "attempted": True, "usage_unknown": True})
         self.observer("memory_repair", {"event": event})
         try:
-            correction, usage = await self.model.repair_memory(
-                deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
+            correction = spacing_repair(
+                context["working_memory"], original, event_id(event), moment
             )
+            if correction is not None:
+                audit["method"] = "punctuation_spacing"
+                usage = {
+                    "phase": "memory_repair",
+                    "attempted": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "method": "punctuation_spacing",
+                }
+            else:
+                correction, usage = await self.model.repair_memory(
+                    deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
+                )
             result["usage"][-1] = usage
             audit["response"] = deepcopy(correction)
             if "replacements" in correction:
                 self.contracts.validate("memory-repair-patch", correction)
                 correction = expand_repair_patch(original, correction, event_id(event))
                 audit["expanded_response"] = deepcopy(correction)
+                for row in audit["response"]["replacements"]:
+                    applied = entries(correction["working_memory"])[row["from"]]
+                    if row["text"] != applied:
+                        audit.setdefault("patch_spacing_normalizations", []).append(
+                            {
+                                "key": row["from"],
+                                "before_bytes": len(row["text"].encode()),
+                                "after_bytes": len(applied.encode()),
+                            }
+                        )
             self.contracts.validate("memory-repair", correction)
             correction = deepcopy(correction)
             after = correction["working_memory"]

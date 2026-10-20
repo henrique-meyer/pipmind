@@ -8,7 +8,13 @@ import pytest
 from pipmind.contracts import ContractError, Contracts
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.engine import ShadowEngine
-from pipmind.shadow.maintenance import repair_scope, transition, validate_working, working_sizes
+from pipmind.shadow.maintenance import (
+    repair_scope,
+    spacing_repair,
+    transition,
+    validate_working,
+    working_sizes,
+)
 from pipmind.shadow.model import FoundryModel, ModelFailure
 
 
@@ -399,3 +405,76 @@ def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free
     assert captured["message"]["correction"]["editable_keys"] == ["v0"]
     assert captured["options"]["reasoning"] == {"effort": "low"}
     assert trace["output_tokens"] == 80 and trace["max_output_tokens"] == 4096
+
+
+def test_punctuation_spacing_repairs_small_overflow_without_rpc_or_lexical_loss():
+    import re
+
+    context, candidate, _ = patch_example()
+    text = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
+    assert len(text.encode()) > 300
+    candidate["working_memory"]["views"] = [text]
+
+    async def forbidden(*args):
+        pytest.fail("A representation-only correction must not call a model")
+
+    result = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=forbidden))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    compact = out["working_memory"]["views"][0]
+    assert len(compact.encode()) <= 300
+    assert re.findall(r"\w+|[^\w\s]", text) == re.findall(r"\w+|[^\w\s]", compact)
+    assert out["working_memory"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+    assert result["memory_repair"]["candidate"] == candidate
+    assert result["memory_repair"]["method"] == "punctuation_spacing"
+    assert result["usage"] == [
+        {
+            "phase": "memory_repair",
+            "attempted": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "method": "punctuation_spacing",
+        }
+    ]
+
+
+@pytest.mark.parametrize("fault", ["quote", "code", "numeric", "mapping", "still_large"])
+def test_spacing_compaction_cannot_bypass_literal_or_transition_constraints(fault):
+    context, candidate, _ = patch_example()
+    text = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
+    if fault == "quote":
+        text += "'"
+    elif fault == "code":
+        text += "`"
+    elif fault == "numeric":
+        text = "x" * 290 + "; 10: 20; 30: 40"
+    elif fault == "mapping":
+        candidate["memory_dispositions"] = []
+    else:
+        text += "x" * 30
+    candidate["working_memory"]["views"] = [text]
+    assert spacing_repair(context["working_memory"], candidate, "input", now()) is None
+
+
+def test_model_patch_spacing_keeps_raw_proposal_and_enforces_final_byte_limit():
+    context, candidate, patch = patch_example()
+    raw = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
+    patch["replacements"][0]["text"] = raw
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "input_tokens": 200}
+
+    trace = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, trace, now()
+        )
+    )
+    assert trace["memory_repair"]["response"] == patch
+    assert trace["memory_repair"]["patch_spacing_normalizations"] == [
+        {"key": "v0", "before_bytes": 304, "after_bytes": 300}
+    ]
+    assert len(out["working_memory"]["views"][0].encode()) == 300
