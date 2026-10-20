@@ -846,6 +846,45 @@ def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primar
     assert report["human_review"].startswith("pending")
 
 
+def test_evaluation_commit_failure_retains_known_attempt_and_fails_completion(mind, monkeypatch):
+    from pipmind.shadow.evaluations import evaluate
+
+    original = SqlMind.commit
+    calls = 0
+    partial = []
+
+    def fail_once(store, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ShadowError("shadow_store_transaction_failed")
+        return original(store, *args, **kwargs)
+
+    monkeypatch.setattr(SqlMind, "commit", fail_once)
+    case = deepcopy(CASE)
+    report = asyncio.run(
+        evaluate(
+            mind.connect,
+            [case],
+            FixtureModel(case["model_responses"]),
+            repetitions=2,
+            progress=partial.append,
+        )
+    )
+    first, second = report["results"]
+    assert not first["hard_checks"]["complete_episode"]
+    assert first["failure_audit"] == "sql-and-report"
+    assert first["uncommitted_attempt"]["result"]["model_reply"]
+    assert first["outcomes"][0]["status"] == "not_completed"
+    assert first["model_refusals"] == 0 and second["hard_checks"]["complete_episode"]
+    assert report["summary"]["operational_failures"] == 1 and len(partial) == 2
+    assert all(SqlMind(mind.connect, r["trader"]).head()["paused"] for r in report["results"])
+    assert any(
+        '"evaluation-operational-failure"' in body
+        for meta, body in SqlMind(mind.connect, first["trader"]).retained()[1]
+    )
+
+
 def test_broker_headline_page_commits_events_and_coverage_atomically_in_sql(mind):
     from pipmind.feeds.common import FeedError
     from pipmind.feeds.news import relay_page

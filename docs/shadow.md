@@ -283,6 +283,14 @@ own identity, availability and cost evidence. The verified institutional cohort
 does not certify those roles. Repeated model integrity, literal fixture alignment,
 retained-context semantic fidelity and owner calibration remain separate results.
 
+The repeated-evaluation grader `shadow-live-v2` also requires every episode's
+inputs to have completed outcomes. An operational SQL failure is reported
+separately from a model refusal. Known responses/usage before a failed commit
+are retained as an uncommitted attempt and a separate SQL diagnostic when
+available; they never become invented outcomes. The CLI saves partial reports
+after each episode and before an unconfirmed pause aborts the run. A clean retry
+does not erase an earlier partial episode or unknown usage.
+
 ## Bounded working memory (PIP-14)
 
 Owner-approved `bounded-working-v1` keeps concise current views and active prerequisites in prompts while retaining exact earlier state, events, responses, dates and provenance in SQL. It is M4 state maintenance, separate from M7 playbook revision. Identity/playbook and all confirmed position theses remain intact. Neither age nor an unavailable article resolves a condition. Headline catalogues and general coverage gaps belong in retained evidence rather than becoming one permanent current view per item.

@@ -14,10 +14,10 @@ from pipmind.shadow.model import PROMPT_VERSION
 from pipmind.shadow.store import SqlMind, metadata
 
 CASES = frozenset([*(f"T{i:02}" for i in range(1, 7)), *(f"D{i:02}" for i in range(1, 6)), "S10"])
-GRADER_VERSION = "shadow-live-v1"
+GRADER_VERSION = "shadow-live-v2"
 
 
-async def evaluate(connect, cases, model, *, repetitions=3, manifest=None):
+async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progress=None):
     if not 2 <= repetitions <= 5 or not cases or len(cases) > 12:
         raise ShadowError("evaluation_bounds")
     if len({c["case_id"] for c in cases}) != len(cases) or any(
@@ -95,17 +95,78 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None):
                 ):
                     cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (trader, key, encoded(value)))
             store.set_paused(False)
+            active = {}
+            operational_error = None
+            failure_audit = None
+
+            def observe(phase, details, active=active):
+                if phase == "ready":
+                    active.clear()
+                    active.update(event=details["event"], result=details["result"])
+
             try:
                 for sequence, event in enumerate(case["events"], 1):
                     moment = utc(event["available_at"])
                     store.accept("evaluation", [{"sequence": sequence, "event": event}], moment)
-                    engine = ShadowEngine(store, model, clock=lambda moment=moment: moment)
+                    engine = ShadowEngine(
+                        store, model, clock=lambda moment=moment: moment, observer=observe
+                    )
                     while await engine.step():
                         pass
+            except ShadowError as error:
+                operational_error = str(error)
+                # A completed RPC can precede a failed SQL commit. Preserve its
+                # exact result/usage separately; never invent a committed outcome.
+                try:
+                    with store.transaction() as cur:
+                        store._insert(
+                            cur,
+                            metadata(
+                                "evaluation-failure:" + uuid4().hex,
+                                "journal",
+                                now().isoformat(),
+                                trader,
+                            ),
+                            encoded(
+                                {
+                                    "kind": "evaluation-operational-failure",
+                                    "error": operational_error,
+                                    "attempt": active,
+                                    "run_id": report["run_id"],
+                                }
+                            ),
+                        )
+                    failure_audit = "sql-and-report"
+                except ShadowError:
+                    failure_audit = "report-only; SQL persistence unconfirmed"
             finally:
-                store.set_paused(True)
+                try:
+                    store.set_paused(True)
+                except ShadowError as error:
+                    report["incomplete_episode"] = {
+                        "trader": trader,
+                        "case_id": case["case_id"],
+                        "repetition": repetition + 1,
+                        "operational_error": operational_error,
+                        "pause_error": str(error),
+                        "attempt": deepcopy(active),
+                        "pause_verified": False,
+                    }
+                    if progress:
+                        progress(deepcopy(report))
+                    raise
             ids = list(dict.fromkeys(event_id(e) for e in case["events"]))
-            outcomes = [store.outcome(key) for key in ids]
+            outcomes = [
+                store.outcome(key)
+                or {
+                    "event_id": key,
+                    "status": "not_completed",
+                    "dispatches": 0,
+                    "usage": [],
+                    "missing_outcome": True,
+                }
+                for key in ids
+            ]
             decisions = [r["decision"] for r in outcomes if r.get("decision")]
             expected = case["expected"]
             known_causes = list(dict.fromkeys(event_id(e) for e in case["events"]))
@@ -125,6 +186,8 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None):
             from pipmind.contracts import loads
 
             hard = {
+                "complete_episode": operational_error is None
+                and not any(r.get("missing_outcome") for r in outcomes),
                 "retained_inputs": set(stored_inputs) == set(originals)
                 and all(loads(stored_inputs[k]) == v for k, v in originals.items()),
                 "immutable_mandate": all(
@@ -162,10 +225,27 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None):
                     "hard_checks": hard,
                     "fixture_alignment": alignment,
                     "model_refusals": sum(r["status"] == "model_refused" for r in outcomes),
+                    "operational_error": operational_error,
+                    "failure_audit": failure_audit,
+                    "uncommitted_attempt": deepcopy(active)
+                    if operational_error
+                    and not any(
+                        r["event_id"] == active.get("event", {}).get("message_id")
+                        and not r.get("missing_outcome")
+                        for r in outcomes
+                    )
+                    else None,
                     "outcomes": outcomes,
                 }
             )
+            if progress:
+                progress(deepcopy(report))
     usage = [u for r in report["results"] for o in r["outcomes"] for u in o.get("usage", [])]
+    usage.extend(
+        u
+        for r in report["results"]
+        for u in (r.get("uncommitted_attempt") or {}).get("result", {}).get("usage", [])
+    )
     report["summary"] = {
         "episodes": len(report["results"]),
         "model_calls": len(usage),
@@ -173,6 +253,7 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None):
             not v for r in report["results"] for v in r["hard_checks"].values()
         ),
         "model_refusals": sum(r["model_refusals"] for r in report["results"]),
+        "operational_failures": sum(r["operational_error"] is not None for r in report["results"]),
         "fixture_alignment_failures": sum(
             not v for r in report["results"] for v in r["fixture_alignment"].values()
         ),
