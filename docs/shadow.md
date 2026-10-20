@@ -485,6 +485,10 @@ quoted/code-like text and numeric colon spacing are untouched. This requires all
 ordinary transitions to validate and uses zero model calls. When a model patch
 is needed, its raw proposal allows up to 1,000 characters for audit/validation;
 the same spacing operation may compact an overlong proposal before validation.
+If the expanded patch exceeds only the total limit, that representation-only
+operation also applies to its selected entries, even when each entry fits. All
+unselected entries remain exact. Residual overflow still holds; no words or
+additional model calls are used to repair formatting.
 The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.

@@ -90,6 +90,14 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
         after[field][int(key[1:])] = (
             punctuation_spacing(text) if len(text.encode()) > MAX_TEXT_BYTES else text
         )
+    if len(encoded(after).encode()) > MAX_BYTES:
+        # A model can miss the total by a few formatting bytes even though
+        # every entry fits. Compact only the explicitly selected patch texts;
+        # leave every unselected entry literal and retain the raw patch audit.
+        for key in edits:
+            field = "views" if key[0] == "v" else "waiting_for"
+            index = int(key[1:])
+            after[field][index] = punctuation_spacing(after[field][index])
     proposed = entries(original)
     dispositions = deepcopy(candidate.get("memory_dispositions", []))
     if before is not None:

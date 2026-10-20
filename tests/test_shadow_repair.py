@@ -674,6 +674,54 @@ def test_total_correction_request_schema_matches_calculated_scope_without_changi
     )
 
 
+@pytest.mark.parametrize("recoverable", [False, True])
+def test_total_patch_spacing_preserves_lexical_content_and_refuses_residual_overflow(recoverable):
+    import re
+
+    context, candidate = total_example()
+    if recoverable:
+        views = [f"FX {i}: " + "word; " * 40 + "a" * 20 for i in range(8)]
+        views[0] = '"' + views[0][1:]  # Quoted text must remain untouched.
+        context["working_memory"]["views"] = deepcopy(views)
+        candidate["working_memory"]["views"] = deepcopy(views)
+    original = deepcopy(candidate)
+    patch = {
+        "replacements": [
+            {
+                "from": key,
+                "text": entries(candidate["working_memory"])[key],
+                "reason": "Exact candidate wording retained",
+                "evidence_ids": ["input"],
+            }
+            for key in repair_scope(candidate["working_memory"])
+        ]
+    }
+    calls = []
+
+    async def repair(*args):
+        calls.append(1)
+        return deepcopy(patch), {"phase": "memory_repair", "synthetic": True}
+
+    trace = {"usage": []}
+    operation = ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+        {"message_id": "input"}, context, candidate, trace, now()
+    )
+    if not recoverable:
+        with pytest.raises(ShadowError, match="working_memory_repair_failed"):
+            asyncio.run(operation)
+    else:
+        out = asyncio.run(operation)
+        assert out["working_memory"]["views"][0] == candidate["working_memory"]["views"][0]
+        assert working_sizes(out["working_memory"])["total_bytes"] <= 3200
+        assert trace["memory_repair"]["patch_spacing_normalizations"]
+        for key, text in entries(candidate["working_memory"]).items():
+            assert re.findall(r"\w+|[^\w\s]", text) == re.findall(
+                r"\w+|[^\w\s]", entries(out["working_memory"])[key]
+            )
+    assert calls == [1] and candidate == original
+    assert trace["memory_repair"]["response"] == patch
+
+
 @pytest.mark.parametrize("fault", ["quote", "code", "numeric", "mapping", "still_large"])
 def test_spacing_compaction_cannot_bypass_literal_or_transition_constraints(fault):
     context, candidate, _ = patch_example()
