@@ -3,6 +3,7 @@
 import asyncio
 import os
 import re
+from copy import deepcopy
 from time import perf_counter
 from urllib.parse import urlsplit
 
@@ -223,6 +224,18 @@ class FoundryModel:
         )
         # The normative schema is sent in the prompt and validated locally. Some
         # deployments cannot serve strict structured output with tool calling.
+        schema = self.contracts.schemas[name]
+        if repair is not None and repair.get("editable_keys"):
+            # Keep the normative raw-response contract for audit compatibility,
+            # but request only this repair's exact keys and calculated length.
+            schema = deepcopy(schema)
+            replacements = schema["properties"]["replacements"]
+            replacements["minItems"] = replacements["maxItems"] = len(repair["editable_keys"])
+            properties = replacements["items"]["properties"]
+            properties["from"]["enum"] = repair["editable_keys"]
+            properties["text"]["maxLength"] = max(
+                repair["patch_budget"]["max_json_text_bytes"].values()
+            )
         prompt = {
             "phase": phase,
             "now": stamp(moment),
@@ -232,7 +245,7 @@ class FoundryModel:
             },
             "playbook_version": selected.get("playbook", {}).get("version"),
             "triage": triage,
-            "schema": self.contracts.schemas[name],
+            "schema": schema,
         }
         # Include referenced local schemas without allowing remote schema retrieval.
         if phase != "triage" and not (repair is not None and repair.get("editable_keys")):
