@@ -56,6 +56,16 @@ def test_calendar_references_do_not_crowd_news_search_and_focused_reads_return_s
     assert values["total_rows"] == 13 and len(values["rows"]) == 6
     assert values["rows"][0]["forecast"] == "1.3M" and focused["partial"]
     assert values["publication_time"] is None and "not actual" in values["scope"]
+    bad = row(
+        "calendar:untrusted",
+        part="memory",
+        body={
+            "kind": "calendar-snapshot-v1",
+            "snapshot": {"rows": [{"date": "invalid"}]},
+        },
+    )
+    refused = __import__("json").loads(record_view(bad["metadata"], bad["body"], "USD")["body"])
+    assert refused["invalid_rows"] and refused["rows"] == []
 
 
 def legacy():

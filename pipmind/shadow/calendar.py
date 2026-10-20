@@ -51,5 +51,4 @@ def retain_calendar(store, cached, moment):
         "record_id": identifier,
         "fetched_at": cached["fetched_at"],
         "rows": len(cached["rows"]),
-        "scope": "Schedule/consensus, not actuals.",
     }
