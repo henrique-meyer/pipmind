@@ -2582,3 +2582,116 @@ def test_qualification_freshness_uses_read_completion_not_earlier_request_time(m
     result = mind.runtime(q.ACTIVE)
     assert result["state"] == "running" and result["last_readiness"] == []
     assert utc(result["start"]) == clock[0] > start
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, failed):
+    from types import SimpleNamespace
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import entries, working_sizes
+    from pipmind.shadow.model import FoundryModel
+
+    before = {
+        "views": [f"USD condition {i}: " + "a" * 250 for i in range(8)],
+        "waiting_for": [f"Verified prerequisite {i}: " + "b" * 150 for i in range(5)],
+        "position_theses": [],
+    }
+    with mind.transaction() as c:
+        mind._write_working(c, before, MOMENT)
+    activate_bounded(mind)
+    events, fixture = episode(mind)
+    event = events[0]
+    candidate = deepcopy(fixture.responses[event["message_id"]]["reply"])
+    candidate.update(
+        evidence_ids=[event["message_id"]],
+        tool_calls=[],
+        memory_dispositions=[],
+        working_memory=deepcopy(before),
+    )
+    candidate["working_memory"]["waiting_for"].append("New prerequisite: " + "c" * 200)
+    assert (
+        working_sizes(before)["total_bytes"]
+        <= 3200
+        < working_sizes(candidate["working_memory"])["total_bytes"]
+    )
+    assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
+    after = {
+        "views": ["USD conditions 0,1,2,3,4,5,6,7 remain uncertain"],
+        "waiting_for": ["Verify prerequisites 0,1,2,3,4 and new prerequisite; none resolved"],
+        "position_theses": [],
+    }
+
+    def mapping(source):
+        return [
+            {
+                "from": key,
+                "to": key[0] + "0",
+                "disposition": "merged",
+                "reason": "Every named prerequisite remains unresolved",
+                "evidence_ids": [event["message_id"]],
+            }
+            for key in entries(source)
+        ]
+
+    correction = {
+        "working_memory": after,
+        "memory_dispositions": mapping(before),
+        "candidate_dispositions": mapping(candidate["working_memory"]),
+    }
+    if failed:
+        correction["candidate_dispositions"].pop()
+    requests = []
+
+    class Agent:
+        async def run(self, message, *, options):
+            requests.append((loads(message), options))
+            return SimpleNamespace(
+                text=encoded(correction),
+                usage_details={"input_token_count": 12, "output_token_count": 34},
+            )
+
+    class Live(FixtureModel):
+        async def repair_memory(self, *args):
+            return await FoundryModel(
+                "https://synthetic.invalid/api/projects/test",
+                "t",
+                "d",
+                enabled=True,
+                factory=lambda **kwargs: Agent(),
+            ).repair_memory(*args)
+
+    fixture.responses[event["message_id"]].update(
+        reply=candidate, triage={"wake": True, "summary": "Synthetic relevant input"}
+    )
+    original = {
+        m["record_id"]: (m, b) for m, b in mind.retained()[1] if m["part"] != "working_memory"
+    }
+    assert (
+        asyncio.run(ShadowEngine(mind, Live(fixture.responses), clock=lambda: MOMENT).step())
+        is not failed
+    )
+    assert len(requests) == 1 and "editable_keys" not in requests[0][0]["correction"]
+    assert requests[0][0]["schema"]["$id"] == "urn:pipmind:schema:v1:memory-repair"
+    assert requests[0][1]["max_tokens"] == 4096
+    if failed:
+        assert (
+            mind.head()["paused"] and mind.head()["working"] == before and mind.pending() == event
+        )
+        result = [loads(body) for meta, body in mind.retained()[1] if meta["part"] == "journal"][-1]
+        assert result["status"] == "held"
+    else:
+        assert (
+            not mind.head()["paused"] and mind.head()["working"] == after and mind.pending() is None
+        )
+        result = mind.outcome(event["message_id"])
+        assert result["status"] == "observed"
+    assert (
+        result["memory_repair"]["candidate"] == candidate
+        and result["memory_repair"]["response"] == correction
+    )
+    retained = {
+        m["record_id"]: (m, b) for m, b in mind.retained()[1] if m["part"] != "working_memory"
+    }
+    assert all(retained[k] == v for k, v in original.items())
+    assert result["dispatches"] == 0

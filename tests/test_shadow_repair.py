@@ -630,26 +630,15 @@ def test_punctuation_spacing_repairs_small_overflow_without_rpc_or_lexical_loss(
     ]
 
 
-def test_total_correction_request_schema_matches_calculated_scope_without_changing_contract():
+def test_total_correction_requests_full_consolidation_with_both_mapping_sets():
     context, candidate = total_example()
-    budget = repair_budget(candidate["working_memory"])
+    _, _, correction = example()
     captured = {}
-    patch = {
-        "replacements": [
-            {
-                "from": key,
-                "text": key + " compact distinct prerequisite",
-                "reason": "Same unresolved prerequisite retained",
-                "evidence_ids": ["input"],
-            }
-            for key in budget["editable_keys"]
-        ]
-    }
 
     class Agent:
         async def run(self, message, *, options):
             captured.update(message=json.loads(message), options=options)
-            return SimpleNamespace(text=encoded(patch), usage_details={})
+            return SimpleNamespace(text=encoded(correction), usage_details={})
 
     def factory(**kwargs):
         captured.update(kwargs)
@@ -659,15 +648,21 @@ def test_total_correction_request_schema_matches_calculated_scope_without_changi
         "https://synthetic.invalid/api/projects/test", "t", "d", enabled=True, factory=factory
     )
     asyncio.run(model.repair_memory({"message_id": "input"}, context, candidate, None, now()))
-    requested = captured["message"]["schema"]["properties"]["replacements"]
-    assert requested["minItems"] == requested["maxItems"] == len(budget["editable_keys"])
-    assert requested["items"]["properties"]["from"]["enum"] == budget["editable_keys"]
-    assert requested["items"]["properties"]["text"]["maxLength"] == max(
-        budget["max_json_text_bytes"].values()
-    )
-    assert "schema_definitions" not in captured["message"]
+    prompt = captured["message"]
+    assert prompt["schema"]["$id"] == "urn:pipmind:schema:v1:memory-repair"
+    assert set(prompt["schema"]["properties"]) == {
+        "working_memory",
+        "memory_dispositions",
+        "candidate_dispositions",
+    }
+    assert "editable_keys" not in prompt["correction"]
+    assert "patch_budget" not in prompt["correction"]
+    assert prompt["correction"]["candidate_sizes"] == working_sizes(candidate["working_memory"])
+    assert "schema_definitions" in prompt
+    assert "factoring repeated" in captured["instructions"]
     assert captured["tools"] == [] and captured["options"]["max_tokens"] == 4096
     assert model.timeout == 90
+    assert captured["options"]["reasoning"] == {"effort": "low"}
     assert (
         model.contracts.schemas["memory-repair-patch"]["properties"]["replacements"]["maxItems"]
         == 16

@@ -475,7 +475,7 @@ copies every other candidate entry and position thesis literally, retains the
 decision's before-state mappings, and derives all candidate carry-forwards.
 Missing, duplicate or extra replacement keys fail. The raw patch and expanded
 state/mappings are audited, then the ordinary byte, dependency, evidence and
-transition checks run unchanged. Count or uniqueness overflow uses full
+transition checks run unchanged. Total-size, count or uniqueness overflow uses full
 consolidation. Both paths share the existing one-call, timeout and output budget;
 there is no automatic retry loop or fallback that discards a failed attempt.
 
@@ -498,23 +498,26 @@ The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.
 
-Prompt `shadow-context-v14` also uses scoped patches for total overflow when entry
-counts and uniqueness fit. The engine calculates selected-entry budgets from the
-exact serialized state, including JSON escapes, unchanged entries and fixed
-position theses. It selects enough large entries for a planned total below the
-hard limit with growth headroom. Each entry has a concision target and a larger
-ceiling calculated from the remaining space, leaving room for complete
-qualifiers and JSON/Unicode overhead. The request schema names the exact keys/count
-and calculated text length; the normative raw-response contract remains intact
-for audit compatibility. These are model guidance; actual 300-byte entry
-and 3,200-byte total guards remain authoritative, and text is never clipped to an
-allocation. The model cannot change unselected text; the separate audited
-lossless-formatting step above may normalize it. Decision fields remain exact.
+Repair prompt `shadow-repair-v15` uses full consolidation for total overflow,
+even when counts and individual entries fit. Fixed-topology total patches
+repeatedly returned the same dense catalogue above the bound. Consolidation may
+factor repeated qualifications with explicitly named scope and same-kind merges;
+it must preserve every dependency, measurement label, date, unit, uncertainty and
+verification distinction, including EACH-item and FULL TEXT prerequisites.
+The target is below 2,400 bytes, with unchanged hard 300-byte entry and 3,200-byte
+total guards. Missing provenance, a newly resolved condition or residual overflow
+still holds. One model response cannot guarantee semantic fidelity; retained
+case review and broader human calibration remain necessary.
+
+Calculated text budgets remain available for scoped entry patches and the
+lossless preflight/replay path. They account for exact JSON framing, escapes,
+unselected text and theses. Targets are guidance, never permission to clip text.
 BEFORE-to-candidate mappings are composed with the indexed patch: a previously
 unmapped literal carry-forward receives a mapping only when that exact entry is
 now edited. Existing resolutions remain exact; missing provenance for another
 candidate change is never invented. Candidate mappings, calculated budgets,
-patches and derived state remain audited. Normal triage/decision prompts, the
+patches and derived state remain audited. Normal triage/decision requests retain
+their existing `shadow-context-v14` prompt version. Their content, the
 single 90-second repair call and 4,096-token ceiling are unchanged.
 
 Backlog estimates require measured completions and new arrivals over comparable

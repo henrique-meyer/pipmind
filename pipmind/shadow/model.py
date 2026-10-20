@@ -10,9 +10,10 @@ from urllib.parse import urlsplit
 from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
-from pipmind.shadow.maintenance import POLICY, repair_budget, working_sizes
+from pipmind.shadow.maintenance import MAX_BYTES, POLICY, repair_budget, working_sizes
 
 PROMPT_VERSION = "shadow-context-v14"
+REPAIR_PROMPT_VERSION = "shadow-repair-v15"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -96,6 +97,11 @@ REPAIR_INSTRUCTIONS = (
     " Explicitly preserve y/y versus m/m and levels versus changes for EACH observation;"
     " do not rely on an ambiguous shared qualifier. Shared missing-"
     " evidence qualifications may be stated once with explicit named scope."
+    " Keep FULL TEXT and EACH-item prerequisites explicit; methodology and applicable"
+    " implementation are distinct. Label each measurement (for example AUD CPI, Q2 GDP"
+    " or cash rate) and distinguish period from publication dates. Unknown implications"
+    " never mean no implications. Total-size overflow requires factoring repeated"
+    " qualifications with explicit scope, not preserving the candidate's paragraph layout."
 )
 PATCH_INSTRUCTIONS = (
     " This is one scoped working-memory CORRECTION, not a trading decision. Return only"
@@ -300,7 +306,7 @@ class FoundryModel:
         trace = {
             "phase": phase,
             "attempted": False,
-            "prompt_version": PROMPT_VERSION,
+            "prompt_version": REPAIR_PROMPT_VERSION if repair is not None else PROMPT_VERSION,
             "context_version": CONTEXT_VERSION,
             "application_build": os.environ.get("BUILD_SHA", "development"),
             "tool_names": ["search_memory"] if phase == "decision" else [],
@@ -432,7 +438,16 @@ class FoundryModel:
         return await self._call("decision", event, context, store, moment, triage)
 
     async def repair_memory(self, event, context, candidate, store, moment):
-        budget = repair_budget(candidate["working_memory"])
+        sizes = working_sizes(candidate["working_memory"])
+        # Total overflow needs whole-state consolidation. Fixed-topology patches
+        # repeatedly returned the same dense catalogue just above the limit.
+        # Lossless spacing is still tried before this RPC by the engine; scoped
+        # patches remain appropriate for isolated overlong entries.
+        budget = (
+            repair_budget(candidate["working_memory"])
+            if sizes["total_bytes"] <= MAX_BYTES
+            else None
+        )
         return await self._call(
             "memory_repair",
             event,
@@ -442,7 +457,7 @@ class FoundryModel:
             repair={
                 "reason": "working_memory_bound",
                 "candidate": candidate,
-                "candidate_sizes": working_sizes(candidate["working_memory"]),
+                "candidate_sizes": sizes,
                 **(
                     {"editable_keys": budget["editable_keys"], "patch_budget": budget}
                     if budget
