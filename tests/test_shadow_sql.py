@@ -277,10 +277,17 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
     else:
         assert not reopened.head()["paused"] and reopened.pending() is None
         journal = reopened.outcome(event["message_id"])
-        assert (
-            reopened.head()["working"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
-        )
-        assert len(journal["reply"]["memory_dispositions"]) == len(budget["editable_keys"])
+        after = reopened.head()["working"]
+        for key, text in entries(candidate["working_memory"]).items():
+            if key not in budget["editable_keys"]:
+                assert entries(after)[key] == text
+        assert all(row["to"] is not None for row in journal["reply"]["memory_dispositions"])
+        changed = {
+            key
+            for key, text in entries(before).items()
+            if text not in after["views" if key[0] == "v" else "waiting_for"]
+        }
+        assert {row["from"] for row in journal["reply"]["memory_dispositions"]} == changed
         assert working_sizes(reopened.head()["working"])["total_bytes"] <= 3200
     assert journal["dispatches"] == 0 and journal["memory_repair"]["candidate"] == candidate
     assert journal["memory_repair"]["response"] == patch

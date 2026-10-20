@@ -53,12 +53,12 @@ def repair_budget(working):
         selected = list(mandatory)
         budget = plan(selected, cap)
         for key in ranked:
-            if budget["planned_total_bytes"] <= MAX_BYTES - 200:
+            if budget["planned_total_bytes"] <= MAX_BYTES - 400:
                 break
             if key not in selected and content[key] > cap:
                 selected.append(key)
                 budget = plan(selected, cap)
-        if selected and budget["planned_total_bytes"] <= MAX_BYTES - 200:
+        if selected and budget["planned_total_bytes"] <= MAX_BYTES - 400:
             return budget
     return None  # Fixed theses/topology need the existing full-consolidation path.
 

@@ -368,7 +368,7 @@ def test_total_budget_patch_composes_literal_before_entries_and_preserves_unedit
         views[:] = views[1:] + views[:1]
     original = deepcopy(candidate)
     budget = repair_budget(candidate["working_memory"])
-    assert budget["planned_total_bytes"] <= 3000
+    assert budget["planned_total_bytes"] <= 2800
     selected = set(budget["editable_keys"])
     patch = {
         "replacements": [
@@ -392,7 +392,9 @@ def test_total_budget_patch_composes_literal_before_entries_and_preserves_unedit
         )
     )
     assert candidate == original
-    assert out["working_memory"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+    assert (
+        out["working_memory"]["position_theses"] == candidate["working_memory"]["position_theses"]
+    )
     for key, text in entries(candidate["working_memory"]).items():
         if key not in selected:
             assert entries(out["working_memory"])[key] == text
@@ -425,7 +427,7 @@ def test_budget_accounts_for_utf8_json_escapes_and_exact_fixed_theses():
         }
     ]
     budget = repair_budget(w)
-    assert budget and budget["planned_total_bytes"] <= 3000
+    assert budget and budget["planned_total_bytes"] <= 2800
     expected = deepcopy(w)
     for key, cap in budget["max_json_text_bytes"].items():
         field = "views" if key[0] == "v" else "waiting_for"
