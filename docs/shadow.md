@@ -241,9 +241,7 @@ The owner selected the FXMacroData $50 monthly plan and completed checkout; auth
 The separately approved PipMind X app uses an app-only credential in private configuration. Nine institutional account recipes now have hosted verification using actual profile fields and exact official-page backlinks, and timeline reads are active. A controlled SQL binding change preserves source identity, retained events and cursors without expanding metadata permissions. Initial reads seed at most the latest page; previously unfinished history cursors remain retained, and later live posts retain complete pagination. This is a verified institutional cohort, not completion of the broader personal office-holder, correspondent, event-window squawk or Truth Social mirror plan. No user access, X write or new credit purchase was requested. Full-day provider/broker/capacity/model-quality qualification remains tracked by PIP-14.
 
 
-## Bounded working memory (PIP-14)
-
-### Source coverage qualification
+## Source coverage qualification (PIP-14)
 
 The hosted source audit distinguishes configured recipes, successful provider
 reads, retained normalized events and complete-history or point-in-time claims.
@@ -273,6 +271,8 @@ personal office-holder/correspondent/squawk/primary-channel recipes require thei
 own identity, availability and cost evidence. The verified institutional cohort
 does not certify those roles. Repeated model integrity, literal fixture alignment,
 retained-context semantic fidelity and owner calibration remain separate results.
+
+## Bounded working memory (PIP-14)
 
 Owner-approved `bounded-working-v1` keeps concise current views and active prerequisites in prompts while retaining exact earlier state, events, responses, dates and provenance in SQL. It is M4 state maintenance, separate from M7 playbook revision. Identity/playbook and all confirmed position theses remain intact. Neither age nor an unavailable article resolves a condition. Headline catalogues and general coverage gaps belong in retained evidence rather than becoming one permanent current view per item.
 
