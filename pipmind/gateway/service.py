@@ -191,7 +191,7 @@ class ReadWorker:
                 "last_cycle": self.last_cycle,
                 "evidence_as_of": self.evidence.get("as_of") if self.evidence else None,
                 "evidence_error": self.evidence_error,
-                "headlines": deepcopy(self.headlines),
+                "headline_count": len(self.headlines),
                 "headlines_as_of": self.headlines_as_of,
                 "headlines_error": self.headlines_error,
             }
@@ -201,6 +201,16 @@ class ReadWorker:
 
         with self.lock:
             return {"evidence": deepcopy(self.evidence), "last_error": self.evidence_error}
+
+    def headline_page(self):
+        from copy import deepcopy
+
+        with self.lock:
+            return {
+                "headlines": deepcopy(self.headlines),
+                "headlines_as_of": self.headlines_as_of,
+                "headlines_error": deepcopy(self.headlines_error),
+            }
 
 
 def create_app(gateway, token, *, worker=None):
@@ -282,6 +292,18 @@ def create_app(gateway, token, *, worker=None):
                 "snapshots": None,
                 "dispatch_enabled": False,
                 "last_error": {"code": "broker_reads_disabled"},
+            }
+        )
+
+    @app.get("/headlines")
+    def headlines():
+        return (
+            worker.headline_page()
+            if worker
+            else {
+                "headlines": [],
+                "headlines_as_of": None,
+                "headlines_error": "broker_reads_disabled",
             }
         )
 

@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi import Request as WebRequest
 from fastapi.responses import JSONResponse
 
-from pipmind.contracts import ContractError, stamp
+from pipmind.contracts import ContractError, stamp, utc
 from pipmind.feeds.common import FeedError
 from pipmind.shadow.common import ShadowError, bounded_json, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
@@ -91,7 +91,7 @@ class FeedConsumer:
 
 
 class GatewayConsumer(FeedConsumer):
-    """Only GET /state. No order URL, broker credential or command method exists."""
+    """Cached state/news GETs only; no broker credentials or command method."""
 
     def __init__(self, *args, handoff_interval=0, relay_store=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -112,20 +112,23 @@ class GatewayConsumer(FeedConsumer):
                 from pipmind.feeds.news import relay_page
 
                 marker = digest(
-                    encoded(
-                        {
-                            k: page.get(k)
-                            for k in ("headlines", "headlines_as_of", "headlines_error")
-                        }
-                    )
+                    encoded({k: page.get(k) for k in ("headlines_as_of", "headlines_error")})
                 )
                 if marker != self.last_headlines:
+                    request = Request(
+                        self.url + "/headlines", headers={"Authorization": "Bearer " + self.token}
+                    )
+                    with build_opener(NoRedirect()).open(request, timeout=15) as response:
+                        news = bounded_json(response.read(2_097_153), 2_097_152)
+                    if utc(news["headlines_as_of"]) < utc(page["headlines_as_of"]):
+                        raise ValueError
+                    moment = self.completion_clock() if self.completion_clock else moment
                     relay_page(
                         self.relay_store,
-                        page.get("headlines", []),
+                        news.get("headlines", []),
                         moment,
-                        checked_at=page["headlines_as_of"],
-                        error=page.get("headlines_error"),
+                        checked_at=news["headlines_as_of"],
+                        error=news.get("headlines_error"),
                     )
                     self.last_headlines = marker
             if self.handoff_interval:

@@ -130,6 +130,10 @@ def test_headline_outage_is_paced_retains_cache_and_does_not_fail_prices():
     response = client.get("/state", headers={"Authorization": "Bearer " + "t" * 32})
     assert response.json()["headlines_error"]["code"] == "broker_read_failed"
     assert response.json()["dispatch_enabled"] is False
+    assert "headlines" not in response.json()  # minute capture does not duplicate the wire cache
+    assert client.get("/headlines").status_code == 401
+    news = client.get("/headlines", headers={"Authorization": "Bearer " + "t" * 32}).json()
+    assert news["headlines"] and news["headlines_as_of"] == stamp(NOW)
 
 
 def test_gateway_handoff_retries_atomic_news_commit_and_runs_before_price_cadence(
