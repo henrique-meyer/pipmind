@@ -262,7 +262,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 ## PIP-18 — Landing page portable mind refresh
 
 - Story: [PIP-18](https://nitro.atlassian.net/browse/PIP-18)
-- Status: In progress
+- Status: Implemented; source delivery tracked in PIP-18, deployment requires separate approval
 - Scope: refresh the public landing narrative and SEO copy for the portable robot mind, .pipmind saves, robot library, favorites, save/load and Auto Learn. Explain robot/account separation and distinguish planned owner chat/review from the current shadow foundation.
 - Acceptance: accurate product and availability claims, established branding/footer and analytics preserved, consistent metadata/robots/sitemap, desktop/narrow navigation and layout verified, and private routes isolated.
 - Excludes: Azure deployment/configuration/resources, public owner controls, marketplace/sharing service, live trading and robot-library runtime implementation.
