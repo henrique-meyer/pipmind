@@ -205,6 +205,94 @@ def test_starter_cases_through_actual_sql_shadow_runtime(mind, case_id):
     assert store.status()["outcomes"] == len(causes)
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(mind, failed):
+    from pipmind.shadow.maintenance import entries, repair_budget, working_sizes
+
+    before = {
+        "views": [f"FX {i}: " + "a" * 260 for i in range(8)],
+        "waiting_for": [f"Await verified prerequisite {i} " + "b" * 150 for i in range(5)],
+        "position_theses": [],
+    }
+    with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            "Every synthetic prerequisite remains unresolved",
+        )
+        mind._write_working(cur, before, MOMENT)
+    activate_bounded(mind)
+    events, model = episode(mind)
+    event = events[0]
+    candidate = deepcopy(model.responses[event["message_id"]]["reply"])
+    candidate.update(
+        evidence_ids=[event["message_id"]],
+        tool_calls=[],
+        memory_dispositions=[],
+        working_memory=deepcopy(before),
+    )
+    candidate["working_memory"]["waiting_for"].append("New dated prerequisite: " + "c" * 190)
+    assert working_sizes(candidate["working_memory"])["total_bytes"] > 3200
+    assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
+    budget = repair_budget(candidate["working_memory"])
+    model.responses[event["message_id"]]["reply"] = candidate
+    model.responses[event["message_id"]]["triage"]["wake"] = True
+    patch = {
+        "replacements": [
+            {
+                "from": key,
+                "text": entries(candidate["working_memory"])[key]
+                if failed
+                else key + " compact distinct uncertainty",
+                "reason": "Retain the same distinct prerequisite",
+                "evidence_ids": [event["message_id"]],
+            }
+            for key in budget["editable_keys"]
+        ]
+    }
+
+    class Repair(FixtureModel):
+        calls = 0
+
+        async def repair_memory(self, *args):
+            self.calls += 1
+            return deepcopy(patch), {
+                "phase": "memory_repair",
+                "input_tokens": 100,
+                "output_tokens": 80,
+            }
+
+    live = Repair(model.responses)
+    old = mind.retained()[1]
+    assert asyncio.run(ShadowEngine(mind, live, clock=lambda: MOMENT).step()) is not failed
+    assert live.calls == 1
+    reopened = SqlMind(mind.connect, mind.trader)
+    if failed:
+        assert reopened.head()["paused"] and reopened.head()["working"] == before
+        assert reopened.pending() == event and reopened.outcome(event["message_id"]) is None
+        journal = [
+            loads(body) for meta, body in reopened.retained()[1] if meta["part"] == "journal"
+        ][-1]
+        assert journal["status"] == "held" and journal["error"] == "working_memory_repair_failed"
+    else:
+        assert not reopened.head()["paused"] and reopened.pending() is None
+        journal = reopened.outcome(event["message_id"])
+        assert (
+            reopened.head()["working"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+        )
+        assert len(journal["reply"]["memory_dispositions"]) == len(budget["editable_keys"])
+        assert working_sizes(reopened.head()["working"])["total_bytes"] <= 3200
+    assert journal["dispatches"] == 0 and journal["memory_repair"]["candidate"] == candidate
+    assert journal["memory_repair"]["response"] == patch
+    assert journal["memory_repair"]["patch_budget"] == budget
+    retained = {meta["record_id"]: (meta, body) for meta, body in reopened.retained()[1]}
+    assert all(
+        retained[meta["record_id"]] == (meta, body)
+        for meta, body in old
+        if meta["part"] != "working_memory"
+    )
+
+
 def episode(mind):
     events = deepcopy(CASE["events"])
     mind.accept(

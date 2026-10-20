@@ -9,6 +9,9 @@ from pipmind.contracts import ContractError, Contracts
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.engine import ShadowEngine
 from pipmind.shadow.maintenance import (
+    entries,
+    expand_repair_patch,
+    repair_budget,
     repair_scope,
     spacing_repair,
     transition,
@@ -326,6 +329,173 @@ def patch_example():
         ]
     }
     return context, candidate, patch
+
+
+def total_example():
+    before = {
+        "views": [f"FX {i}: " + "a" * 260 for i in range(8)],
+        "waiting_for": [f"Await verified prerequisite {i} " + "b" * 150 for i in range(5)],
+        "position_theses": [],
+    }
+    context = {
+        "working_memory": before,
+        "memory_policy": {
+            "version": "bounded-working-v1",
+            "checkpoint": "checkpoint",
+            "origin_checkpoint": "origin",
+        },
+    }
+    candidate = {
+        "action": "hold",
+        "reasoning": "Keep every prerequisite",
+        "evidence_ids": ["input"],
+        "tool_calls": [],
+        "memory_dispositions": [],
+        "working_memory": deepcopy(before),
+    }
+    candidate["working_memory"]["waiting_for"].append("New dated prerequisite: " + "c" * 190)
+    assert working_sizes(before)["total_bytes"] <= 3200
+    assert working_sizes(candidate["working_memory"])["total_bytes"] > 3200
+    assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
+    return context, candidate
+
+
+@pytest.mark.parametrize("reorder", [False, True])
+def test_total_budget_patch_composes_literal_before_entries_and_preserves_unedited_state(reorder):
+    context, candidate = total_example()
+    if reorder:
+        views = candidate["working_memory"]["views"]
+        views[:] = views[1:] + views[:1]
+    original = deepcopy(candidate)
+    budget = repair_budget(candidate["working_memory"])
+    assert budget["planned_total_bytes"] <= 3000
+    selected = set(budget["editable_keys"])
+    patch = {
+        "replacements": [
+            {
+                "from": key,
+                "text": f"{key}: distinct synthetic uncertainty retained",
+                "reason": "Same prerequisite in compact wording",
+                "evidence_ids": ["input"],
+            }
+            for key in budget["editable_keys"]
+        ]
+    }
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "synthetic": True}
+
+    trace = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, trace, now()
+        )
+    )
+    assert candidate == original
+    assert out["working_memory"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+    for key, text in entries(candidate["working_memory"]).items():
+        if key not in selected:
+            assert entries(out["working_memory"])[key] == text
+    rows = {row["from"]: row for row in out["memory_dispositions"]}
+    for key, text in entries(context["working_memory"]).items():
+        target = next(
+            k
+            for k, v in entries(candidate["working_memory"]).items()
+            if k[0] == key[0] and v == text
+        )
+        if target in selected:
+            assert rows[key]["to"] == target and rows[key]["disposition"] == "updated"
+    transition(context["working_memory"], out["working_memory"], out["memory_dispositions"], now())
+    assert trace["memory_repair"]["patch_budget"] == budget
+    assert trace["memory_repair"]["response"] == patch
+    assert {k: out[k] for k in out if k not in {"working_memory", "memory_dispositions"}} == {
+        k: candidate[k] for k in candidate if k not in {"working_memory", "memory_dispositions"}
+    }
+
+
+def test_budget_accounts_for_utf8_json_escapes_and_exact_fixed_theses():
+    _, candidate = total_example()
+    w = candidate["working_memory"]
+    w["views"][0] = 'é\\"' * 90
+    w["position_theses"] = [
+        {
+            "instrument": "EUR/USD",
+            "thesis": "Exact confirmed thesis",
+            "as_of": "2026-01-01T00:00:00Z",
+        }
+    ]
+    budget = repair_budget(w)
+    assert budget and budget["planned_total_bytes"] <= 3000
+    expected = deepcopy(w)
+    for key, cap in budget["max_json_text_bytes"].items():
+        field = "views" if key[0] == "v" else "waiting_for"
+        expected[field][int(key[1:])] = "x" * cap
+    assert working_sizes(expected)["total_bytes"] == budget["planned_total_bytes"]
+    assert expected["position_theses"] == w["position_theses"]
+
+
+def test_total_patch_preserves_existing_resolution_and_cannot_invent_missing_provenance():
+    context, candidate = total_example()
+    text = context["working_memory"]["views"][0]
+    candidate["working_memory"]["views"][0] = text.replace("FX 0", "FX 9")
+    budget = repair_budget(candidate["working_memory"])
+    patch = {
+        "replacements": [
+            {
+                "from": key,
+                "text": key + " compact uncertainty",
+                "reason": "Same distinct prerequisite retained",
+                "evidence_ids": ["input"],
+            }
+            for key in budget["editable_keys"]
+        ]
+    }
+    expanded = expand_repair_patch(candidate, patch, "input", before=context["working_memory"])
+    with pytest.raises(ShadowError, match="working_memory_dispositions"):
+        transition(
+            context["working_memory"],
+            expanded["working_memory"],
+            expanded["memory_dispositions"],
+            now(),
+        )
+    # A genuine prior resolution is never generated or rewritten by composition.
+    candidate["working_memory"]["views"][0] = text
+    candidate["memory_dispositions"] = [
+        {
+            "from": "w4",
+            "to": None,
+            "disposition": "resolved",
+            "reason": "Prior evidence-backed resolution " + "r" * 300,
+            "evidence_ids": ["input"],
+        }
+    ]
+    candidate["working_memory"]["waiting_for"].pop(4)
+    candidate["working_memory"]["waiting_for"].append("Another distinct prerequisite " + "d" * 190)
+    expanded = expand_repair_patch(
+        candidate,
+        {
+            "replacements": [
+                {
+                    "from": key,
+                    "text": key + " compact uncertainty",
+                    "reason": "Same distinct prerequisite retained",
+                    "evidence_ids": ["input"],
+                }
+                for key in repair_scope(candidate["working_memory"])
+            ]
+        },
+        "input",
+        before=context["working_memory"],
+    )
+    assert expanded["memory_dispositions"][0] == candidate["memory_dispositions"][0]
+
+
+@pytest.mark.parametrize("fault", ["count", "duplicate"])
+def test_total_budget_never_patches_invalid_topology(fault):
+    _, candidate = total_example()
+    w = candidate["working_memory"]
+    w["views"].append("Distinct ninth view" if fault == "count" else w["views"][0])
+    assert repair_budget(w) is None and repair_scope(w) == []
 
 
 def test_scoped_patch_copies_unedited_state_and_original_mappings_exactly():

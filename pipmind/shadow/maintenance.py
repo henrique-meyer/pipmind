@@ -19,18 +19,56 @@ def punctuation_spacing(text):
     return re.sub(r"([;:]) (?=[A-Za-z])", r"\1", text)
 
 
-def repair_scope(working):
-    """A text-only patch is safe only when total/count/uniqueness already fit."""
+def repair_budget(working):
+    """Calculate a text-only repair; never clip state or alter its topology.
+
+    JSON-escaped content bytes include quotes/backslashes that UTF-8 text size
+    alone misses. Budgets guide the single correction; final strict validation
+    remains authoritative even if an individual target budget is missed.
+    """
     sizes = working_sizes(working)
-    if sizes["total_bytes"] > MAX_BYTES or any(
+    if any(
         len(working[field]) > MAX_ENTRIES or len(set(working[field])) != len(working[field])
         for field in ("views", "waiting_for")
     ):
-        return []
-    return [key for key, size in sizes["entry_bytes"].items() if size > MAX_TEXT_BYTES]
+        return None
+    texts = entries(working)
+    content = {key: len(encoded(text).encode()) - 2 for key, text in texts.items()}
+    mandatory = [key for key, size in sizes["entry_bytes"].items() if size > MAX_TEXT_BYTES]
+
+    def plan(keys, cap):
+        fixed = sizes["total_bytes"] - sum(content[key] for key in keys)
+        return {
+            "editable_keys": keys,
+            "fixed_bytes": fixed,
+            "max_json_text_bytes": {key: cap for key in keys},
+            "planned_total_bytes": fixed + len(keys) * cap,
+            "hard_total_bytes": MAX_BYTES,
+        }
+
+    if sizes["total_bytes"] <= MAX_BYTES:
+        return plan(mandatory, 220) if mandatory else None
+    ranked = sorted(content, key=lambda key: (-content[key], key))
+    for cap in (220, 200, 180, 160, 120):
+        selected = list(mandatory)
+        budget = plan(selected, cap)
+        for key in ranked:
+            if budget["planned_total_bytes"] <= MAX_BYTES - 200:
+                break
+            if key not in selected and content[key] > cap:
+                selected.append(key)
+                budget = plan(selected, cap)
+        if selected and budget["planned_total_bytes"] <= MAX_BYTES - 200:
+            return budget
+    return None  # Fixed theses/topology need the existing full-consolidation path.
 
 
-def expand_repair_patch(candidate, patch, event_ref):
+def repair_scope(working):
+    budget = repair_budget(working)
+    return budget["editable_keys"] if budget else []
+
+
+def expand_repair_patch(candidate, patch, event_ref, *, before=None):
     """Expand only the named edits; preserve the decision's BEFORE mappings."""
     original = candidate["working_memory"]
     scope = repair_scope(original)
@@ -47,6 +85,37 @@ def expand_repair_patch(candidate, patch, event_ref):
         )
     proposed = entries(original)
     dispositions = deepcopy(candidate.get("memory_dispositions", []))
+    if before is not None:
+        old = entries(before)
+        mapped = {row["from"] for row in dispositions}
+        for row in dispositions:
+            edit = edits.get(row["to"])
+            if edit and entries(after)[row["to"]] != proposed[row["to"]]:
+                if row["disposition"] == "retained":
+                    row["disposition"] = "updated"
+                    row["reason"] = edit["reason"]
+                row["evidence_ids"].extend(
+                    ref for ref in edit["evidence_ids"] if ref not in row["evidence_ids"]
+                )
+        for key, text in old.items():
+            if key in mapped or text in after["views" if key[0] == "v" else "waiting_for"]:
+                continue
+            # An omitted original mapping is legitimate only for a literal
+            # candidate carry-forward. Never invent provenance for another edit.
+            target = next(
+                (k for k, value in proposed.items() if k[0] == key[0] and value == text), None
+            )
+            if target in edits:
+                edit = edits[target]
+                dispositions.append(
+                    {
+                        "from": key,
+                        "to": target,
+                        "disposition": "updated",
+                        "reason": edit["reason"],
+                        "evidence_ids": deepcopy(edit["evidence_ids"]),
+                    }
+                )
     mappings = []
     for key in proposed:
         edit = edits.get(key)
@@ -89,7 +158,7 @@ def spacing_repair(before, candidate, event_ref, moment):
     if not edits:
         return None
     patch = {"replacements": edits}
-    expanded = expand_repair_patch(candidate, patch, event_ref)
+    expanded = expand_repair_patch(candidate, patch, event_ref, before=before)
     try:
         transition(before, expanded["working_memory"], expanded["memory_dispositions"], moment)
         transition(

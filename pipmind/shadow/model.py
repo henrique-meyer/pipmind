@@ -9,9 +9,9 @@ from urllib.parse import urlsplit
 from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
-from pipmind.shadow.maintenance import POLICY, repair_scope, working_sizes
+from pipmind.shadow.maintenance import POLICY, repair_budget, working_sizes
 
-PROMPT_VERSION = "shadow-context-v13"
+PROMPT_VERSION = "shadow-context-v14"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -104,11 +104,18 @@ PATCH_INSTRUCTIONS = (
     " literal carry-forward mappings. Preserve ALL meaning of each replaced entry: dates,"
     " numbers, units/frequency/basis, prerequisites, uncertainty, contradictions and"
     " invalidation conditions. Do not resolve conditions, add facts or rely on omitted"
-    " qualifiers. Write compact note fragments, not full prose: aim for 220 UTF-8 bytes"
-    " per replacement, leaving substantial margin below the hard 300-byte limit. Use"
+    " qualifiers. Write compact note fragments, not full prose: stay below the supplied"
+    " per-entry budget, leaving margin below the hard 300-byte limit. Use"
     " concise punctuation and standard abbreviations; do not simply copy the oversized"
     " candidate with a few words removed. Shorten wording only. No tools. If meaning"
     " cannot fit, do not invent a resolution."
+    " A calculated budget may also select individually valid entries to fix TOTAL size."
+    " correction.patch_budget gives fixed_bytes (all unedited state, exact theses and"
+    " JSON framing) and max_json_text_bytes per selected key, excluding its surrounding"
+    " quotes but INCLUDING JSON escapes. Aim below 80% of each allocation; its full"
+    " budget is available if needed to preserve meaning. Planned totals leave growth headroom."
+    " Every date,"
+    " number, distinct source status, uncertainty and unresolved prerequisite must survive."
 )
 
 
@@ -228,7 +235,7 @@ class FoundryModel:
             "schema": self.contracts.schemas[name],
         }
         # Include referenced local schemas without allowing remote schema retrieval.
-        if phase != "triage":
+        if phase != "triage" and not (repair is not None and repair.get("editable_keys")):
             prompt["schema_definitions"] = {
                 "working-memory": self.contracts.schemas["working-memory"],
                 "memory-dispositions": self.contracts.schemas["memory-dispositions"],
@@ -402,7 +409,7 @@ class FoundryModel:
         return await self._call("decision", event, context, store, moment, triage)
 
     async def repair_memory(self, event, context, candidate, store, moment):
-        scope = repair_scope(candidate["working_memory"])
+        budget = repair_budget(candidate["working_memory"])
         return await self._call(
             "memory_repair",
             event,
@@ -413,7 +420,11 @@ class FoundryModel:
                 "reason": "working_memory_bound",
                 "candidate": candidate,
                 "candidate_sizes": working_sizes(candidate["working_memory"]),
-                **({"editable_keys": scope} if scope else {}),
+                **(
+                    {"editable_keys": budget["editable_keys"], "patch_budget": budget}
+                    if budget
+                    else {}
+                ),
             },
         )
 

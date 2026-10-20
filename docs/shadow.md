@@ -475,7 +475,7 @@ copies every other candidate entry and position thesis literally, retains the
 decision's before-state mappings, and derives all candidate carry-forwards.
 Missing, duplicate or extra replacement keys fail. The raw patch and expanded
 state/mappings are audited, then the ordinary byte, dependency, evidence and
-transition checks run unchanged. Total/count overflow still uses full
+transition checks run unchanged. Count or uniqueness overflow uses full
 consolidation. Both paths share the existing one-call, timeout and output budget;
 there is no automatic retry loop or fallback that discards a failed attempt.
 
@@ -488,6 +488,20 @@ the same spacing operation may compact an overlong proposal before validation.
 The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.
+
+Prompt `shadow-context-v14` also uses scoped patches for total overflow when entry
+counts and uniqueness fit. The engine calculates selected-entry budgets from the
+exact serialized state, including JSON escapes, unchanged entries and fixed
+position theses. It selects enough large entries for a planned total below the
+hard limit with growth headroom. These are model guidance; actual 300-byte entry
+and 3,200-byte total guards remain authoritative, and text is never clipped to an
+allocation. All unselected text and decision fields remain literal copies.
+BEFORE-to-candidate mappings are composed with the indexed patch: a previously
+unmapped literal carry-forward receives a mapping only when that exact entry is
+now edited. Existing resolutions remain exact; missing provenance for another
+candidate change is never invented. Candidate mappings, calculated budgets,
+patches and derived state remain audited. Normal triage/decision prompts, the
+single 90-second repair call and 4,096-token ceiling are unchanged.
 
 Backlog estimates require measured completions and new arrivals over comparable
 healthy intervals. Resumption alone is insufficient, and a paused interval is not
