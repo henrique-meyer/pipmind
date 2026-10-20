@@ -38,11 +38,18 @@ def repair_budget(working):
 
     def plan(keys, cap):
         fixed = sizes["total_bytes"] - sum(content[key] for key in keys)
+        maximum = (
+            min(MAX_TEXT_BYTES, max(1, (MAX_BYTES - fixed - 100) // len(keys)))
+            if keys
+            else MAX_TEXT_BYTES
+        )
+        target = min(cap, maximum)
         return {
             "editable_keys": keys,
             "fixed_bytes": fixed,
-            "max_json_text_bytes": {key: cap for key in keys},
-            "planned_total_bytes": fixed + len(keys) * cap,
+            "target_json_text_bytes": {key: target for key in keys},
+            "max_json_text_bytes": {key: maximum for key in keys},
+            "planned_total_bytes": fixed + len(keys) * target,
             "hard_total_bytes": MAX_BYTES,
         }
 

@@ -493,7 +493,9 @@ Prompt `shadow-context-v14` also uses scoped patches for total overflow when ent
 counts and uniqueness fit. The engine calculates selected-entry budgets from the
 exact serialized state, including JSON escapes, unchanged entries and fixed
 position theses. It selects enough large entries for a planned total below the
-hard limit with growth headroom. The request schema names the exact keys/count
+hard limit with growth headroom. Each entry has a concision target and a larger
+ceiling calculated from the remaining space, leaving room for complete
+qualifiers and JSON/Unicode overhead. The request schema names the exact keys/count
 and calculated text length; the normative raw-response contract remains intact
 for audit compatibility. These are model guidance; actual 300-byte entry
 and 3,200-byte total guards remain authoritative, and text is never clipped to an

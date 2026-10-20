@@ -117,6 +117,16 @@ PATCH_INSTRUCTIONS = (
     " budget is available if needed to preserve meaning. Planned totals leave growth headroom."
     " Every date,"
     " number, distinct source status, uncertainty and unresolved prerequisite must survive."
+    " Keep measurement labels explicit for EACH observation (for example AUD CPI,"
+    " Q2 GDP and cash rate); a currency/value alone is ambiguous. Keep period dates"
+    " distinct from release dates, with named months or ISO dates rather than unlabeled"
+    " date pairs. Preserve claim scope, including monetary-policy versus broader policy."
+    " Preserve FULL TEXT and EACH-item prerequisites explicitly; unspecified text does"
+    " not satisfy a full-text prerequisite. Keep methodology and applicable implementation"
+    " distinct. target_json_text_bytes is a concision target; max_json_text_bytes leaves"
+    " room for complete meaning. A target miss never permits omitting a condition or qualifier."
+    " Keep unknown/not-established qualifiers explicit: no established implication is"
+    " not a claim of no implication. Missing evidence is never evidence of no effect."
 )
 
 

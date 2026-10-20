@@ -429,11 +429,15 @@ def test_budget_accounts_for_utf8_json_escapes_and_exact_fixed_theses():
     budget = repair_budget(w)
     assert budget and budget["planned_total_bytes"] <= 2800
     expected = deepcopy(w)
-    for key, cap in budget["max_json_text_bytes"].items():
+    for key, cap in budget["target_json_text_bytes"].items():
         field = "views" if key[0] == "v" else "waiting_for"
         expected[field][int(key[1:])] = "x" * cap
     assert working_sizes(expected)["total_bytes"] == budget["planned_total_bytes"]
     assert expected["position_theses"] == w["position_theses"]
+    for key, cap in budget["max_json_text_bytes"].items():
+        field = "views" if key[0] == "v" else "waiting_for"
+        expected[field][int(key[1:])] = "x" * cap
+    assert working_sizes(expected)["total_bytes"] <= 3100
 
 
 def test_total_patch_preserves_existing_resolution_and_cannot_invent_missing_provenance():
@@ -578,7 +582,10 @@ def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free
     requested = captured["message"]["schema"]["properties"]["replacements"]
     assert requested["minItems"] == requested["maxItems"] == 1
     assert requested["items"]["properties"]["from"]["enum"] == ["v0"]
-    assert requested["items"]["properties"]["text"]["maxLength"] == 220
+    assert requested["items"]["properties"]["text"]["maxLength"] == 300
+    assert captured["message"]["correction"]["patch_budget"]["target_json_text_bytes"] == {
+        "v0": 220
+    }
     assert (
         Contracts().schemas["memory-repair-patch"]["properties"]["replacements"]["items"][
             "properties"
