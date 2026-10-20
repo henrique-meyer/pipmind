@@ -410,6 +410,22 @@ Prompt `shadow-context-v10` aims below the unchanged 3,200-byte working-state ce
 
 The journal retains the exact original candidate, correction response, both mapping sets, before-state hash and every call's known/unknown usage. Invalid, timed-out or oversized correction holds the input pending and pauses; there is no retry loop, implicit resumption, state clipping or raised limit. Structural mappings do not prove semantic fidelity: retained-case and repeated-growth review remain required. A previously held source requires explicit owner-authorized resumption after validation. One correction RPC is additional measured decision-model usage; Azure capacity and providers remain unchanged.
 
+`shadow-context-v12` supplies exact candidate UTF-8 entry and serialized sizes to
+the correction. Its instructions distinguish the independent 300-byte entry and
+3,200-byte total limits, allowing up to eight entries per list rather than forcing
+an oversized merge. The correction schema also rejects more than eight entries,
+duplicates and strings longer than 300 characters; runtime validation still
+checks UTF-8 bytes, which can exceed character counts. Successful schema parsing
+alone cannot certify those byte limits or dependency fidelity. All original
+responses and known/unknown usage remain retained; the single-call budget and
+fail-closed hold are unchanged.
+
+The compression-only call uses low reasoning effort and concise mapping reasons
+to reduce timeouts; normal triage and decision settings are unchanged. Already
+resolved before-state dispositions retain their exact original reasons/evidence,
+including longer reasons. Correction traces record the effort setting. The
+90-second deadline and 4,096-output-token ceiling remain unchanged.
+
 ## Full-session capture and readiness (PIP-14)
 
 Enable the private in-process recorder with `PIPMIND_SHADOW_QUALIFICATION_ENABLED=true`; it shares the existing engine process and SQL tables and adds no service, resource, capacity or grant. Set `PIPMIND_SHADOW_GATEWAY_INTERVAL=300` for the demo's paced durable handoff, while refreshing broker facts before every step. The recorder is independent of the reasoning batch and survives replica restarts through SQL state. It cannot send commands, change the mind or certify M4.

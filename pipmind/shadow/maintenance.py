@@ -11,6 +11,14 @@ MAX_ENTRIES = 8
 MAX_TEXT_BYTES = 300
 
 
+def working_sizes(working):
+    """Exact UTF-8 sizes, including JSON overhead, without duplicating state text."""
+    return {
+        "total_bytes": len(encoded(working).encode()),
+        "entry_bytes": {key: len(text.encode()) for key, text in entries(working).items()},
+    }
+
+
 @lru_cache(maxsize=1)
 def contracts():
     return Contracts()

@@ -5,7 +5,13 @@ from copy import deepcopy
 from pipmind.contracts import ContractError, Contracts, event_id, stamp, utc, validate_event
 from pipmind.shadow.common import ShadowError, now
 from pipmind.shadow.context import event_query
-from pipmind.shadow.maintenance import POLICY, transition, validate_working, working_digest
+from pipmind.shadow.maintenance import (
+    POLICY,
+    transition,
+    validate_working,
+    working_digest,
+    working_sizes,
+)
 from pipmind.shadow.model import ModelFailure
 
 
@@ -37,6 +43,7 @@ class ShadowEngine:
             audit["response"] = deepcopy(correction)
             self.contracts.validate("memory-repair", correction)
             after = correction["working_memory"]
+            audit["response_sizes"] = working_sizes(after)
             if after["position_theses"] != original["working_memory"]["position_theses"]:
                 raise ShadowError("working_memory_repair_theses")
             # Every candidate entry must survive, possibly in a same-kind merge.
