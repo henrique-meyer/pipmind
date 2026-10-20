@@ -333,7 +333,7 @@ def patch_example():
 
 def total_example():
     before = {
-        "views": [f"FX {i}: " + "a" * 260 for i in range(8)],
+        "views": [f"FX {i}: " + "\\" * 240 for i in range(8)],
         "waiting_for": [f"Await verified prerequisite {i} " + "b" * 150 for i in range(5)],
         "position_theses": [],
     }
@@ -354,8 +354,8 @@ def total_example():
         "working_memory": deepcopy(before),
     }
     candidate["working_memory"]["waiting_for"].append("New dated prerequisite: " + "c" * 190)
-    assert working_sizes(before)["total_bytes"] <= 3200
-    assert working_sizes(candidate["working_memory"])["total_bytes"] > 3200
+    assert working_sizes(before)["total_bytes"] <= 5000
+    assert working_sizes(candidate["working_memory"])["total_bytes"] > 5000
     assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
     return context, candidate
 
@@ -368,7 +368,7 @@ def test_total_budget_patch_composes_literal_before_entries_and_preserves_unedit
         views[:] = views[1:] + views[:1]
     original = deepcopy(candidate)
     budget = repair_budget(candidate["working_memory"])
-    assert budget["planned_total_bytes"] <= 2800
+    assert budget["planned_total_bytes"] <= 4600
     selected = set(budget["editable_keys"])
     patch = {
         "replacements": [
@@ -427,7 +427,7 @@ def test_budget_accounts_for_utf8_json_escapes_and_exact_fixed_theses():
         }
     ]
     budget = repair_budget(w)
-    assert budget and budget["planned_total_bytes"] <= 2800
+    assert budget and budget["planned_total_bytes"] <= 4600
     expected = deepcopy(w)
     for key, cap in budget["target_json_text_bytes"].items():
         field = "views" if key[0] == "v" else "waiting_for"
@@ -437,7 +437,7 @@ def test_budget_accounts_for_utf8_json_escapes_and_exact_fixed_theses():
     for key, cap in budget["max_json_text_bytes"].items():
         field = "views" if key[0] == "v" else "waiting_for"
         expected[field][int(key[1:])] = "x" * cap
-    assert working_sizes(expected)["total_bytes"] <= 3100
+    assert working_sizes(expected)["total_bytes"] <= 4900
 
 
 def test_total_patch_preserves_existing_resolution_and_cannot_invent_missing_provenance():
@@ -677,7 +677,7 @@ def test_total_patch_spacing_preserves_lexical_content_and_refuses_residual_over
 
     context, candidate = total_example()
     if recoverable:
-        views = [f"FX {i}: " + "word; " * 40 + "a" * 20 for i in range(8)]
+        views = [f"FX {i}: " + "\\" * 200 + "; word" * 12 for i in range(8)]
         views[0] = '"' + views[0][1:]  # Quoted text must remain untouched.
         context["working_memory"]["views"] = deepcopy(views)
         candidate["working_memory"]["views"] = deepcopy(views)
@@ -709,7 +709,7 @@ def test_total_patch_spacing_preserves_lexical_content_and_refuses_residual_over
     else:
         out = asyncio.run(operation)
         assert out["working_memory"]["views"][0] == candidate["working_memory"]["views"][0]
-        assert working_sizes(out["working_memory"])["total_bytes"] <= 3200
+        assert working_sizes(out["working_memory"])["total_bytes"] <= 5000
         assert trace["memory_repair"]["method"] == "punctuation_spacing"
         for key, text in entries(candidate["working_memory"]).items():
             assert re.findall(r"\w+|[^\w\s]", text) == re.findall(
@@ -739,15 +739,15 @@ def test_format_only_carry_forward_is_mapped_but_never_invents_provenance(fault)
     for key in budget["editable_keys"]:
         field = "views" if key[0] == "v" else "waiting_for"
         after[field][int(key[1:])] = '"' + key + ' "'
-    remaining = 3203 - len(encoded(after).encode())
+    remaining = 5003 - len(encoded(after).encode())
     replacements = []
     for key in budget["editable_keys"]:
-        amount = min(300 - len(key) - 3, remaining)
+        amount = min(2 * (300 - len(key) - 3), remaining)
         remaining -= amount
         replacements.append(
             {
                 "from": key,
-                "text": '"' + key + " " + "x" * amount + '"',
+                "text": '"' + key + " " + "\\" * (amount // 2) + "x" * (amount % 2) + '"',
                 "reason": "Synthetic scoped wording proposal",
                 "evidence_ids": ["input"],
             }
@@ -768,7 +768,7 @@ def test_format_only_carry_forward_is_mapped_but_never_invents_provenance(fault)
             asyncio.run(operation)
     else:
         out = asyncio.run(operation)
-        assert working_sizes(out["working_memory"])["total_bytes"] == 3200
+        assert working_sizes(out["working_memory"])["total_bytes"] == 5000
         audit = trace["memory_repair"]["format_only_normalizations"]
         assert [v["key"] for v in audit] == ["w0"]
         applied = out["working_memory"]["waiting_for"][0]

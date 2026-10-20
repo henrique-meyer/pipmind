@@ -18,7 +18,13 @@ from pipmind.contracts import (
 )
 from pipmind.shadow.common import ShadowError, digest, encoded, terms
 from pipmind.shadow.context import query_terms, record_view, relevance, semantic_text
-from pipmind.shadow.maintenance import POLICY, policy_context, transition, working_digest
+from pipmind.shadow.maintenance import (
+    POLICY,
+    budget_context,
+    policy_context,
+    transition,
+    working_digest,
+)
 from pipmind.shadow.sql import stream_transaction, transaction
 
 PARTS = {
@@ -210,6 +216,7 @@ class SqlMind:
                 {
                     "kind": "working-memory-transition",
                     "policy": POLICY,
+                    "budget": budget_context(),
                     "revision": head["revision"],
                     "as_of": stamp(moment),
                     "initial": initial,

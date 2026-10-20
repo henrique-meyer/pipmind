@@ -12,8 +12,8 @@ from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
 from pipmind.shadow.maintenance import MAX_BYTES, POLICY, repair_budget, working_sizes
 
-PROMPT_VERSION = "shadow-context-v14"
-REPAIR_PROMPT_VERSION = "shadow-repair-v16"
+PROMPT_VERSION = "shadow-context-v15"
+REPAIR_PROMPT_VERSION = "shadow-repair-v17"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -68,7 +68,7 @@ MEMORY_INSTRUCTIONS = (
     " Reconsideration means evaluating an old input NOW with current evidence/state;"
     " it is not a historical decision made at the original receipt time."
     " Aim for at most 2400 UTF-8 bytes of working memory to leave growth headroom;"
-    " the hard limit remains 3200. Concision never permits losing a prerequisite."
+    " the hard limit remains 5000. Concision never permits losing a prerequisite."
 )
 REPAIR_INSTRUCTIONS = (
     " This is one working-memory CORRECTION, not a new trading decision. Return only"
@@ -84,7 +84,7 @@ REPAIR_INSTRUCTIONS = (
     " Preserve the immutable trading decision; your response cannot edit it."
     " Make a genuine consolidation, not a rewrite of the same long list. Each"
     " view AND each waiting_for string MUST fit 300 UTF-8 bytes independently;"
-    " total serialized working_memory MUST fit 3200 UTF-8 bytes including JSON."
+    " total serialized working_memory MUST fit 5000 UTF-8 bytes including JSON."
     " Fitting the total alone is insufficient. Inspect supplied entry_bytes;"
     " characters are not UTF-8 bytes. Aim below 2400 total and 200 per entry."
     " Use up to eight entries per list when needed instead of merging distinct"
@@ -294,7 +294,9 @@ class FoundryModel:
             )
             + (
                 MEMORY_INSTRUCTIONS
-                if context.get("memory_policy", {}).get("version") == POLICY and repair is None
+                if context.get("memory_policy", {}).get("version") == POLICY
+                and repair is None
+                and phase == "decision"
                 else ""
             )
             + "\n"

@@ -219,7 +219,7 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
     )
 
     before = {
-        "views": [f"FX {i}: " + "a" * 260 for i in range(8)],
+        "views": [f"FX {i}: " + "\\" * 240 for i in range(8)],
         "waiting_for": [f"Await verified prerequisite {i} " + "b" * 150 for i in range(5)],
         "position_theses": [],
     }
@@ -245,7 +245,7 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
         working_memory=deepcopy(before),
     )
     candidate["working_memory"]["waiting_for"].append("New dated prerequisite: " + "c" * 190)
-    assert working_sizes(candidate["working_memory"])["total_bytes"] > 3200
+    assert working_sizes(candidate["working_memory"])["total_bytes"] > 5000
     assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
     budget = repair_budget(candidate["working_memory"])
     model.responses[event["message_id"]]["reply"] = candidate
@@ -269,15 +269,15 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
         for key in budget["editable_keys"]:
             field = "views" if key[0] == "v" else "waiting_for"
             trial[field][int(key[1:])] = '"' + key + ' "'
-        remaining = 3203 - len(encoded(trial).encode())
+        remaining = 5003 - len(encoded(trial).encode())
         patch["replacements"] = []
         for key in budget["editable_keys"]:
-            amount = min(300 - len(key) - 3, remaining)
+            amount = min(2 * (300 - len(key) - 3), remaining)
             remaining -= amount
             patch["replacements"].append(
                 {
                     "from": key,
-                    "text": '"' + key + " " + "x" * amount + '"',
+                    "text": '"' + key + " " + "\\" * (amount // 2) + "x" * (amount % 2) + '"',
                     "reason": "Synthetic scoped wording proposal",
                     "evidence_ids": [event["message_id"]],
                 }
@@ -317,7 +317,7 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
                     punctuation_spacing(text) if formatting_only and key == "w0" else text
                 )
         if formatting_only:
-            assert working_sizes(after)["total_bytes"] == 3200
+            assert working_sizes(after)["total_bytes"] == 5000
             assert [v["key"] for v in journal["memory_repair"]["format_only_normalizations"]] == [
                 "w0"
             ]
@@ -328,7 +328,7 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
             if text not in after["views" if key[0] == "v" else "waiting_for"]
         }
         assert {row["from"] for row in journal["reply"]["memory_dispositions"]} == changed
-        assert working_sizes(reopened.head()["working"])["total_bytes"] <= 3200
+        assert working_sizes(reopened.head()["working"])["total_bytes"] <= 5000
     assert journal["dispatches"] == 0 and journal["memory_repair"]["candidate"] == candidate
     assert journal["memory_repair"]["response"] == patch
     assert journal["memory_repair"]["patch_budget"] == budget
@@ -2593,7 +2593,7 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
     from pipmind.shadow.model import FoundryModel
 
     before = {
-        "views": [f"USD condition {i}: " + "a" * 250 for i in range(8)],
+        "views": [f"USD condition {i}: " + "\\" * 240 for i in range(8)],
         "waiting_for": [f"Verified prerequisite {i}: " + "b" * 150 for i in range(5)],
         "position_theses": [],
     }
@@ -2617,7 +2617,7 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
     candidate["working_memory"]["waiting_for"].append("New prerequisite: " + "c" * 200)
     assert (
         working_sizes(before)["total_bytes"]
-        <= 3200
+        <= 5000
         < working_sizes(candidate["working_memory"])["total_bytes"]
     )
     assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
@@ -2700,3 +2700,70 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
     }
     assert all(retained[k] == v for k, v in original.items())
     assert result["dispatches"] == 0
+
+
+def test_sql_approved_budget_accepts_retained_shape_without_repair_or_rewriting(mind):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import working_sizes
+
+    before = {
+        "views": [f"FX {i}: " + "a" * 260 for i in range(8)],
+        "waiting_for": [f"Await prerequisite {i}: " + "b" * 150 for i in range(5)],
+        "position_theses": [],
+    }
+    with mind.transaction() as c:
+        mind._insert(
+            c,
+            metadata("budget-before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            encoded(before),
+        )
+        mind._write_working(c, before, MOMENT)
+    activate_bounded(mind)
+    old = {m["record_id"]: (m, b) for m, b in mind.retained()[1] if m["part"] != "working_memory"}
+    events, fixture = episode(mind)
+    event = events[0]
+    candidate = deepcopy(fixture.responses[event["message_id"]]["reply"])
+    candidate.update(
+        evidence_ids=[event["message_id"]],
+        tool_calls=[],
+        memory_dispositions=[],
+        working_memory=deepcopy(before),
+    )
+    candidate["working_memory"]["waiting_for"].append("New prerequisite: " + "c" * 200)
+    assert 3200 < working_sizes(candidate["working_memory"])["total_bytes"] < 5000
+    fixture.responses[event["message_id"]].update(
+        reply=candidate, triage={"wake": True, "summary": "Relevant synthetic condition"}
+    )
+
+    class Live(FixtureModel):
+        async def repair_memory(self, *args):
+            raise AssertionError("Valid approved state must not require another model call")
+
+    assert asyncio.run(ShadowEngine(mind, Live(fixture.responses), clock=lambda: MOMENT).step())
+    reopened = SqlMind(mind.connect, mind.trader)
+    assert (
+        reopened.head()["working"] == candidate["working_memory"]
+        and not reopened.head()["paused"]
+        and reopened.pending() is None
+    )
+    result = reopened.outcome(event["message_id"])
+    assert result["reply"] == candidate and "memory_repair" not in result
+    retained = {
+        m["record_id"]: (m, b) for m, b in reopened.retained()[1] if m["part"] != "working_memory"
+    }
+    assert all(retained[k] == v for k, v in old.items())
+    checkpoint = reopened.runtime("memory_policy")["checkpoint"]
+    body = loads(retained[checkpoint][1])
+    assert body["budget"] == {
+        "budget_version": "working-budget-v2",
+        "max_bytes": 5000,
+        "max_entries_per_list": 8,
+        "max_text_bytes": 300,
+    }
+    assert (
+        reopened.context(MOMENT, "FX", history=False)["memory_policy"]["budget_version"]
+        == "working-budget-v2"
+    )
+    assert [v["phase"] for v in result["usage"]] == ["triage", "decision"] and result[
+        "dispatches"
+    ] == 0
