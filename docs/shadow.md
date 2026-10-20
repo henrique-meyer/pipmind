@@ -426,6 +426,35 @@ resolved before-state dispositions retain their exact original reasons/evidence,
 including longer reasons. Correction traces record the effort setting. The
 90-second deadline and 4,096-output-token ceiling remain unchanged.
 
+### Repair-hold release measurements (2026-10-20)
+
+A retained 3,285-byte candidate received a 2,871-byte correction whose merged
+waiting condition was 311 bytes. The independent 300-byte entry guard correctly
+held the input. Three final v12 retained corrections pass all mappings and byte
+checks at 2,872-2,954 bytes, taking 49.6-68.2 seconds. Existing SQL evidence is
+verified separately; the current event remains the exact pending input that the
+ordinary commit archives before validating its references. Normal triage and
+decision requests compile byte for byte identically to the retained requests.
+
+All twelve correction trials, including earlier variants, remain separately
+retained: nine successes and three 90-second timeouts with unknown usage. Known
+validation usage totals 60,705 input / 22,350 output tokens, excluding the original
+source attempt and production retry. Unknown calls are not zero-cost calls;
+these counts are neither an invoice nor a monthly estimate. All 4,302 sampled
+pending inputs fit triage without a model RPC: maximum 15,386 bytes, or 15,851
+allowing the full working-state allocation. These are current-context checks,
+not proof every future prompt will fit.
+
+CI passes 454 offline / 90 actual SQL tests and the required container,
+infrastructure and secret checks. The backend release preserves capacity,
+configuration, identity, SQL egress and the landing. Its held input commits as an
+observation and reasoning resumes. Complete original prefixes match: 4,043
+immutable mind records, 1,817 outcomes, 6,101 inputs, 4,253 feed events and 1,282
+raw inbox entries. Binding, lineage, dependency origin and retained cursor
+progress are preserved. The prior warm-up remains retained and superseded; its
+replacement is warming on startup backlog. No formal 24-hour day or full M4
+qualification is established by this release.
+
 ## Full-session capture and readiness (PIP-14)
 
 Enable the private in-process recorder with `PIPMIND_SHADOW_QUALIFICATION_ENABLED=true`; it shares the existing engine process and SQL tables and adds no service, resource, capacity or grant. Set `PIPMIND_SHADOW_GATEWAY_INTERVAL=300` for the demo's paced durable handoff, while refreshing broker facts before every step. The recorder is independent of the reasoning batch and survives replica restarts through SQL state. It cannot send commands, change the mind or certify M4.
