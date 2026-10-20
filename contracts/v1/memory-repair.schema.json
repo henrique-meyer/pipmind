@@ -14,7 +14,15 @@
         }}
       ]
     },
-    "memory_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"},
-    "candidate_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"}
+    "memory_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-repair#/$defs/compact-dispositions"},
+    "candidate_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-repair#/$defs/compact-dispositions"}
+  },
+  "$defs": {
+    "compact-dispositions": {
+      "allOf": [
+        {"$ref": "urn:pipmind:schema:v1:memory-dispositions"},
+        {"items": {"properties": {"reason": {"maxLength": 80}}}}
+      ]
+    }
   }
 }
