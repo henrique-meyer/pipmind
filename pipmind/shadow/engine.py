@@ -8,6 +8,7 @@ from pipmind.shadow.context import event_query
 from pipmind.shadow.maintenance import (
     POLICY,
     entries,
+    expand_repair_patch,
     transition,
     validate_working,
     working_digest,
@@ -42,6 +43,10 @@ class ShadowEngine:
             )
             result["usage"][-1] = usage
             audit["response"] = deepcopy(correction)
+            if "replacements" in correction:
+                self.contracts.validate("memory-repair-patch", correction)
+                correction = expand_repair_patch(original, correction, event_id(event))
+                audit["expanded_response"] = deepcopy(correction)
             self.contracts.validate("memory-repair", correction)
             correction = deepcopy(correction)
             after = correction["working_memory"]

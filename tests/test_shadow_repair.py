@@ -8,7 +8,7 @@ import pytest
 from pipmind.contracts import ContractError, Contracts
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.engine import ShadowEngine
-from pipmind.shadow.maintenance import transition, validate_working, working_sizes
+from pipmind.shadow.maintenance import repair_scope, transition, validate_working, working_sizes
 from pipmind.shadow.model import FoundryModel, ModelFailure
 
 
@@ -303,3 +303,99 @@ def test_identity_mapping_normalization_never_repairs_semantic_or_ambiguous_faul
             )
         )
     assert result["memory_repair"]["response"] == correction
+
+
+def patch_example():
+    context, candidate, correction = example()
+    candidate["working_memory"]["views"] = ["EUR uncertainty " + "." * 300]
+    candidate["memory_dispositions"] = [correction["memory_dispositions"][0]]
+    patch = {
+        "replacements": [
+            {
+                "from": "v0",
+                "text": "EUR uncertainty remains",
+                "reason": "Shorter wording; same uncertainty",
+                "evidence_ids": ["input"],
+            }
+        ]
+    }
+    return context, candidate, patch
+
+
+def test_scoped_patch_copies_unedited_state_and_original_mappings_exactly():
+    context, candidate, patch = patch_example()
+    originals = deepcopy((context, candidate, patch))
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    assert (context, candidate, patch) == originals
+    assert out["working_memory"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+    assert out["memory_dispositions"] == candidate["memory_dispositions"]
+    assert result["memory_repair"]["response"] == patch
+    assert result["memory_repair"]["expanded_response"]["working_memory"] == out["working_memory"]
+    assert repair_scope(candidate["working_memory"]) == ["v0"]
+
+
+@pytest.mark.parametrize(
+    "fault", ["missing", "duplicate", "extra", "utf8", "evidence", "before_mapping"]
+)
+def test_scoped_patch_rejects_scope_byte_evidence_and_transition_faults(fault):
+    context, candidate, patch = patch_example()
+    row = patch["replacements"][0]
+    if fault == "missing":
+        patch["replacements"] = []
+    elif fault == "duplicate":
+        patch["replacements"].append(deepcopy(row))
+    elif fault == "extra":
+        patch["replacements"].append({**row, "from": "w0"})
+    elif fault == "utf8":
+        row["text"] = "é" * 151
+    elif fault == "evidence":
+        row["evidence_ids"] = ["invented"]
+    else:
+        candidate["memory_dispositions"] = []
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    with pytest.raises(ShadowError, match="working_memory_repair_failed"):
+        asyncio.run(
+            ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+                {"message_id": "input"}, context, candidate, result, now()
+            )
+        )
+    assert result["memory_repair"]["response"] == patch
+
+
+def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free_call():
+    context, candidate, patch = patch_example()
+    captured = {}
+
+    class Agent:
+        async def run(self, message, *, options):
+            captured.update(message=json.loads(message), options=options)
+            return SimpleNamespace(text=encoded(patch), usage_details={"output_token_count": 80})
+
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return Agent()
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test", "t", "d", enabled=True, factory=factory
+    )
+    out, trace = asyncio.run(
+        model.repair_memory({"message_id": "input"}, context, candidate, None, now())
+    )
+    assert out == patch and captured["tools"] == []
+    assert captured["message"]["schema"]["$id"].endswith(":memory-repair-patch")
+    assert captured["message"]["correction"]["editable_keys"] == ["v0"]
+    assert captured["options"]["reasoning"] == {"effort": "low"}
+    assert trace["output_tokens"] == 80 and trace["max_output_tokens"] == 4096

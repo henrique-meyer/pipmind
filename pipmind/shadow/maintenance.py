@@ -1,5 +1,6 @@
 """Bounded current state, with explicit dispositions instead of silent clipping."""
 
+from copy import deepcopy
 from functools import lru_cache
 
 from pipmind.contracts import Contracts, utc
@@ -9,6 +10,50 @@ POLICY = "bounded-working-v1"
 MAX_BYTES = 3200
 MAX_ENTRIES = 8
 MAX_TEXT_BYTES = 300
+
+
+def repair_scope(working):
+    """A text-only patch is safe only when total/count/uniqueness already fit."""
+    sizes = working_sizes(working)
+    if sizes["total_bytes"] > MAX_BYTES or any(
+        len(working[field]) > MAX_ENTRIES or len(set(working[field])) != len(working[field])
+        for field in ("views", "waiting_for")
+    ):
+        return []
+    return [key for key, size in sizes["entry_bytes"].items() if size > MAX_TEXT_BYTES]
+
+
+def expand_repair_patch(candidate, patch, event_ref):
+    """Expand only the named edits; preserve the decision's BEFORE mappings."""
+    original = candidate["working_memory"]
+    scope = repair_scope(original)
+    rows = patch["replacements"]
+    edits = {row["from"]: row for row in rows}
+    if not scope or len(edits) != len(rows) or set(edits) != set(scope):
+        raise ShadowError("working_memory_repair_scope")
+    after = deepcopy(original)
+    for key, row in edits.items():
+        field = "views" if key[0] == "v" else "waiting_for"
+        after[field][int(key[1:])] = row["text"]
+    proposed = entries(original)
+    dispositions = deepcopy(candidate.get("memory_dispositions", []))
+    mappings = []
+    for key in proposed:
+        edit = edits.get(key)
+        mappings.append(
+            {
+                "from": key,
+                "to": key,
+                "disposition": "updated" if edit else "retained",
+                "reason": edit["reason"] if edit else "Exact candidate entry carried forward",
+                "evidence_ids": edit["evidence_ids"] if edit else [event_ref],
+            }
+        )
+    return {
+        "working_memory": after,
+        "memory_dispositions": dispositions,
+        "candidate_dispositions": mappings,
+    }
 
 
 def working_sizes(working):

@@ -468,6 +468,17 @@ through the same strict validators and fail closed. This deterministic identity
 check prevents a redundant update label from holding an otherwise valid repair;
 it does not prove semantic preservation for actual rewrites.
 
+When total size, entry counts and uniqueness already fit and only particular
+entries exceed 300 UTF-8 bytes, the single correction uses the
+`memory-repair-patch` contract. It may replace exactly those entries; the engine
+copies every other candidate entry and position thesis literally, retains the
+decision's before-state mappings, and derives all candidate carry-forwards.
+Missing, duplicate or extra replacement keys fail. The raw patch and expanded
+state/mappings are audited, then the ordinary byte, dependency, evidence and
+transition checks run unchanged. Total/count overflow still uses full
+consolidation. Both paths share the existing one-call, timeout and output budget;
+there is no automatic retry loop or fallback that discards a failed attempt.
+
 Backlog estimates require measured completions and new arrivals over comparable
 healthy intervals. Resumption alone is insufficient, and a paused interval is not
 a measure of active throughput. If arrivals meet or exceed completions, there is

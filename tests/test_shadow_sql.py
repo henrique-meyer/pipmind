@@ -1762,7 +1762,7 @@ def test_private_http_rejects_malformed_and_forged_owner_inputs_without_advancin
 
 
 @pytest.mark.parametrize("failed_correction", [False, True])
-@pytest.mark.parametrize("invalid_candidate", ["oversized", "missing_dispositions"])
+@pytest.mark.parametrize("invalid_candidate", ["oversized", "missing_dispositions", "entry_patch"])
 def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
     mind, failed_correction, invalid_candidate
 ):
@@ -1792,6 +1792,16 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
     if invalid_candidate == "missing_dispositions":
         candidate["working_memory"]["views"] = ["USD uncertainty remains"]
         candidate.pop("memory_dispositions", None)
+    if invalid_candidate == "entry_patch":
+        candidate["memory_dispositions"] = [
+            {
+                "from": "v0",
+                "to": "v0",
+                "disposition": "updated",
+                "reason": "New wording for the same uncertainty",
+                "evidence_ids": [event["message_id"]],
+            }
+        ]
     model.responses[event["message_id"]]["reply"] = candidate
     model.responses[event["message_id"]]["triage"]["wake"] = True
     after = {**before, "views": ["USD uncertainty retained"]}
@@ -1816,6 +1826,21 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
 
         async def repair_memory(self, *args):
             self.calls += 1
+            if invalid_candidate == "entry_patch":
+                return {
+                    "replacements": [
+                        {
+                            "from": "v0",
+                            "text": (
+                                candidate["working_memory"]["views"][0]
+                                if failed_correction
+                                else after["views"][0]
+                            ),
+                            "reason": "Short wording with uncertainty retained",
+                            "evidence_ids": [event["message_id"]],
+                        }
+                    ]
+                }, {"phase": "memory_repair", "input_tokens": 123, "output_tokens": 45}
             reply = deepcopy(correction)
             if failed_correction:
                 reply["working_memory"] = deepcopy(candidate["working_memory"])
@@ -1840,15 +1865,22 @@ def test_sql_bounded_correction_commits_once_or_holds_with_all_attempts(
         journal = mind.outcome(event["message_id"])
         assert journal["status"] == "observed" and not mind.head()["paused"]
         assert mind.head()["working"] == after and mind.pending() is None
-        assert journal["reply"]["memory_dispositions"][-1]["disposition"] == "retained"
-        assert journal["memory_repair"]["response"] == correction
-        assert len(journal["memory_repair"]["mapping_normalizations"]) == 2
+        if invalid_candidate == "entry_patch":
+            assert journal["reply"]["memory_dispositions"] == candidate["memory_dispositions"]
+            assert (
+                journal["memory_repair"]["response"]["replacements"][0]["text"] == after["views"][0]
+            )
+            assert journal["memory_repair"]["expanded_response"]["working_memory"] == after
+        else:
+            assert journal["reply"]["memory_dispositions"][-1]["disposition"] == "retained"
+            assert journal["memory_repair"]["response"] == correction
+            assert len(journal["memory_repair"]["mapping_normalizations"]) == 2
         for key in candidate.keys() - {"working_memory", "memory_dispositions"}:
             assert journal["reply"][key] == candidate[key]
     assert journal["memory_repair"]["candidate"] == candidate
     assert journal["memory_repair"]["reason"] == (
         "working_memory_bound"
-        if invalid_candidate == "oversized"
+        if invalid_candidate != "missing_dispositions"
         else "working_memory_dispositions"
     )
     assert [row["phase"] for row in journal["usage"]] == ["triage", "decision", "memory_repair"]
