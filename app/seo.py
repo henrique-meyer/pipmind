@@ -6,10 +6,10 @@ import json
 import re
 from html import escape
 
-TITLE = "PipMind — Open-source AI Forex Trading Experiment"
+TITLE = "PipMind — An AI Forex Trader with a Persistent Mind"
 DESCRIPTION = (
-    "Explore the design and source of PipMind, an open-source AI forex experiment "
-    "with persistent memory and a planned public decision record. In development; no trading yet."
+    "An open-source AI forex experiment with a persistent mind. Explore portable "
+    "robot saves, owner guidance and Auto Learn. In development; no trading yet."
 )
 
 
