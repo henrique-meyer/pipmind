@@ -6,6 +6,11 @@ on:
         description: Full main-branch commit SHA whose published image should be deployed
         required: true
         type: string
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
 permissions:
   contents: read
   id-token: write
@@ -32,6 +37,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
       - name: Validate release source
         run: |
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1

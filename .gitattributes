@@ -5,6 +5,7 @@
 *.toml text eol=lf
 *.lock text eol=lf
 *.yml text eol=lf
+*.sh text eol=lf
 .gitattributes text eol=lf
 .env.example text eol=lf
 templates/blank/*.md text eol=lf

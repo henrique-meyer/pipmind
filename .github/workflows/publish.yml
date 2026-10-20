@@ -1,9 +1,16 @@
 name: Publish landing image
 on:
-  push:
-    branches: [main]
-    paths: [app/**, web/**, assets/**, Dockerfile, .dockerignore, pyproject.toml, uv.lock, scripts/smoke.py, .github/workflows/publish.yml]
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full tested main commit to publish (defaults to current main)
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
 permissions:
   contents: read
   packages: write
@@ -15,22 +22,30 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha || github.sha }}
+      - name: Validate release source
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
       - name: Build and check release image
         run: |
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
-          docker build --build-arg BUILD_SHA="$GITHUB_SHA" -t "$IMAGE:$GITHUB_SHA" .
-          docker run -d --name pipmind-release --read-only --cap-drop ALL --security-opt no-new-privileges -p 127.0.0.1:8080:8080 "$IMAGE:$GITHUB_SHA"
-          python3 scripts/smoke.py --url http://127.0.0.1:8080 --build "$GITHUB_SHA"
+          docker build --build-arg BUILD_SHA="$SOURCE_SHA" -t "$IMAGE:$SOURCE_SHA" .
+          docker run -d --name pipmind-release --read-only --cap-drop ALL --security-opt no-new-privileges -p 127.0.0.1:8080:8080 "$IMAGE:$SOURCE_SHA"
+          python3 scripts/smoke.py --url http://127.0.0.1:8080 --build "$SOURCE_SHA"
       - name: Publish immutable source tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker push "ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_SHA"
+          docker push "ghcr.io/${GITHUB_REPOSITORY,,}:$SOURCE_SHA"
       - name: Clean up
         if: always()
         run: |
