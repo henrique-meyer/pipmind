@@ -13,7 +13,7 @@ from pipmind.contracts import stamp, utc
 from pipmind.feeds.common import FeedError
 from pipmind.feeds.news import relay_page
 from pipmind.feeds.store import FeedStore
-from pipmind.gateway.ciapi import Ciapi
+from pipmind.gateway.ciapi import Ciapi, Response
 from pipmind.gateway.config import GatewayError
 from pipmind.gateway.recording import synthetic_config, synthetic_symbols
 from pipmind.gateway.service import ReadWorker, create_app
@@ -78,6 +78,20 @@ def test_unknown_future_or_oversized_headlines_are_refused(patch):
     b.read.return_value["Headlines"][0].update(patch)
     with pytest.raises(GatewayError):
         b.headlines()
+
+
+def test_headline_transport_uses_existing_session_and_only_fixed_get():
+    transport = Mock()
+    transport.request.return_value = Response(200, broker().read.return_value)
+    b = Ciapi(synthetic_config(), synthetic_symbols(), transport=transport, now=lambda: NOW)
+    b._session = "synthetic-existing-read-session"
+    assert b.headlines()
+    request = transport.request.call_args
+    assert request.args == ("GET", b.config.legacy_root + "/news/newsheadlines")
+    assert request.kwargs["headers"]["Session"] == "synthetic-existing-read-session"
+    assert request.kwargs["query"]["maxResults"] == 100
+    with pytest.raises(GatewayError, match="broker_endpoint_forbidden"):
+        b.read("/order/newtradeorder", legacy=True)
 
 
 def test_invalid_relay_batch_never_advances_events_or_checkpoint(tmp_path):
