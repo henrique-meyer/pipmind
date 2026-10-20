@@ -139,6 +139,45 @@ class Ciapi:
             self.login()
         return self._session
 
+    def headlines(self):
+        """Bounded Reuters FX headlines; never fetch article bodies."""
+        data = fields(
+            self.read(
+                "/news/newsheadlines",
+                query={"region": "FX", "cultureId": 69, "maxResults": 100},
+                legacy=True,
+            )
+        )
+        rows = data.get("Headlines")
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise GatewayError("invalid_broker_headlines")
+        observed = self.now()
+        result = []
+        for raw in rows:
+            row = fields(raw)
+            story, headline = row.get("StoryId"), row.get("Headline")
+            if (
+                not isinstance(story, str)
+                or not 1 <= len(story) <= 512
+                or not isinstance(headline, str)
+                or not 1 <= len(headline) <= 2000
+            ):
+                raise GatewayError("invalid_broker_headlines")
+            published = broker_time(row.get("PublishDate"))
+            if published > observed:
+                raise GatewayError("invalid_broker_headlines")
+            identity = json.dumps([story, headline, stamp(published)], separators=(",", ":"))
+            result.append(
+                {
+                    "schema_version": 1,
+                    "relay_id": "reuters:" + hashlib.sha256(identity.encode()).hexdigest(),
+                    "headline": headline,
+                    "published_at": stamp(published),
+                    "observed_at": stamp(observed),
+                }
+            )
+        return result
+
     def read(self, path, *, query=None, legacy=False):
         # A fixed allowlist keeps even accidental future calls off the order path.
         if not (
@@ -151,6 +190,7 @@ class Ciapi:
                 "/order/activestoplimitorders",
                 "/order/tradehistory",
                 "/order/stoplimitorderhistory",
+                "/news/newsheadlines",
             }
             or re.fullmatch(r"/market/\d+/tickhistory", path)
         ):

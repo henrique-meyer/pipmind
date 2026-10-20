@@ -64,6 +64,8 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 
 ## PIP-14 — Complete M4 live qualification
 
+- Current coverage/evaluation pass: verify hosted macro mappings, publication/unit/scale evidence, news/analysis delivery, social roles, outage/backfill and quarantine behavior against actual retained inputs. Repeat isolated real-model cases against the deployed prompt while ordered source catch-up continues; preserve original attempts and report integrity, semantic fidelity, refusals/timeouts, usage and human-calibration needs separately. Reuse approved subscriptions and capacity; public callbacks, new paid sources/credits and infrastructure changes remain outside this pass. Source outages and unsupported coverage must remain explicit gaps rather than passing by omission.
+
 - Story: [PIP-14](https://nitro.atlassian.net/browse/PIP-14)
 - Status: In progress; implementation and controlled checks delivered, full-day qualification remains open.
 - Acceptance: a complete declared FX day, independent zero-order broker evidence, measured source freshness/backfill/lag, capacity and actual costs, repeated model evals with owner calibration, and complete retained-day export/paused clone with separate destination authority. See the [hosted qualification procedure](shadow.md#hosted-m4-approval-and-live-qualification).

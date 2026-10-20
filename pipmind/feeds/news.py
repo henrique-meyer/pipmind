@@ -92,6 +92,44 @@ def relay(store, payload, now):
     )
 
 
+def relay_page(store, payloads, observed, *, checked_at, error=None):
+    """Atomic cached-headline handoff; repeat GETs never duplicate source events."""
+    if not isinstance(payloads, list) or len(payloads) > 100:
+        raise FeedError("invalid_headline_page")
+    if utc(checked_at) > observed:
+        raise FeedError("invalid_headline_time")
+    values = []
+    for payload in payloads:
+        contracts().validate("headline-relay", payload)
+        published = payload.get("published_at", payload["observed_at"])
+        if not utc(published) <= utc(payload["observed_at"]) <= observed:
+            raise FeedError("invalid_headline_time")
+        values.append(
+            {
+                "schema_version": 1,
+                "event_id": "relay:" + payload["relay_id"],
+                "source": "broker-relay",
+                "headline": payload["headline"],
+                "url": payload.get("url", ""),
+                "kind": "breaking",
+                "published_at": published,
+                "received_at": stamp(observed),
+            }
+        )
+    store.page(
+        "news",
+        values,
+        "relay:status",
+        {
+            "checked_at": checked_at,
+            "error": error,
+            "window_full": len(payloads) == 100,
+            "complete_history_proven": False,
+        },
+        observed,
+    )
+
+
 class News:
     def __init__(self, store, reads, sources, now):
         self.store, self.reads, self.sources, self.now = store, reads, sources, now
@@ -111,6 +149,9 @@ class News:
                 self.store.page("news", values, "rss:last:" + source["id"], stamp(now), now)
             except (FeedError, ValueError):
                 self.store.alert("news", "news_source_failed", now)
+                # Preserve the last success independently; a healthy worker is
+                # not evidence that every configured source is delivering.
+                self.store.save("rss:error:" + source["id"], {"checked_at": stamp(now)})
         for pending in self.store.pending("news"):
             raw = pending["raw"]
             result = {
@@ -120,7 +161,7 @@ class News:
                 "headline": raw["headline"],
                 "url": raw.get("url", ""),
                 "kind": "breaking",
-                "published_at": raw["observed_at"],
+                "published_at": raw.get("published_at", raw["observed_at"]),
                 "received_at": pending["received_at"],
             }
             try:

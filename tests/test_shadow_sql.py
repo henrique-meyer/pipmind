@@ -790,6 +790,37 @@ def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primar
     assert report["human_review"].startswith("pending")
 
 
+def test_broker_headline_page_commits_events_and_coverage_atomically_in_sql(mind):
+    from pipmind.feeds.common import FeedError
+    from pipmind.feeds.news import relay_page
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    feeds = SqlFeedStore(mind.connect, profile="synthetic")
+    payload = {
+        "schema_version": 1,
+        "relay_id": "sql-relay-" + uuid4().hex,
+        "headline": "Synthetic policy statement",
+        "published_at": MOMENT.isoformat(),
+        "observed_at": MOMENT.isoformat(),
+    }
+    relay_page(feeds, [payload], MOMENT, checked_at=MOMENT.isoformat())
+    baseline = feeds.events(0, 500)
+    relay_page(feeds, [payload], MOMENT, checked_at=MOMENT.isoformat())
+    assert feeds.events(0, 500) == baseline
+    state = feeds.state("relay:status")
+    with pytest.raises(FeedError):
+        relay_page(
+            feeds,
+            [
+                {**payload, "relay_id": "never-committed"},
+                {**payload, "published_at": "2099-01-01T00:00:00Z"},
+            ],
+            MOMENT,
+            checked_at=MOMENT.isoformat(),
+        )
+    assert feeds.events(0, 500) == baseline and feeds.state("relay:status") == state
+
+
 @pytest.mark.parametrize("operation", ["feed", "inputs", "terms"])
 def test_sql_batches_leave_peer_progress_possible_under_network_latency(mind, operation):
     import threading

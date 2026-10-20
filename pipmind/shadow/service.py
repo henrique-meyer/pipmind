@@ -81,11 +81,12 @@ class FeedConsumer:
 class GatewayConsumer(FeedConsumer):
     """Only GET /state. No order URL, broker credential or command method exists."""
 
-    def __init__(self, *args, handoff_interval=0, **kwargs):
+    def __init__(self, *args, handoff_interval=0, relay_store=None, **kwargs):
         super().__init__(*args, **kwargs)
         if not 0 <= handoff_interval <= 3600:
             raise ShadowError("invalid_gateway_handoff_interval")
         self.handoff_interval, self.last_handoff = handoff_interval, None
+        self.relay_store, self.last_headlines = relay_store, None
 
     def poll(self, moment):
         request = Request(self.url + "/state", headers={"Authorization": "Bearer " + self.token})
@@ -95,6 +96,26 @@ class GatewayConsumer(FeedConsumer):
             moment = self.completion_clock() if self.completion_clock else moment
             if page.get("dispatch_enabled") is not False:
                 raise ValueError
+            if self.relay_store is not None and page.get("headlines_as_of"):
+                from pipmind.feeds.news import relay_page
+
+                marker = digest(
+                    encoded(
+                        {
+                            k: page.get(k)
+                            for k in ("headlines", "headlines_as_of", "headlines_error")
+                        }
+                    )
+                )
+                if marker != self.last_headlines:
+                    relay_page(
+                        self.relay_store,
+                        page.get("headlines", []),
+                        moment,
+                        checked_at=page["headlines_as_of"],
+                        error=page.get("headlines_error"),
+                    )
+                    self.last_headlines = marker
             if self.handoff_interval:
                 if page.get("snapshots"):
                     self.store.refresh_broker_facts(*page["snapshots"], moment)
@@ -582,6 +603,7 @@ def from_env():
             os.environ["PIPMIND_SHADOW_GATEWAY_SOURCE_ID"],
             handoff_interval=int(os.environ.get("PIPMIND_SHADOW_GATEWAY_INTERVAL", "0")),
             completion_clock=now,
+            relay_store=feed_app.state.store if feed_app else None,
         )
     return create_app(
         store,

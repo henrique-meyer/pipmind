@@ -28,9 +28,12 @@ class ReadWorker:
         snapshot_interval=30,
         evidence_interval=None,
         evidence_since=None,
+        headline_interval=None,
     ):
-        if not 30 <= snapshot_interval <= 3600 or (
-            evidence_interval is not None and not 60 <= evidence_interval <= 3600
+        if (
+            not 30 <= snapshot_interval <= 3600
+            or (evidence_interval is not None and not 60 <= evidence_interval <= 3600)
+            or (headline_interval is not None and not 60 <= headline_interval <= 3600)
         ):
             raise GatewayError("invalid_broker_read_intervals")
         self.broker = broker
@@ -48,6 +51,8 @@ class ReadWorker:
         self.snapshot_attempt, self.evidence_attempt = None, None
         self.verified, self.last_cycle, self.prices = False, None, []
         self.thread = None
+        self.headline_interval, self.headline_attempt = headline_interval, None
+        self.headlines, self.headlines_as_of, self.headlines_error = [], None, None
 
     def recover_stream(self):
         # A quiet instrument does not mean the shared transport is broken.
@@ -98,6 +103,22 @@ class ReadWorker:
             # REST/account/history reads may take seconds. Publish the fresh
             # callbacks received during that I/O, rather than the older batch.
             self.drain_stream()
+            if self.headline_interval is not None and (
+                self.headline_attempt is None
+                or (self.now() - self.headline_attempt).total_seconds() >= self.headline_interval
+            ):
+                self.headline_attempt = self.now()
+                try:
+                    headlines = self.broker.headlines()
+                    for headline in headlines:
+                        self.contracts.validate("headline-relay", headline)
+                    with self.lock:
+                        self.headlines = headlines
+                        self.headlines_as_of, self.headlines_error = stamp(self.now()), None
+                except ContractError as error:
+                    with self.lock:
+                        self.headlines_error = {"code": str(error), "ts": stamp(self.now())}
+                self.drain_stream()
             with self.lock:
                 self.last_error = None
         except ContractError as error:
@@ -170,6 +191,9 @@ class ReadWorker:
                 "last_cycle": self.last_cycle,
                 "evidence_as_of": self.evidence.get("as_of") if self.evidence else None,
                 "evidence_error": self.evidence_error,
+                "headlines": deepcopy(self.headlines),
+                "headlines_as_of": self.headlines_as_of,
+                "headlines_error": self.headlines_error,
             }
 
     def order_evidence(self):
@@ -286,6 +310,7 @@ def from_env():
                 evidence_since=utc(os.environ["PIPMIND_BROKER_EVIDENCE_FROM"])
                 if os.environ.get("PIPMIND_BROKER_EVIDENCE_FROM")
                 else None,
+                headline_interval=60,
             )
         except ValueError:
             raise GatewayError("invalid_broker_read_intervals") from None

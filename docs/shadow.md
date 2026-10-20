@@ -243,6 +243,37 @@ The separately approved PipMind X app uses an app-only credential in private con
 
 ## Bounded working memory (PIP-14)
 
+### Source coverage qualification
+
+The hosted source audit distinguishes configured recipes, successful provider
+reads, retained normalized events and complete-history or point-in-time claims.
+Thirty-three native-unit macro mappings cover eight currencies; unsupported
+consensus crosswalks, unknown publication/vintage and incomplete monitoring stay
+explicit. A captured REST window is not proof of complete source history. Signed
+public callback routing still needs specific approval; SSE and REST backfill do
+not certify that backup route. PMI headline coverage is not structured PMI actuals.
+
+The gateway reads a bounded Reuters FX headline window every minute using its
+existing read-only session. It validates the vendor publication time separately
+from receipt, retains revisions with distinct content identities, and hands the
+cached page to the SQL news store atomically before the price handoff cadence.
+Repeated reads and consumer restarts deduplicate by stable identity. The engine
+receives normalized breaking news; it receives no broker credentials, article
+body reader or order transport. A news-only outage retains the last successful
+cache and an explicit error without interrupting price capture. Missing or future
+vendor publication times are refused. The latest 100 headlines are a bounded
+polling window: a full window or an outage never proves lossless historical wire
+coverage. News status preserves this limitation and each RSS source's last
+success independently of its latest failure. Worker liveness is not source health.
+
+Free source additions require live parsing checks and the existing controlled
+additive SQL recipe migration. Keep the original source identity, events and
+cursors; do not drop an unavailable recipe to claim complete coverage. Broader
+personal office-holder/correspondent/squawk/primary-channel recipes require their
+own identity, availability and cost evidence. The verified institutional cohort
+does not certify those roles. Repeated model integrity, literal fixture alignment,
+retained-context semantic fidelity and owner calibration remain separate results.
+
 Owner-approved `bounded-working-v1` keeps concise current views and active prerequisites in prompts while retaining exact earlier state, events, responses, dates and provenance in SQL. It is M4 state maintenance, separate from M7 playbook revision. Identity/playbook and all confirmed position theses remain intact. Neither age nor an unavailable article resolves a condition. Headline catalogues and general coverage gaps belong in retained evidence rather than becoming one permanent current view per item.
 
 Activation is an explicit paused owner operation. Prepare a private JSON plan with the current revision, SHA-256 of canonical working state, replacement working memory, a disposition for **every** old view/waiting entry and review acknowledgment. The plan preparer records `no-unresolved-ambiguity` only after checking every disposition; resolve any semantic ambiguity with the owner before activation. This acknowledgment does not claim that the owner personally reviewed an unambiguous plan. The implementation checks the revision/hash under the SQL lock, validates references and exact initial theses, and writes the complete before/after/dispositions checkpoint atomically. No source history is rewritten. Keep the full review plan private.
