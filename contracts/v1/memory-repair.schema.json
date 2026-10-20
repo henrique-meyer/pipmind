@@ -14,7 +14,7 @@
         }}
       ]
     },
-    "memory_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-repair#/$defs/compact-dispositions"},
+    "memory_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"},
     "candidate_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-repair#/$defs/compact-dispositions"}
   },
   "$defs": {

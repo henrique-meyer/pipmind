@@ -420,6 +420,12 @@ alone cannot certify those byte limits or dependency fidelity. All original
 responses and known/unknown usage remain retained; the single-call budget and
 fail-closed hold are unchanged.
 
+The compression-only call uses low reasoning effort and concise mapping reasons
+to reduce timeouts; normal triage and decision settings are unchanged. Already
+resolved before-state dispositions retain their exact original reasons/evidence,
+including longer reasons. Correction traces record the effort setting. The
+90-second deadline and 4,096-output-token ceiling remain unchanged.
+
 ## Full-session capture and readiness (PIP-14)
 
 Enable the private in-process recorder with `PIPMIND_SHADOW_QUALIFICATION_ENABLED=true`; it shares the existing engine process and SQL tables and adds no service, resource, capacity or grant. Set `PIPMIND_SHADOW_GATEWAY_INTERVAL=300` for the demo's paced durable handoff, while refreshing broker facts before every step. The recorder is independent of the reasoning batch and survives replica restarts through SQL state. It cannot send commands, change the mind or certify M4.

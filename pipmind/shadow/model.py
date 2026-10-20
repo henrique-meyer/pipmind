@@ -84,8 +84,9 @@ REPAIR_INSTRUCTIONS = (
     " Fitting the total alone is insufficient. Inspect supplied entry_bytes;"
     " characters are not UTF-8 bytes. Aim below 2400 total and 200 per entry."
     " Use up to eight entries per list when needed instead of merging distinct"
-    " prerequisites into an oversized string. Mapping reasons MUST be at most 80"
-    " characters; do not repeat state text there. Spend output on the state while"
+    " prerequisites into an oversized string. New mapping reasons MUST be at most 80"
+    " characters; do not repeat state text there. Copy an already resolved BEFORE"
+    " disposition exactly even if its original reason is longer. Spend output on state while"
     " preserving all distinct meaning. Use one current-state as-of date rather"
     " than repeating today's date in every entry; retain each source's actual"
     " publication dates, numbers, units, frequency/basis and verification distinctions."
@@ -255,6 +256,7 @@ class FoundryModel:
             "request": {"instructions": prefix, "message": prompt},
             "prompt_bytes": len((prefix + message).encode()),
             "max_output_tokens": 512 if phase == "triage" else 4096,
+            **({"reasoning_effort": "low"} if repair is not None else {}),
         }
         self.observer(phase + "_setup", {"trace": trace})
         try:
@@ -304,6 +306,7 @@ class FoundryModel:
                     options={
                         "max_tokens": trace["max_output_tokens"],
                         "store": False,
+                        **({"reasoning": {"effort": "low"}} if repair is not None else {}),
                         "response_format": {"type": "json_object"},
                     },
                 ),

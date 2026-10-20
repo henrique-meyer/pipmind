@@ -176,6 +176,8 @@ def test_actual_request_compiler_uses_a_tool_free_bounded_correction_schema():
     )
     assert trace["phase"] == "memory_repair" and trace["prompt_bytes"] < 28000
     assert trace["input_tokens"] == 456 and trace["max_output_tokens"] == 4096
+    assert captured["options"]["reasoning"] == {"effort": "low"}
+    assert trace["reasoning_effort"] == "low"
     prompt = json.loads(captured["message"])
     assert prompt["correction"]["candidate_sizes"] == working_sizes(candidate["working_memory"])
     assert "300 UTF-8 bytes independently" in captured["instructions"]
@@ -198,3 +200,33 @@ def test_repair_keeps_utf8_byte_guard_beyond_schema_character_limit():
     assert working_sizes(correction["working_memory"])["entry_bytes"]["w0"] == 302
     with pytest.raises(ShadowError, match="working_memory_bound"):
         validate_working(correction["working_memory"], now())
+
+
+def test_correction_preserves_long_original_resolution_verbatim():
+    context, candidate, correction = example()
+    context["working_memory"]["waiting_for"].append("Need release vintage")
+    candidate["working_memory"]["waiting_for"] = ["Need official text"]
+    resolved = {
+        "from": "w1",
+        "to": None,
+        "disposition": "resolved",
+        "reason": "The supplied official release confirms the vintage and publication time; "
+        "the earlier uncertainty is resolved by that evidence.",
+        "evidence_ids": ["input"],
+    }
+    candidate["memory_dispositions"] = [resolved]
+    correction["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["memory_dispositions"] = [correction["memory_dispositions"][0], resolved]
+    correction["candidate_dispositions"] = correction["candidate_dispositions"][:-1]
+    correction["candidate_dispositions"][-1]["disposition"] = "retained"
+
+    async def repair(*args):
+        return correction, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    reply = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    assert reply["memory_dispositions"][-1] == resolved
