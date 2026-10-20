@@ -2598,6 +2598,11 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
         "position_theses": [],
     }
     with mind.transaction() as c:
+        mind._insert(
+            c,
+            metadata("before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            encoded(before),
+        )
         mind._write_working(c, before, MOMENT)
     activate_bounded(mind)
     events, fixture = episode(mind)
