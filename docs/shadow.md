@@ -498,7 +498,7 @@ The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.
 
-Repair prompt `shadow-repair-v15` uses full consolidation for total overflow,
+Repair prompt `shadow-repair-v16` uses full consolidation for total overflow,
 even when counts and individual entries fit. Fixed-topology total patches
 repeatedly returned the same dense catalogue above the bound. Consolidation may
 factor repeated qualifications with explicitly named scope and same-kind merges;
@@ -508,6 +508,9 @@ The target is below 2,400 bytes, with unchanged hard 300-byte entry and 3,200-by
 total guards. Missing provenance, a newly resolved condition or residual overflow
 still holds. One model response cannot guarantee semantic fidelity; retained
 case review and broader human calibration remain necessary.
+Repair requests use correction instructions instead of inheriting normal decision
+update instructions. They still receive the exact BEFORE/candidate state and
+standing identity/playbook; neither tools nor new facts are authorized.
 
 Calculated text budgets remain available for scoped entry patches and the
 lossless preflight/replay path. They account for exact JSON framing, escapes,

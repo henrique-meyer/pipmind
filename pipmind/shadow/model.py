@@ -13,7 +13,7 @@ from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
 from pipmind.shadow.maintenance import MAX_BYTES, POLICY, repair_budget, working_sizes
 
 PROMPT_VERSION = "shadow-context-v14"
-REPAIR_PROMPT_VERSION = "shadow-repair-v15"
+REPAIR_PROMPT_VERSION = "shadow-repair-v16"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -102,6 +102,10 @@ REPAIR_INSTRUCTIONS = (
     " or cash rate) and distinguish period from publication dates. Unknown implications"
     " never mean no implications. Total-size overflow requires factoring repeated"
     " qualifications with explicit scope, not preserving the candidate's paragraph layout."
+    " Preserve monetary-policy versus broader-policy scope and explicitly associate"
+    " every dated hold/cut with its reported level; a bare date is insufficient."
+    " Treat limits as constraints, not text-length targets. Factor repeated verification"
+    " requirements with named scope so the whole result has growth headroom."
 )
 PATCH_INSTRUCTIONS = (
     " This is one scoped working-memory CORRECTION, not a trading decision. Return only"
@@ -290,8 +294,7 @@ class FoundryModel:
             )
             + (
                 MEMORY_INSTRUCTIONS
-                if context.get("memory_policy", {}).get("version") == POLICY
-                and not (repair is not None and repair.get("editable_keys"))
+                if context.get("memory_policy", {}).get("version") == POLICY and repair is None
                 else ""
             )
             + "\n"

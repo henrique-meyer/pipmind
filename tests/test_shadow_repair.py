@@ -660,6 +660,8 @@ def test_total_correction_requests_full_consolidation_with_both_mapping_sets():
     assert prompt["correction"]["candidate_sizes"] == working_sizes(candidate["working_memory"])
     assert "schema_definitions" in prompt
     assert "factoring repeated" in captured["instructions"]
+    assert "Reconsideration means" not in captured["instructions"]
+    assert "monetary-policy versus broader-policy" in captured["instructions"]
     assert captured["tools"] == [] and captured["options"]["max_tokens"] == 4096
     assert model.timeout == 90
     assert captured["options"]["reasoning"] == {"effort": "low"}
