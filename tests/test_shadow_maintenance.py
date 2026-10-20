@@ -76,7 +76,7 @@ def test_oversize_or_invalid_current_state_is_refused_never_clipped(change):
         working["views"] = [f"Distinct view {i}" for i in range(9)]
     elif change == "bytes":
         working["position_theses"] = [
-            {"instrument": "EUR/USD", "thesis": "x" * 3200, "as_of": "2026-10-18T00:00:00Z"}
+            {"instrument": "EUR/USD", "thesis": "x" * 5000, "as_of": "2026-10-18T00:00:00Z"}
         ]
     elif change == "unicode":
         working["waiting_for"] = ["€" * 101]
@@ -90,3 +90,52 @@ def test_oversize_or_invalid_current_state_is_refused_never_clipped(change):
     with pytest.raises((ShadowError, ContractError)):
         validate_working(working, MOMENT)
     assert working == before
+
+
+def test_budget_version_keeps_legacy_policy_and_dependency_origin():
+    from pipmind.shadow.maintenance import budget_context, policy_context
+
+    legacy = {
+        "version": "bounded-working-v1",
+        "checkpoint": "old-current",
+        "origin_checkpoint": "old-origin",
+        "as_of": "2026-10-18T00:00:00Z",
+    }
+    original = deepcopy(legacy)
+    projected = policy_context(legacy)
+    assert legacy == original and projected["version"] == legacy["version"]
+    assert (
+        projected["checkpoint"] == "old-current" and projected["origin_checkpoint"] == "old-origin"
+    )
+    assert budget_context() == {
+        "budget_version": "working-budget-v2",
+        "max_bytes": 5000,
+        "max_entries_per_list": 8,
+        "max_text_bytes": 300,
+    }
+    assert all(projected[k] == v for k, v in budget_context().items())
+
+
+@pytest.mark.parametrize("extra", [0, 1])
+def test_serialized_budget_boundary_counts_json_escapes_without_clipping(extra):
+    from pipmind.shadow.common import encoded
+
+    working = {
+        "views": [str(i) + "a" * 299 for i in range(8)],
+        "waiting_for": [str(i) + "b" * 299 for i in range(8)],
+        "position_theses": [],
+    }
+    index = 0
+    while len(encoded(working).encode()) < 5000 + extra:
+        row, col = divmod(index, 300)
+        text = working["views"][row]
+        working["views"][row] = text[:col] + "\\" + text[col + 1 :]
+        index += 1
+    original = deepcopy(working)
+    assert len(encoded(working).encode()) == 5000 + extra
+    if extra:
+        with pytest.raises(ShadowError, match="working_memory_bound"):
+            validate_working(working, MOMENT)
+    else:
+        validate_working(working, MOMENT)
+    assert working == original

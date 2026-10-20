@@ -8,7 +8,8 @@ from pipmind.contracts import ContractError, Contracts, utc
 from pipmind.shadow.common import ShadowError, digest, encoded
 
 POLICY = "bounded-working-v1"
-MAX_BYTES = 3200
+BUDGET_VERSION = "working-budget-v2"
+MAX_BYTES = 5000
 MAX_ENTRIES = 8
 MAX_TEXT_BYTES = 300
 
@@ -290,12 +291,19 @@ def transition(before, after, dispositions, moment, *, initial=False):
     return refs
 
 
-def policy_context(policy):
+def budget_context():
     return {
-        "version": policy["version"],
+        "budget_version": BUDGET_VERSION,
         "max_bytes": MAX_BYTES,
         "max_entries_per_list": MAX_ENTRIES,
         "max_text_bytes": MAX_TEXT_BYTES,
+    }
+
+
+def policy_context(policy):
+    return {
+        "version": policy["version"],
+        **budget_context(),
         "checkpoint": policy["checkpoint"],
         "origin_checkpoint": policy["origin_checkpoint"],
         "as_of": policy["as_of"],

@@ -10,9 +10,10 @@ from urllib.parse import urlsplit
 from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
-from pipmind.shadow.maintenance import POLICY, repair_budget, working_sizes
+from pipmind.shadow.maintenance import MAX_BYTES, POLICY, repair_budget, working_sizes
 
-PROMPT_VERSION = "shadow-context-v14"
+PROMPT_VERSION = "shadow-context-v15"
+REPAIR_PROMPT_VERSION = "shadow-repair-v17"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -67,7 +68,7 @@ MEMORY_INSTRUCTIONS = (
     " Reconsideration means evaluating an old input NOW with current evidence/state;"
     " it is not a historical decision made at the original receipt time."
     " Aim for at most 2400 UTF-8 bytes of working memory to leave growth headroom;"
-    " the hard limit remains 3200. Concision never permits losing a prerequisite."
+    " the hard limit remains 5000. Concision never permits losing a prerequisite."
 )
 REPAIR_INSTRUCTIONS = (
     " This is one working-memory CORRECTION, not a new trading decision. Return only"
@@ -83,7 +84,7 @@ REPAIR_INSTRUCTIONS = (
     " Preserve the immutable trading decision; your response cannot edit it."
     " Make a genuine consolidation, not a rewrite of the same long list. Each"
     " view AND each waiting_for string MUST fit 300 UTF-8 bytes independently;"
-    " total serialized working_memory MUST fit 3200 UTF-8 bytes including JSON."
+    " total serialized working_memory MUST fit 5000 UTF-8 bytes including JSON."
     " Fitting the total alone is insufficient. Inspect supplied entry_bytes;"
     " characters are not UTF-8 bytes. Aim below 2400 total and 200 per entry."
     " Use up to eight entries per list when needed instead of merging distinct"
@@ -96,6 +97,15 @@ REPAIR_INSTRUCTIONS = (
     " Explicitly preserve y/y versus m/m and levels versus changes for EACH observation;"
     " do not rely on an ambiguous shared qualifier. Shared missing-"
     " evidence qualifications may be stated once with explicit named scope."
+    " Keep FULL TEXT and EACH-item prerequisites explicit; methodology and applicable"
+    " implementation are distinct. Label each measurement (for example AUD CPI, Q2 GDP"
+    " or cash rate) and distinguish period from publication dates. Unknown implications"
+    " never mean no implications. Total-size overflow requires factoring repeated"
+    " qualifications with explicit scope, not preserving the candidate's paragraph layout."
+    " Preserve monetary-policy versus broader-policy scope and explicitly associate"
+    " every dated hold/cut with its reported level; a bare date is insufficient."
+    " Treat limits as constraints, not text-length targets. Factor repeated verification"
+    " requirements with named scope so the whole result has growth headroom."
 )
 PATCH_INSTRUCTIONS = (
     " This is one scoped working-memory CORRECTION, not a trading decision. Return only"
@@ -285,7 +295,8 @@ class FoundryModel:
             + (
                 MEMORY_INSTRUCTIONS
                 if context.get("memory_policy", {}).get("version") == POLICY
-                and not (repair is not None and repair.get("editable_keys"))
+                and repair is None
+                and phase == "decision"
                 else ""
             )
             + "\n"
@@ -300,7 +311,7 @@ class FoundryModel:
         trace = {
             "phase": phase,
             "attempted": False,
-            "prompt_version": PROMPT_VERSION,
+            "prompt_version": REPAIR_PROMPT_VERSION if repair is not None else PROMPT_VERSION,
             "context_version": CONTEXT_VERSION,
             "application_build": os.environ.get("BUILD_SHA", "development"),
             "tool_names": ["search_memory"] if phase == "decision" else [],
@@ -432,7 +443,16 @@ class FoundryModel:
         return await self._call("decision", event, context, store, moment, triage)
 
     async def repair_memory(self, event, context, candidate, store, moment):
-        budget = repair_budget(candidate["working_memory"])
+        sizes = working_sizes(candidate["working_memory"])
+        # Total overflow needs whole-state consolidation. Fixed-topology patches
+        # repeatedly returned the same dense catalogue just above the limit.
+        # Lossless spacing is still tried before this RPC by the engine; scoped
+        # patches remain appropriate for isolated overlong entries.
+        budget = (
+            repair_budget(candidate["working_memory"])
+            if sizes["total_bytes"] <= MAX_BYTES
+            else None
+        )
         return await self._call(
             "memory_repair",
             event,
@@ -442,7 +462,7 @@ class FoundryModel:
             repair={
                 "reason": "working_memory_bound",
                 "candidate": candidate,
-                "candidate_sizes": working_sizes(candidate["working_memory"]),
+                "candidate_sizes": sizes,
                 **(
                     {"editable_keys": budget["editable_keys"], "patch_budget": budget}
                     if budget

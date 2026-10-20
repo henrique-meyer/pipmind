@@ -360,7 +360,7 @@ Activation is an explicit paused owner operation. Prepare a private JSON plan wi
 python -m pipmind.shadow maintain-working --plan .data/working-plan.json
 ```
 
-The active policy allows at most 3,200 UTF-8 bytes for the complete working state, eight views and eight waiting entries, and 300 UTF-8 bytes per view/condition. Theses are not clipped to make room; an oversized mandatory state holds reasoning. These are context bounds, not a trading strategy or spending cap. Ordinary decision replies use the existing working-memory contract plus `memory_dispositions` for each changed/removed old entry. Keys `v0`/`w0` refer to the supplied before-state array indexes; targets refer to the after-state. Each disposition names a retained/updated/merged/archived/resolved status, reason and known dated evidence. An unresolved condition needs a same-kind replacement; a null waiting target requires an explicit evidence-backed resolution. Structural checks cannot prove semantic fidelity: model/human evaluations must test lost prerequisites, contrary evidence and false resolutions.
+The active policy allows at most 5,000 UTF-8 bytes for the complete working state, eight views and eight waiting entries, and 300 UTF-8 bytes per view/condition. Theses are not clipped to make room; an oversized mandatory state holds reasoning. These are context bounds, not a trading strategy or spending cap. Ordinary decision replies use the existing working-memory contract plus `memory_dispositions` for each changed/removed old entry. Keys `v0`/`w0` refer to the supplied before-state array indexes; targets refer to the after-state. Each disposition names a retained/updated/merged/archived/resolved status, reason and known dated evidence. An unresolved condition needs a same-kind replacement; a null waiting target requires an explicit evidence-backed resolution. Structural checks cannot prove semantic fidelity: model/human evaluations must test lost prerequisites, contrary evidence and false resolutions.
 
 Every accepted policy update retains an immutable checkpoint and previous-checkpoint link; prompts name both latest and original checkpoints. Search `checkpoint-id | topic words` to retrieve matching exact entry passages/dispositions. Partial results disclose that they are incomplete; the complete original remains exportable in SQL. There is no archive age cutoff. Experience clones retain all checkpoint records exactly but clear source current state/account authority and require their own reviewed activation.
 
@@ -406,7 +406,7 @@ Decisions retain the same event-query and active-view searches, original chronol
 
 ### Audited bounded-output correction
 
-Prompt `shadow-context-v10` aims below the unchanged 3,200-byte working-state ceiling and tells the model to copy unchanged entries exactly. A schema-valid decision whose state exceeds its bounds or has invalid/missing structural dispositions receives at most one tool-free `memory_repair` call. The correction sees exact current mandatory facts and the rejected candidate, without archive passages. It returns only working state and mappings from both the prior state and every candidate entry. Each candidate entry needs a same-kind replacement; candidate position theses remain exact, and a correction cannot newly resolve an old waiting condition. Action, instrument, side, size, reasoning and decision evidence are copied unchanged from the original decision. SQL still validates provenance, chronology, revision and ordinary memory transitions atomically.
+The earlier prompt `shadow-context-v10` aimed below the then-current 3,200-byte working-state ceiling and tells the model to copy unchanged entries exactly. A schema-valid decision whose state exceeds its bounds or has invalid/missing structural dispositions receives at most one tool-free `memory_repair` call. The correction sees exact current mandatory facts and the rejected candidate, without archive passages. It returns only working state and mappings from both the prior state and every candidate entry. Each candidate entry needs a same-kind replacement; candidate position theses remain exact, and a correction cannot newly resolve an old waiting condition. Action, instrument, side, size, reasoning and decision evidence are copied unchanged from the original decision. SQL still validates provenance, chronology, revision and ordinary memory transitions atomically.
 
 The journal retains the exact original candidate, correction response, both mapping sets, before-state hash and every call's known/unknown usage. Invalid, timed-out or oversized correction holds the input pending and pauses; there is no retry loop, implicit resumption, state clipping or raised limit. Structural mappings do not prove semantic fidelity: retained-case and repeated-growth review remain required. A previously held source requires explicit owner-authorized resumption after validation. One correction RPC is additional measured decision-model usage; Azure capacity and providers remain unchanged.
 
@@ -475,7 +475,7 @@ copies every other candidate entry and position thesis literally, retains the
 decision's before-state mappings, and derives all candidate carry-forwards.
 Missing, duplicate or extra replacement keys fail. The raw patch and expanded
 state/mappings are audited, then the ordinary byte, dependency, evidence and
-transition checks run unchanged. Count or uniqueness overflow uses full
+transition checks run unchanged. Total-size, count or uniqueness overflow uses full
 consolidation. Both paths share the existing one-call, timeout and output budget;
 there is no automatic retry loop or fallback that discards a failed attempt.
 
@@ -498,23 +498,31 @@ The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.
 
-Prompt `shadow-context-v14` also uses scoped patches for total overflow when entry
-counts and uniqueness fit. The engine calculates selected-entry budgets from the
-exact serialized state, including JSON escapes, unchanged entries and fixed
-position theses. It selects enough large entries for a planned total below the
-hard limit with growth headroom. Each entry has a concision target and a larger
-ceiling calculated from the remaining space, leaving room for complete
-qualifiers and JSON/Unicode overhead. The request schema names the exact keys/count
-and calculated text length; the normative raw-response contract remains intact
-for audit compatibility. These are model guidance; actual 300-byte entry
-and 3,200-byte total guards remain authoritative, and text is never clipped to an
-allocation. The model cannot change unselected text; the separate audited
-lossless-formatting step above may normalize it. Decision fields remain exact.
+Repair prompt `shadow-repair-v17` uses full consolidation for total overflow,
+even when counts and individual entries fit. Fixed-topology total patches
+repeatedly returned the same dense catalogue above the bound. Consolidation may
+factor repeated qualifications with explicitly named scope and same-kind merges;
+it must preserve every dependency, measurement label, date, unit, uncertainty and
+verification distinction, including EACH-item and FULL TEXT prerequisites.
+The target is below 2,400 bytes, with hard 300-byte entry and owner-approved 5,000-byte
+total guards. Missing provenance, a newly resolved condition or residual overflow
+still holds. One model response cannot guarantee semantic fidelity; retained
+case review and broader human calibration remain necessary.
+Repair requests use correction instructions instead of inheriting normal decision
+update instructions. They still receive the exact BEFORE/candidate state and
+standing identity/playbook; neither tools nor new facts are authorized.
+
+The owner approved the larger active total after repeated valid-entry states exceeded the earlier total. The 2,400-byte target, entry/count limits, mandatory-state refusal, prompt guards and single-call budget remain. `working-budget-v2` is recorded in new prompt contexts and transition checkpoints; legacy `bounded-working-v1` provenance, original source records and bundle/storage protocols remain exact.
+
+Calculated text budgets remain available for scoped entry patches and the
+lossless preflight/replay path. They account for exact JSON framing, escapes,
+unselected text and theses. Targets are guidance, never permission to clip text.
 BEFORE-to-candidate mappings are composed with the indexed patch: a previously
 unmapped literal carry-forward receives a mapping only when that exact entry is
 now edited. Existing resolutions remain exact; missing provenance for another
 candidate change is never invented. Candidate mappings, calculated budgets,
-patches and derived state remain audited. Normal triage/decision prompts, the
+patches and derived state remain audited. Normal triage/decision requests retain
+the `shadow-context-v15` prompt version. Triage receives all current memory but omits decision-only update/disposition instructions; decisions retain those instructions with the approved total. The
 single 90-second repair call and 4,096-token ceiling are unchanged.
 
 Backlog estimates require measured completions and new arrivals over comparable
