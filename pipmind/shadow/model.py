@@ -9,9 +9,9 @@ from urllib.parse import urlsplit
 from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
-from pipmind.shadow.maintenance import POLICY, working_sizes
+from pipmind.shadow.maintenance import POLICY, repair_scope, working_sizes
 
-PROMPT_VERSION = "shadow-context-v12"
+PROMPT_VERSION = "shadow-context-v13"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -77,6 +77,8 @@ REPAIR_INSTRUCTIONS = (
     " combine wording without dropping meaning. Do not newly resolve an old waiting"
     " condition. Any already resolved BEFORE condition must retain its exact original"
     " disposition/evidence. Use only supplied evidence IDs. No tools or new facts."
+    " In BOTH mapping arrays, use retained when the target text is exactly unchanged;"
+    " updated/merged describes changed wording, never a literal carry-forward."
     " Preserve the immutable trading decision; your response cannot edit it."
     " Make a genuine consolidation, not a rewrite of the same long list. Each"
     " view AND each waiting_for string MUST fit 300 UTF-8 bytes independently;"
@@ -93,6 +95,20 @@ REPAIR_INSTRUCTIONS = (
     " Explicitly preserve y/y versus m/m and levels versus changes for EACH observation;"
     " do not rely on an ambiguous shared qualifier. Shared missing-"
     " evidence qualifications may be stated once with explicit named scope."
+)
+PATCH_INSTRUCTIONS = (
+    " This is one scoped working-memory CORRECTION, not a trading decision. Return only"
+    " replacements for EXACTLY the supplied editable_keys; no other entries or fields."
+    " For each from key, return text, a short reason and supplied evidence_ids. The engine"
+    " copies every other candidate entry, all theses and decision fields EXACTLY and derives"
+    " literal carry-forward mappings. Preserve ALL meaning of each replaced entry: dates,"
+    " numbers, units/frequency/basis, prerequisites, uncertainty, contradictions and"
+    " invalidation conditions. Do not resolve conditions, add facts or rely on omitted"
+    " qualifiers. Write compact note fragments, not full prose: aim for 220 UTF-8 bytes"
+    " per replacement, leaving substantial margin below the hard 300-byte limit. Use"
+    " concise punctuation and standard abbreviations; do not simply copy the oversized"
+    " candidate with a few words removed. Shorten wording only. No tools. If meaning"
+    " cannot fit, do not invent a resolution."
 )
 
 
@@ -192,7 +208,7 @@ class FoundryModel:
             return capture("search_memory", {"query": query}, cards)
 
         name = (
-            "memory-repair"
+            ("memory-repair-patch" if repair.get("editable_keys") else "memory-repair")
             if repair is not None
             else "triage-result"
             if phase == "triage"
@@ -223,7 +239,11 @@ class FoundryModel:
         prefix = (
             INSTRUCTIONS
             + (TRIAGE_INSTRUCTIONS if phase == "triage" else "")
-            + (REPAIR_INSTRUCTIONS if repair is not None else "")
+            + (
+                (PATCH_INSTRUCTIONS if repair.get("editable_keys") else REPAIR_INSTRUCTIONS)
+                if repair is not None
+                else ""
+            )
             + (
                 CALENDAR_INSTRUCTIONS
                 if phase == "decision"
@@ -235,6 +255,7 @@ class FoundryModel:
             + (
                 MEMORY_INSTRUCTIONS
                 if context.get("memory_policy", {}).get("version") == POLICY
+                and not (repair is not None and repair.get("editable_keys"))
                 else ""
             )
             + "\n"
@@ -381,6 +402,7 @@ class FoundryModel:
         return await self._call("decision", event, context, store, moment, triage)
 
     async def repair_memory(self, event, context, candidate, store, moment):
+        scope = repair_scope(candidate["working_memory"])
         return await self._call(
             "memory_repair",
             event,
@@ -391,6 +413,7 @@ class FoundryModel:
                 "reason": "working_memory_bound",
                 "candidate": candidate,
                 "candidate_sizes": working_sizes(candidate["working_memory"]),
+                **({"editable_keys": scope} if scope else {}),
             },
         )
 

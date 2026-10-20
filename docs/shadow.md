@@ -455,6 +455,46 @@ progress are preserved. The prior warm-up remains retained and superseded; its
 replacement is warming on startup backlog. No formal 24-hour day or full M4
 qualification is established by this release.
 
+### Exact carry-forward mapping correction
+
+Prompt `shadow-context-v13` distinguishes literal carry-forwards from wording
+changes in both correction mapping arrays. Before validation, the engine converts
+an `updated` or `merged` label to `retained` only when its named source and
+same-kind target have exactly equal text. It records each label conversion and
+keeps the raw model response unchanged in the audit. No state text, decision,
+evidence or resolution is inferred or changed. Changed text, missing/duplicate
+mappings, cross-kind targets, new resolutions and oversized state still pass
+through the same strict validators and fail closed. This deterministic identity
+check prevents a redundant update label from holding an otherwise valid repair;
+it does not prove semantic preservation for actual rewrites.
+
+When total size, entry counts and uniqueness already fit and only particular
+entries exceed 300 UTF-8 bytes, the single correction uses the
+`memory-repair-patch` contract. It may replace exactly those entries; the engine
+copies every other candidate entry and position thesis literally, retains the
+decision's before-state mappings, and derives all candidate carry-forwards.
+Missing, duplicate or extra replacement keys fail. The raw patch and expanded
+state/mappings are audited, then the ordinary byte, dependency, evidence and
+transition checks run unchanged. Total/count overflow still uses full
+consolidation. Both paths share the existing one-call, timeout and output budget;
+there is no automatic retry loop or fallback that discards a failed attempt.
+
+Small entry overflows first try removing only optional ASCII spaces after
+semicolons/colons before letters. Words, punctuation and numbers stay in order;
+quoted/code-like text and numeric colon spacing are untouched. This requires all
+ordinary transitions to validate and uses zero model calls. When a model patch
+is needed, its raw proposal allows up to 1,000 characters for audit/validation;
+the same spacing operation may compact an overlong proposal before validation.
+The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
+The exact candidate, raw patch, expanded applied text and spacing conversions
+remain auditable; residual overflow or any dependency/transition fault holds.
+
+Backlog estimates require measured completions and new arrivals over comparable
+healthy intervals. Resumption alone is insufficient, and a paused interval is not
+a measure of active throughput. If arrivals meet or exceed completions, there is
+no finite clearance estimate at that rate. Existing pending-count, input-lag and
+other readiness gates remain unchanged.
+
 ## Full-session capture and readiness (PIP-14)
 
 Enable the private in-process recorder with `PIPMIND_SHADOW_QUALIFICATION_ENABLED=true`; it shares the existing engine process and SQL tables and adds no service, resource, capacity or grant. Set `PIPMIND_SHADOW_GATEWAY_INTERVAL=300` for the demo's paced durable handoff, while refreshing broker facts before every step. The recorder is independent of the reasoning batch and survives replica restarts through SQL state. It cannot send commands, change the mind or certify M4.

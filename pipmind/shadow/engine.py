@@ -7,6 +7,9 @@ from pipmind.shadow.common import ShadowError, now
 from pipmind.shadow.context import event_query
 from pipmind.shadow.maintenance import (
     POLICY,
+    entries,
+    expand_repair_patch,
+    spacing_repair,
     transition,
     validate_working,
     working_digest,
@@ -26,7 +29,7 @@ class ShadowEngine:
     async def _correct_memory(
         self, event, context, reply, result, moment, reason="working_memory_bound"
     ):
-        """One compression-only RPC; preserve the rejected candidate and all usage."""
+        """At most one compression RPC; preserve the candidate and all usage."""
         original = deepcopy(reply)
         audit = result["memory_repair"] = {
             "candidate": original,
@@ -36,14 +39,70 @@ class ShadowEngine:
         result["usage"].append({"phase": "memory_repair", "attempted": True, "usage_unknown": True})
         self.observer("memory_repair", {"event": event})
         try:
-            correction, usage = await self.model.repair_memory(
-                deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
+            correction = spacing_repair(
+                context["working_memory"], original, event_id(event), moment
             )
+            if correction is not None:
+                audit["method"] = "punctuation_spacing"
+                usage = {
+                    "phase": "memory_repair",
+                    "attempted": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "method": "punctuation_spacing",
+                }
+            else:
+                correction, usage = await self.model.repair_memory(
+                    deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
+                )
             result["usage"][-1] = usage
             audit["response"] = deepcopy(correction)
+            if "replacements" in correction:
+                self.contracts.validate("memory-repair-patch", correction)
+                correction = expand_repair_patch(original, correction, event_id(event))
+                audit["expanded_response"] = deepcopy(correction)
+                for row in audit["response"]["replacements"]:
+                    applied = entries(correction["working_memory"])[row["from"]]
+                    if row["text"] != applied:
+                        audit.setdefault("patch_spacing_normalizations", []).append(
+                            {
+                                "key": row["from"],
+                                "before_bytes": len(row["text"].encode()),
+                                "after_bytes": len(applied.encode()),
+                            }
+                        )
             self.contracts.validate("memory-repair", correction)
+            correction = deepcopy(correction)
             after = correction["working_memory"]
             audit["response_sizes"] = working_sizes(after)
+            # A literal carry-forward is not a semantic update. Canonicalize
+            # only this provable identity; leave the raw reply in the audit and
+            # let the unchanged transition validator reject every other fault.
+            targets = entries(after)
+            for field, source in (
+                ("memory_dispositions", context["working_memory"]),
+                ("candidate_dispositions", original["working_memory"]),
+            ):
+                sources = entries(source)
+                for row in correction[field]:
+                    origin, target = row["from"], row["to"]
+                    if (
+                        origin in sources
+                        and target in targets
+                        and origin[0] == target[0]
+                        and sources[origin] == targets[target]
+                        and row["disposition"] in {"updated", "merged"}
+                    ):
+                        audit.setdefault("mapping_normalizations", []).append(
+                            {
+                                "field": field,
+                                "from": origin,
+                                "to": target,
+                                "original_disposition": row["disposition"],
+                                "applied_disposition": "retained",
+                            }
+                        )
+                        row["disposition"] = "retained"
             if after["position_theses"] != original["working_memory"]["position_theses"]:
                 raise ShadowError("working_memory_repair_theses")
             # Every candidate entry must survive, possibly in a same-kind merge.

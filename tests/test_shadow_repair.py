@@ -8,7 +8,13 @@ import pytest
 from pipmind.contracts import ContractError, Contracts
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.engine import ShadowEngine
-from pipmind.shadow.maintenance import validate_working, working_sizes
+from pipmind.shadow.maintenance import (
+    repair_scope,
+    spacing_repair,
+    transition,
+    validate_working,
+    working_sizes,
+)
 from pipmind.shadow.model import FoundryModel, ModelFailure
 
 
@@ -230,3 +236,245 @@ def test_correction_preserves_long_original_resolution_verbatim():
         )
     )
     assert reply["memory_dispositions"][-1] == resolved
+
+
+@pytest.mark.parametrize("label", ["updated", "merged"])
+@pytest.mark.parametrize("moved", [False, True])
+def test_exact_carry_forward_mapping_is_canonicalized_without_changing_raw_reply(label, moved):
+    context, candidate, correction = example()
+    candidate["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["candidate_dispositions"] = correction["candidate_dispositions"][:-1]
+    target = "w1" if moved else "w0"
+    if moved:
+        correction["working_memory"]["waiting_for"].insert(0, "Need dated confirmation")
+    for field in ("memory_dispositions", "candidate_dispositions"):
+        row = next(row for row in correction[field] if row["from"] == "w0")
+        row.update(to=target, disposition=label)
+    raw = deepcopy(correction)
+    # The validator itself remains strict about identity mappings.
+    with pytest.raises(ShadowError, match="working_memory_dispositions"):
+        transition(
+            context["working_memory"],
+            correction["working_memory"],
+            correction["memory_dispositions"],
+            now(),
+        )
+
+    async def repair(*args):
+        return correction, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    reply = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    assert correction == raw and result["memory_repair"]["response"] == raw
+    assert reply["working_memory"] == raw["working_memory"]
+    assert reply["memory_dispositions"][-1]["disposition"] == "retained"
+    assert len(result["memory_repair"]["mapping_normalizations"]) == 2
+    transition(
+        context["working_memory"], reply["working_memory"], reply["memory_dispositions"], now()
+    )
+
+
+@pytest.mark.parametrize("fault", ["changed_text", "cross_kind", "duplicate", "resolution"])
+def test_identity_mapping_normalization_never_repairs_semantic_or_ambiguous_faults(fault):
+    context, candidate, correction = example()
+    candidate["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["working_memory"]["waiting_for"] = ["Need official text"]
+    correction["candidate_dispositions"] = correction["candidate_dispositions"][:-1]
+    row = correction["memory_dispositions"][1]
+    row["disposition"] = "updated"
+    if fault == "changed_text":
+        correction["working_memory"]["waiting_for"] = ["Need official text "]
+        row["disposition"] = "retained"
+    elif fault == "cross_kind":
+        correction["working_memory"]["views"].append("Need official text")
+        row["to"] = "v1"
+    elif fault == "duplicate":
+        correction["memory_dispositions"].append(deepcopy(row))
+    else:
+        row.update(to=None, disposition="resolved")
+
+    async def repair(*args):
+        return correction, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    with pytest.raises(ShadowError, match="working_memory_repair_failed"):
+        asyncio.run(
+            ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+                {"message_id": "input"}, context, candidate, result, now()
+            )
+        )
+    assert result["memory_repair"]["response"] == correction
+
+
+def patch_example():
+    context, candidate, correction = example()
+    candidate["working_memory"]["views"] = ["EUR uncertainty " + "." * 300]
+    candidate["memory_dispositions"] = [correction["memory_dispositions"][0]]
+    patch = {
+        "replacements": [
+            {
+                "from": "v0",
+                "text": "EUR uncertainty remains",
+                "reason": "Shorter wording; same uncertainty",
+                "evidence_ids": ["input"],
+            }
+        ]
+    }
+    return context, candidate, patch
+
+
+def test_scoped_patch_copies_unedited_state_and_original_mappings_exactly():
+    context, candidate, patch = patch_example()
+    originals = deepcopy((context, candidate, patch))
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    assert (context, candidate, patch) == originals
+    assert out["working_memory"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+    assert out["memory_dispositions"] == candidate["memory_dispositions"]
+    assert result["memory_repair"]["response"] == patch
+    assert result["memory_repair"]["expanded_response"]["working_memory"] == out["working_memory"]
+    assert repair_scope(candidate["working_memory"]) == ["v0"]
+
+
+@pytest.mark.parametrize(
+    "fault", ["missing", "duplicate", "extra", "utf8", "evidence", "before_mapping"]
+)
+def test_scoped_patch_rejects_scope_byte_evidence_and_transition_faults(fault):
+    context, candidate, patch = patch_example()
+    row = patch["replacements"][0]
+    if fault == "missing":
+        patch["replacements"] = []
+    elif fault == "duplicate":
+        patch["replacements"].append(deepcopy(row))
+    elif fault == "extra":
+        patch["replacements"].append({**row, "from": "w0"})
+    elif fault == "utf8":
+        row["text"] = "é" * 151
+    elif fault == "evidence":
+        row["evidence_ids"] = ["invented"]
+    else:
+        candidate["memory_dispositions"] = []
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "synthetic": True}
+
+    result = {"usage": []}
+    with pytest.raises(ShadowError, match="working_memory_repair_failed"):
+        asyncio.run(
+            ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+                {"message_id": "input"}, context, candidate, result, now()
+            )
+        )
+    assert result["memory_repair"]["response"] == patch
+
+
+def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free_call():
+    context, candidate, patch = patch_example()
+    captured = {}
+
+    class Agent:
+        async def run(self, message, *, options):
+            captured.update(message=json.loads(message), options=options)
+            return SimpleNamespace(text=encoded(patch), usage_details={"output_token_count": 80})
+
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return Agent()
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test", "t", "d", enabled=True, factory=factory
+    )
+    out, trace = asyncio.run(
+        model.repair_memory({"message_id": "input"}, context, candidate, None, now())
+    )
+    assert out == patch and captured["tools"] == []
+    assert captured["message"]["schema"]["$id"].endswith(":memory-repair-patch")
+    assert captured["message"]["correction"]["editable_keys"] == ["v0"]
+    assert captured["options"]["reasoning"] == {"effort": "low"}
+    assert trace["output_tokens"] == 80 and trace["max_output_tokens"] == 4096
+
+
+def test_punctuation_spacing_repairs_small_overflow_without_rpc_or_lexical_loss():
+    import re
+
+    context, candidate, _ = patch_example()
+    text = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
+    assert len(text.encode()) > 300
+    candidate["working_memory"]["views"] = [text]
+
+    async def forbidden(*args):
+        pytest.fail("A representation-only correction must not call a model")
+
+    result = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=forbidden))._correct_memory(
+            {"message_id": "input"}, context, candidate, result, now()
+        )
+    )
+    compact = out["working_memory"]["views"][0]
+    assert len(compact.encode()) <= 300
+    assert re.findall(r"\w+|[^\w\s]", text) == re.findall(r"\w+|[^\w\s]", compact)
+    assert out["working_memory"]["waiting_for"] == candidate["working_memory"]["waiting_for"]
+    assert result["memory_repair"]["candidate"] == candidate
+    assert result["memory_repair"]["method"] == "punctuation_spacing"
+    assert result["usage"] == [
+        {
+            "phase": "memory_repair",
+            "attempted": False,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "method": "punctuation_spacing",
+        }
+    ]
+
+
+@pytest.mark.parametrize("fault", ["quote", "code", "numeric", "mapping", "still_large"])
+def test_spacing_compaction_cannot_bypass_literal_or_transition_constraints(fault):
+    context, candidate, _ = patch_example()
+    text = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
+    if fault == "quote":
+        text += "'"
+    elif fault == "code":
+        text += "`"
+    elif fault == "numeric":
+        text = "x" * 290 + "; 10: 20; 30: 40"
+    elif fault == "mapping":
+        candidate["memory_dispositions"] = []
+    else:
+        text += "x" * 30
+    candidate["working_memory"]["views"] = [text]
+    assert spacing_repair(context["working_memory"], candidate, "input", now()) is None
+
+
+def test_model_patch_spacing_keeps_raw_proposal_and_enforces_final_byte_limit():
+    context, candidate, patch = patch_example()
+    raw = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
+    patch["replacements"][0]["text"] = raw
+
+    async def repair(*args):
+        return patch, {"phase": "memory_repair", "input_tokens": 200}
+
+    trace = {"usage": []}
+    out = asyncio.run(
+        ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+            {"message_id": "input"}, context, candidate, trace, now()
+        )
+    )
+    assert trace["memory_repair"]["response"] == patch
+    assert trace["memory_repair"]["patch_spacing_normalizations"] == [
+        {"key": "v0", "before_bytes": 304, "after_bytes": 300}
+    ]
+    assert len(out["working_memory"]["views"][0].encode()) == 300

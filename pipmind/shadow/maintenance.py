@@ -1,14 +1,107 @@
 """Bounded current state, with explicit dispositions instead of silent clipping."""
 
+import re
+from copy import deepcopy
 from functools import lru_cache
 
-from pipmind.contracts import Contracts, utc
+from pipmind.contracts import ContractError, Contracts, utc
 from pipmind.shadow.common import ShadowError, digest, encoded
 
 POLICY = "bounded-working-v1"
 MAX_BYTES = 3200
 MAX_ENTRIES = 8
 MAX_TEXT_BYTES = 300
+
+
+def punctuation_spacing(text):
+    if any(mark in text for mark in "'\"`"):
+        return text
+    return re.sub(r"([;:]) (?=[A-Za-z])", r"\1", text)
+
+
+def repair_scope(working):
+    """A text-only patch is safe only when total/count/uniqueness already fit."""
+    sizes = working_sizes(working)
+    if sizes["total_bytes"] > MAX_BYTES or any(
+        len(working[field]) > MAX_ENTRIES or len(set(working[field])) != len(working[field])
+        for field in ("views", "waiting_for")
+    ):
+        return []
+    return [key for key, size in sizes["entry_bytes"].items() if size > MAX_TEXT_BYTES]
+
+
+def expand_repair_patch(candidate, patch, event_ref):
+    """Expand only the named edits; preserve the decision's BEFORE mappings."""
+    original = candidate["working_memory"]
+    scope = repair_scope(original)
+    rows = patch["replacements"]
+    edits = {row["from"]: row for row in rows}
+    if not scope or len(edits) != len(rows) or set(edits) != set(scope):
+        raise ShadowError("working_memory_repair_scope")
+    after = deepcopy(original)
+    for key, row in edits.items():
+        field = "views" if key[0] == "v" else "waiting_for"
+        text = row["text"]
+        after[field][int(key[1:])] = (
+            punctuation_spacing(text) if len(text.encode()) > MAX_TEXT_BYTES else text
+        )
+    proposed = entries(original)
+    dispositions = deepcopy(candidate.get("memory_dispositions", []))
+    mappings = []
+    for key in proposed:
+        edit = edits.get(key)
+        mappings.append(
+            {
+                "from": key,
+                "to": key,
+                "disposition": "updated" if edit else "retained",
+                "reason": edit["reason"] if edit else "Exact candidate entry carried forward",
+                "evidence_ids": edit["evidence_ids"] if edit else [event_ref],
+            }
+        )
+    return {
+        "working_memory": after,
+        "memory_dispositions": dispositions,
+        "candidate_dispositions": mappings,
+    }
+
+
+def spacing_repair(before, candidate, event_ref, moment):
+    """Try punctuation spacing only: no words, punctuation or numbers change.
+
+    Leave quoted/code-like text and numeric colon separators untouched. This
+    representation-only repair is used only if all strict transitions qualify.
+    """
+    edits = []
+    for key in repair_scope(candidate["working_memory"]):
+        text = entries(candidate["working_memory"])[key]
+        compact = punctuation_spacing(text)
+        if compact == text or len(compact.encode()) > MAX_TEXT_BYTES:
+            return None
+        edits.append(
+            {
+                "from": key,
+                "text": compact,
+                "reason": "Optional punctuation spacing removed; lexical content unchanged",
+                "evidence_ids": [event_ref],
+            }
+        )
+    if not edits:
+        return None
+    patch = {"replacements": edits}
+    expanded = expand_repair_patch(candidate, patch, event_ref)
+    try:
+        transition(before, expanded["working_memory"], expanded["memory_dispositions"], moment)
+        transition(
+            candidate["working_memory"],
+            expanded["working_memory"],
+            expanded["candidate_dispositions"],
+            moment,
+            initial=True,
+        )
+    except (ShadowError, ContractError, KeyError):
+        return None
+    return patch
 
 
 def working_sizes(working):
