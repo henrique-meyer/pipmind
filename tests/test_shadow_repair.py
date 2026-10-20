@@ -713,13 +713,92 @@ def test_total_patch_spacing_preserves_lexical_content_and_refuses_residual_over
         out = asyncio.run(operation)
         assert out["working_memory"]["views"][0] == candidate["working_memory"]["views"][0]
         assert working_sizes(out["working_memory"])["total_bytes"] <= 3200
-        assert trace["memory_repair"]["patch_spacing_normalizations"]
+        assert trace["memory_repair"]["method"] == "punctuation_spacing"
         for key, text in entries(candidate["working_memory"]).items():
             assert re.findall(r"\w+|[^\w\s]", text) == re.findall(
                 r"\w+|[^\w\s]", entries(out["working_memory"])[key]
             )
-    assert calls == [1] and candidate == original
+    assert calls == ([] if recoverable else [1]) and candidate == original
+    if not recoverable:
+        assert trace["memory_repair"]["response"] == patch
+
+
+@pytest.mark.parametrize("fault", [None, "quoted", "missing_provenance"])
+def test_format_only_carry_forward_is_mapped_but_never_invents_provenance(fault):
+    import re
+
+    context, candidate = total_example()
+    old = candidate["working_memory"]["waiting_for"][0]
+    text = "Await: A; B; C" + "x" * (len(old) - len("Await: A; B; C"))
+    if fault == "quoted":
+        text = '"' + text[1:]
+    context["working_memory"]["waiting_for"][0] = text
+    candidate["working_memory"]["waiting_for"][0] = (
+        text.replace("Await", "Other") if fault == "missing_provenance" else text
+    )
+    budget = repair_budget(candidate["working_memory"])
+    assert "w0" not in budget["editable_keys"]
+    after = deepcopy(candidate["working_memory"])
+    for key in budget["editable_keys"]:
+        field = "views" if key[0] == "v" else "waiting_for"
+        after[field][int(key[1:])] = '"' + key + ' "'
+    remaining = 3203 - len(encoded(after).encode())
+    replacements = []
+    for key in budget["editable_keys"]:
+        amount = min(300 - len(key) - 3, remaining)
+        remaining -= amount
+        replacements.append(
+            {
+                "from": key,
+                "text": '"' + key + " " + "x" * amount + '"',
+                "reason": "Synthetic scoped wording proposal",
+                "evidence_ids": ["input"],
+            }
+        )
+    assert remaining == 0
+    patch = {"replacements": replacements}
+    original = deepcopy((context, candidate, patch))
+
+    async def repair(*args):
+        return deepcopy(patch), {"phase": "memory_repair", "synthetic": True}
+
+    trace = {"usage": []}
+    operation = ShadowEngine(None, SimpleNamespace(repair_memory=repair))._correct_memory(
+        {"message_id": "input"}, context, candidate, trace, now()
+    )
+    if fault:
+        with pytest.raises(ShadowError, match="working_memory_repair_failed"):
+            asyncio.run(operation)
+    else:
+        out = asyncio.run(operation)
+        assert working_sizes(out["working_memory"])["total_bytes"] == 3200
+        audit = trace["memory_repair"]["format_only_normalizations"]
+        assert [v["key"] for v in audit] == ["w0"]
+        applied = out["working_memory"]["waiting_for"][0]
+        assert re.findall(r"\w+|[^\w\s]", applied) == re.findall(r"\w+|[^\w\s]", text)
+        assert any(row["from"] == "w0" and row["to"] == "w0" for row in out["memory_dispositions"])
+    assert (context, candidate, patch) == original
     assert trace["memory_repair"]["response"] == patch
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("EUR, USD; wait: source", "EUR,USD;wait:source"),
+        ("1, 234; 10: 20", "1, 234; 10: 20"),
+        ('"quoted, text"', '"quoted, text"'),
+        ("`code, text`", "`code, text`"),
+        (
+            "Links: https://a.example/x, https://b.example/y",
+            "Links: https://a.example/x, https://b.example/y",
+        ),
+        ("\u201cEUR, USD\u201d", "\u201cEUR, USD\u201d"),
+    ],
+)
+def test_optional_punctuation_spacing_preserves_numbers_quotes_and_code(text, expected):
+    from pipmind.shadow.maintenance import punctuation_spacing
+
+    assert punctuation_spacing(text) == expected
 
 
 @pytest.mark.parametrize("fault", ["quote", "code", "numeric", "mapping", "still_large"])

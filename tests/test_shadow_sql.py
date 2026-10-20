@@ -206,14 +206,27 @@ def test_starter_cases_through_actual_sql_shadow_runtime(mind, case_id):
 
 
 @pytest.mark.parametrize("failed", [False, True])
-def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(mind, failed):
-    from pipmind.shadow.maintenance import entries, repair_budget, working_sizes
+@pytest.mark.parametrize("formatting_only", [False, True])
+def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
+    mind, failed, formatting_only
+):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import (
+        entries,
+        punctuation_spacing,
+        repair_budget,
+        working_sizes,
+    )
 
     before = {
         "views": [f"FX {i}: " + "a" * 260 for i in range(8)],
         "waiting_for": [f"Await verified prerequisite {i} " + "b" * 150 for i in range(5)],
         "position_theses": [],
     }
+    if formatting_only:
+        old = before["waiting_for"][0]
+        text = "Await: A; B; C" + "x" * (len(old) - len("Await: A; B; C"))
+        before["waiting_for"][0] = '"' + text[1:] if failed else text
     with mind.transaction() as cur:
         mind._insert(
             cur,
@@ -250,6 +263,26 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
             for key in budget["editable_keys"]
         ]
     }
+    if formatting_only:
+        assert "w0" not in budget["editable_keys"]
+        trial = deepcopy(candidate["working_memory"])
+        for key in budget["editable_keys"]:
+            field = "views" if key[0] == "v" else "waiting_for"
+            trial[field][int(key[1:])] = '"' + key + ' "'
+        remaining = 3203 - len(encoded(trial).encode())
+        patch["replacements"] = []
+        for key in budget["editable_keys"]:
+            amount = min(300 - len(key) - 3, remaining)
+            remaining -= amount
+            patch["replacements"].append(
+                {
+                    "from": key,
+                    "text": '"' + key + " " + "x" * amount + '"',
+                    "reason": "Synthetic scoped wording proposal",
+                    "evidence_ids": [event["message_id"]],
+                }
+            )
+        assert remaining == 0
 
     class Repair(FixtureModel):
         calls = 0
@@ -280,7 +313,14 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
         after = reopened.head()["working"]
         for key, text in entries(candidate["working_memory"]).items():
             if key not in budget["editable_keys"]:
-                assert entries(after)[key] == text
+                assert entries(after)[key] == (
+                    punctuation_spacing(text) if formatting_only and key == "w0" else text
+                )
+        if formatting_only:
+            assert working_sizes(after)["total_bytes"] == 3200
+            assert [v["key"] for v in journal["memory_repair"]["format_only_normalizations"]] == [
+                "w0"
+            ]
         assert all(row["to"] is not None for row in journal["reply"]["memory_dispositions"])
         changed = {
             key

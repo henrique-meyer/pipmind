@@ -9,6 +9,7 @@ from pipmind.shadow.maintenance import (
     POLICY,
     entries,
     expand_repair_patch,
+    punctuation_spacing,
     repair_budget,
     spacing_repair,
     transition,
@@ -75,6 +76,21 @@ class ShadowEngine:
                                 "after_bytes": len(applied.encode()),
                             }
                         )
+                edited = {row["from"] for row in audit["response"]["replacements"]}
+                for key, text in entries(original["working_memory"]).items():
+                    applied = entries(correction["working_memory"])[key]
+                    if key in edited or applied == text:
+                        continue
+                    if applied != punctuation_spacing(text):
+                        raise ShadowError("working_memory_repair_scope")
+                    audit.setdefault("format_only_normalizations", []).append(
+                        {
+                            "key": key,
+                            "before_bytes": len(text.encode()),
+                            "after_bytes": len(applied.encode()),
+                            "method": "punctuation_spacing",
+                        }
+                    )
             self.contracts.validate("memory-repair", correction)
             correction = deepcopy(correction)
             after = correction["working_memory"]
