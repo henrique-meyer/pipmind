@@ -11,8 +11,10 @@ from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
 from pipmind.shadow.maintenance import MAX_BYTES, POLICY, repair_budget, working_sizes
+from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
+from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
-PROMPT_VERSION = "shadow-context-v15"
+PROMPT_VERSION = "shadow-context-v16"
 REPAIR_PROMPT_VERSION = "shadow-repair-v17"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
@@ -245,6 +247,11 @@ class FoundryModel:
         # The normative schema is sent in the prompt and validated locally. Some
         # deployments cannot serve strict structured output with tool calling.
         schema = self.contracts.schemas[name]
+        references_enabled = phase == "decision" and repair is None
+        if references_enabled:
+            schema = deepcopy(schema)
+            schema["$id"] = "urn:pipmind:wire:decision-working-refs-v1"
+            schema["properties"]["working_memory"]["$ref"] = SCHEMA_ID
         if repair is not None and repair.get("editable_keys"):
             # Keep the normative raw-response contract for audit compatibility,
             # but request only this repair's exact keys and calculated length.
@@ -273,11 +280,30 @@ class FoundryModel:
                 "working-memory": self.contracts.schemas["working-memory"],
                 "memory-dispositions": self.contracts.schemas["memory-dispositions"],
             }
+            if references_enabled:
+                prompt["schema_definitions"]["working-memory"] = wire_schema(
+                    prompt["schema_definitions"]["working-memory"]
+                )
         if repair is not None:
             prompt["correction"] = repair
         message = encoded(prompt)
+        instructions, memory_instructions = INSTRUCTIONS, MEMORY_INSTRUCTIONS
+        if references_enabled:
+            instructions = (
+                instructions.replace(
+                    " Responses always use the ordinary working-memory schema with strings.", ""
+                ).replace(" Triage returns exactly wake and summary, no other keys.", "")
+                + REFERENCE_INSTRUCTIONS
+            )
+            memory_instructions = memory_instructions.replace(
+                " If no state change is justified, copy the supplied strings EXACTLY."
+                " Rephrasing even one entry is a change and needs its disposition;"
+                " do not silently edit safety qualifiers.",
+                " Use references for exact carry-forward; changed text needs its disposition."
+                " Never silently edit safety qualifiers.",
+            )
         prefix = (
-            INSTRUCTIONS
+            instructions
             + (TRIAGE_INSTRUCTIONS if phase == "triage" else "")
             + (
                 (PATCH_INSTRUCTIONS if repair.get("editable_keys") else REPAIR_INSTRUCTIONS)
@@ -293,7 +319,7 @@ class FoundryModel:
                 else ""
             )
             + (
-                MEMORY_INSTRUCTIONS
+                memory_instructions
                 if context.get("memory_policy", {}).get("version") == POLICY
                 and repair is None
                 and phase == "decision"
@@ -318,6 +344,7 @@ class FoundryModel:
             "request": {"instructions": prefix, "message": prompt},
             "prompt_bytes": len((prefix + message).encode()),
             "max_output_tokens": 512 if phase == "triage" else 4096,
+            **({"working_memory_encoding": VERSION} if references_enabled else {}),
             **({"reasoning_effort": "low"} if repair is not None else {}),
         }
         self.observer(phase + "_setup", {"trace": trace})
@@ -375,6 +402,13 @@ class FoundryModel:
                 timeout=self.timeout,
             )
             result = bounded_json(response.text, 65536)
+            if references_enabled:
+                wire = result
+                result, references = expand_reply(wire, context.get("working_memory", {}))
+                if references:
+                    trace["wire_response"] = wire
+                    trace["wire_response_text"] = response.text
+                    trace["working_memory_references"] = references
             self.contracts.validate(name, result)
             usage = getattr(response, "usage_details", None) or {}
             trace.update(

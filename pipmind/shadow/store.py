@@ -391,16 +391,21 @@ class SqlMind:
         if event["kind"] != "ClockEvent" or event["payload"]["reason"] != "reconsideration":
             return None
         with self.transaction() as cur:
-            authorization = self._runtime(cur, "reconsideration:" + event_id(event))
-            if not authorization:
-                raise ShadowError("reconsideration_not_authorized")
-            original_id = event["payload"]["reconsideration_of"]
-            return {
-                "original_input": self._original_input(cur, original_id),
-                "authorization": authorization,
-                "original_outcome_id": "outcome:" + digest(original_id),
-                "evaluation": "present-time reconsideration; original outcome remains unchanged",
-            }
+            return self._reconsideration(cur, event)
+
+    def _reconsideration(self, cur, event):
+        if event["kind"] != "ClockEvent" or event["payload"]["reason"] != "reconsideration":
+            return None
+        authorization = self._runtime(cur, "reconsideration:" + event_id(event))
+        if not authorization:
+            raise ShadowError("reconsideration_not_authorized")
+        original_id = event["payload"]["reconsideration_of"]
+        return {
+            "original_input": self._original_input(cur, original_id),
+            "authorization": authorization,
+            "original_outcome_id": "outcome:" + digest(original_id),
+            "evaluation": "present-time reconsideration; original outcome remains unchanged",
+        }
 
     def head(self):
         with self.transaction() as cur:
@@ -525,44 +530,71 @@ class SqlMind:
     def pending(self):
         with self.transaction() as cur:
             self._head(cur)
+            return self._pending(cur)
+
+    def _pending(self, cur):
+        cur.execute(
+            "SELECT TOP(1) envelope FROM pm_inputs WHERE trader=%s "
+            "AND status='pending' ORDER BY CASE WHEN EXISTS(SELECT 1 FROM pm_runtime r "
+            "WHERE r.trader=pm_inputs.trader AND r.k='reconsideration:'+pm_inputs.id) "
+            "THEN 0 ELSE 1 END,pk",
+            (self.trader,),
+        )
+        row = cur.fetchone()
+        return loads(row[0]) if row else None
+
+    def prepare_step(self, moment):
+        """Read one consistent current frame; release its lock before inference."""
+        with self.transaction() as cur:
+            head = self._head(cur)
+            if head["paused"] or (event := self._pending(cur)) is None:
+                return None
+            if validate_event(event, self.contracts) > moment:
+                raise ShadowError("future_shadow_input")
+            reconsideration = self._reconsideration(cur, event)
+            context = self._context(cur, head, moment, "", history=False)
             cur.execute(
-                "SELECT TOP(1) envelope FROM pm_inputs WHERE trader=%s "
-                "AND status='pending' ORDER BY CASE WHEN EXISTS(SELECT 1 FROM pm_runtime r "
-                "WHERE r.trader=pm_inputs.trader AND r.k='reconsideration:'+pm_inputs.id) "
-                "THEN 0 ELSE 1 END,pk",
+                "SELECT k,v FROM pm_runtime WHERE trader=%s "
+                "AND k IN ('broker_snapshots','feed_status')",
                 (self.trader,),
             )
-            row = cur.fetchone()
-            return loads(row[0]) if row else None
+            facts = {key: loads(value) for key, value in cur.fetchall()}
+            context["broker_snapshots"] = facts.get("broker_snapshots", {})
+            context["feed_status"] = facts.get("feed_status", {"coverage": "unverified"})
+            if reconsideration:
+                context["reconsideration"] = reconsideration
+            return event, context, reconsideration
 
     def context(self, moment, query="", *, history=True, revision=None):
         with self.transaction() as cur:
             head = self._head(cur)
             if revision is not None and (head["revision"] != revision or head["paused"]):
                 raise ShadowError("shadow_revision_changed")
-            cur.execute(
-                "SELECT part,body FROM pm_records WHERE trader=%s "
-                "AND part IN ('identity','playbook')",
-                (self.trader,),
-            )
-            prefix = dict(cur.fetchall())
-            recent, memories = [], []
-            if history:
-                recent, memories = self._context_evidence(cur, head["working"], moment, query)
-            return {
-                "revision": head["revision"],
-                "paused": head["paused"],
-                "identity": prefix["identity"],
-                "playbook": {"version": head["playbook_version"], "text": prefix["playbook"]},
-                "working_memory": head["working"],
-                "recent_journal": recent,
-                "retrieved_memories": memories,
-                **(
-                    {"memory_policy": policy_context(policy)}
-                    if (policy := self._runtime(cur, "memory_policy"))
-                    else {}
-                ),
-            }
+            return self._context(cur, head, moment, query, history=history)
+
+    def _context(self, cur, head, moment, query, *, history):
+        cur.execute(
+            "SELECT part,body FROM pm_records WHERE trader=%s AND part IN ('identity','playbook')",
+            (self.trader,),
+        )
+        prefix = dict(cur.fetchall())
+        recent, memories = [], []
+        if history:
+            recent, memories = self._context_evidence(cur, head["working"], moment, query)
+        return {
+            "revision": head["revision"],
+            "paused": head["paused"],
+            "identity": prefix["identity"],
+            "playbook": {"version": head["playbook_version"], "text": prefix["playbook"]},
+            "working_memory": head["working"],
+            "recent_journal": recent,
+            "retrieved_memories": memories,
+            **(
+                {"memory_policy": policy_context(policy)}
+                if (policy := self._runtime(cur, "memory_policy"))
+                else {}
+            ),
+        }
 
     def _context_evidence(self, cur, working, moment, query):
         cur.execute(

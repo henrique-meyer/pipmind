@@ -351,6 +351,147 @@ def episode(mind):
     return events, FixtureModel(deepcopy(CASE["model_responses"]))
 
 
+def test_prepared_step_matches_legacy_reads_and_closes_its_single_session(mind, monkeypatch):
+    events, model = episode(mind)
+    mind.set_runtime("feed_status", {"coverage": "unverified", "checked_at": "first"})
+    legacy = mind.context(MOMENT, history=False)
+    legacy["broker_snapshots"] = mind.runtime("broker_snapshots", {})
+    legacy["feed_status"] = mind.runtime("feed_status", {"coverage": "unverified"})
+    counts = {"opened": 0, "active": 0}
+    connect = mind.connect
+
+    class Connection:
+        def __init__(self, db):
+            self.db = db
+
+        def close(self):
+            try:
+                self.db.close()
+            finally:
+                counts["active"] -= 1
+
+        def __getattr__(self, key):
+            return getattr(self.db, key)
+
+    def tracked(**kwargs):
+        db = connect(**kwargs)
+        counts["opened"] += 1
+        counts["active"] += 1
+        return Connection(db)
+
+    monkeypatch.setattr(mind, "connect", tracked)
+    assert mind.prepare_step(MOMENT) == (events[0], legacy, None)
+    assert counts == {"opened": 1, "active": 0}
+
+    class Inspect(FixtureModel):
+        async def triage(self, event, context, store, moment):
+            assert counts["active"] == 0  # No transaction/lock spans a model await.
+            assert context == legacy
+            return {"wake": False, "summary": "Observed"}, {"phase": "triage"}
+
+    assert asyncio.run(ShadowEngine(mind, Inspect(model.responses), clock=lambda: MOMENT).step())
+    assert counts["active"] == 0
+    assert mind.outcome(events[0]["message_id"])["status"] == "observed"
+    assert mind.prepare_step(MOMENT) is None
+
+
+def test_prepared_step_pause_future_and_changed_facts_do_not_use_a_stale_frame(mind):
+    assert mind.prepare_step(MOMENT) is None
+    events, _ = episode(mind)
+    first = mind.prepare_step(MOMENT)
+    mind.set_runtime("feed_status", {"coverage": "new-current-fact"})
+    second = mind.prepare_step(MOMENT)
+    assert first[0] == second[0] == events[0]
+    assert second[1]["feed_status"] == {"coverage": "new-current-fact"}
+    mind.set_paused(True)
+    assert mind.prepare_step(MOMENT) is None
+    mind.set_paused(False)
+    before = mind.head()
+    with pytest.raises(ShadowError, match="future_shadow_input"):
+        mind.prepare_step(utc(events[0]["available_at"]) - timedelta(seconds=1))
+    assert mind.head() == before and mind.pending() == events[0]
+
+
+@pytest.mark.parametrize("invalid", [False, True], ids=["exact-carry", "invalid-index"])
+def test_real_sql_wire_reply_preserves_full_state_audit_and_dependency_guards(mind, invalid):
+    from types import SimpleNamespace
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.model import FoundryModel
+
+    events, model = episode(mind)
+    first = events[0]
+    working = {
+        "views": ["USD CPI reported 2.5%; vintage remains unverified."],
+        "waiting_for": ["EACH official full text and comparable prior remain required."],
+        "position_theses": [],
+    }
+    model.responses[first["message_id"]]["triage"]["wake"] = True
+    model.responses[first["message_id"]]["reply"]["working_memory"] = working
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    moment = MOMENT + timedelta(seconds=1)
+    activate_bounded(mind, moment)
+    original = mind.retained()[1]
+    event = deepcopy(first)
+    event["message_id"] = event["payload"]["event_id"] = "wire-next"
+    moment += timedelta(seconds=1)
+    event["available_at"] = moment.isoformat()
+    mind.accept("wire", [{"sequence": 1, "event": event}], moment)
+    mind.set_paused(False)
+    wire = {
+        "action": "hold",
+        "reasoning": "No new verified evidence resolves these prerequisites.",
+        "evidence_ids": ["wire-next"],
+        "tool_calls": [],
+        "working_memory": {
+            "views": [99 if invalid else 0],
+            "waiting_for": [0],
+            "position_theses": [],
+        },
+        "memory_dispositions": [],
+    }
+    calls = []
+
+    def factory(phase, **kwargs):
+        class Agent:
+            async def run(self, message, **options):
+                calls.append(phase)
+                value = (
+                    {"wake": True, "summary": "Inspect current evidence"}
+                    if phase == "triage"
+                    else wire
+                )
+                return SimpleNamespace(
+                    text=encoded(value),
+                    usage_details={"input_token_count": 100, "output_token_count": 20},
+                )
+
+        return Agent()
+
+    live = FoundryModel(
+        "https://synthetic.invalid/api/projects/test", "t", "d", enabled=True, factory=factory
+    )
+    progressed = asyncio.run(ShadowEngine(mind, live, clock=lambda: moment).step())
+    assert calls == ["triage", "decision"] and progressed is not invalid
+    assert mind.head()["working"] == working
+    if invalid:
+        assert mind.head()["paused"] and mind.pending() == event
+        assert mind.outcome("wire-next") is None
+        assert mind.runtime("reasoning_hold")["reason"] == "working_memory_reference"
+    else:
+        result = mind.outcome("wire-next")
+        assert result["reply"]["working_memory"] == working
+        assert result["usage"][-1]["wire_response"] == wire
+        assert result["usage"][-1]["working_memory_encoding"] == "working-refs-v1"
+        assert not mind.head()["paused"] and mind.pending() is None
+    current = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
+    assert all(
+        current[meta["record_id"]] == (meta, body)
+        for meta, body in original
+        if meta["part"] != "working_memory"
+    )
+
+
 def test_restart_persistence_and_exactly_once_consumption(mind):
     events, model = episode(mind)
     engine = ShadowEngine(mind, model, clock=lambda: MOMENT)

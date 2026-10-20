@@ -173,19 +173,30 @@ class ShadowEngine:
 
     async def step(self):
         moment = self.clock()
-        if self.store.head()["paused"]:
-            return False
-        event = self.store.pending()
-        if not event:
-            return False
-        if validate_event(event, self.contracts) > moment:
-            raise ShadowError("future_shadow_input")
-        self.observer("context", {"event": event})
-        reconsideration = self.store.reconsideration(event)
+        if hasattr(self.store, "prepare_step"):
+            self.observer("preparation", {})
+            prepared = self.store.prepare_step(moment)
+            if prepared is None:
+                return False
+            event, context, reconsideration = prepared
+            self.observer("context", {"event": event})
+        else:
+            if self.store.head()["paused"]:
+                return False
+            event = self.store.pending()
+            if not event:
+                return False
+            if validate_event(event, self.contracts) > moment:
+                raise ShadowError("future_shadow_input")
+            self.observer("context", {"event": event})
+            reconsideration = self.store.reconsideration(event)
+            query = event_query(reconsideration["original_input"] if reconsideration else event)
+            context = self.store.context(moment, query, history=False)
+            context["broker_snapshots"] = self.store.runtime("broker_snapshots", {})
+            context["feed_status"] = self.store.runtime("feed_status", {"coverage": "unverified"})
         query = event_query(reconsideration["original_input"] if reconsideration else event)
         # Triage consumes only the current mind/facts. Defer SQL archive reads
         # until a decision needs them, keeping quiet inputs off the expensive path.
-        context = self.store.context(moment, query, history=False)
         if reconsideration:
             context["reconsideration"] = reconsideration
         result = {
@@ -197,8 +208,6 @@ class ShadowEngine:
             "reply": None,
             "runtime_updates": {},
         }
-        context["broker_snapshots"] = self.store.runtime("broker_snapshots", {})
-        context["feed_status"] = self.store.runtime("feed_status", {"coverage": "unverified"})
         self.observer("ready", {"event": event, "revision": context["revision"], "result": result})
         if event["kind"] in {"AccountSnapshot", "PositionSnapshot"}:
             snapshots = dict(context["broker_snapshots"])
