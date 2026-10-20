@@ -514,6 +514,14 @@ standing identity/playbook; neither tools nor new facts are authorized.
 
 The owner approved the larger active total after repeated valid-entry states exceeded the earlier total. The 2,400-byte target, entry/count limits, mandatory-state refusal, prompt guards and single-call budget remain. `working-budget-v2` is recorded in new prompt contexts and transition checkpoints; legacy `bounded-working-v1` provenance, original source records and bundle/storage protocols remain exact.
 
+### Processing throughput
+
+SQL-backed steps prepare the pending input, current mind, policy and latest broker/feed facts in one transaction. It closes before inference; no connection or lock spans a model call. Reconsideration priority, present-time authorization, future-input refusal and commit-time revision/pause checks remain. Every subsequent input reads a fresh frame; no mutable mind or broker snapshot is cached, and SQL sessions remain non-pooled.
+
+Normal Foundry decisions use the lossless `working-refs-v1` wire representation. In the complete ordered `views` and `waiting_for` arrays, an integer copies the complete expanded BEFORE string at that same-kind index. Literal strings supply new or changed text. Position theses retain their ordinary shape. The adapter expands references before validating the existing normative reply and all transition, evidence, dependency, count and byte guards. Dropping a waiting condition still requires an explicit supported resolution. Invalid indexes fail closed; booleans/floats are not indexes. Persistent working state and portable bundles always contain full strings.
+
+The audit retains the exact supplied context, raw reference response, decoded reply, index mapping and encoding version. This reduces repeated text generation without changing model roles, reasoning settings, output/call limits or the trading policy. Triage and correction schemas remain unchanged. Full prompt guards still apply to the wire schema/instructions; inference and sustained net drainage require hosted measurement. A successful deployment or completion count alone does not establish that arrivals are being outpaced or start the formal day.
+
 Calculated text budgets remain available for scoped entry patches and the
 lossless preflight/replay path. They account for exact JSON framing, escapes,
 unselected text and theses. Targets are guidance, never permission to clip text.
