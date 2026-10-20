@@ -438,12 +438,18 @@ class Social:
                 for account in refreshed["accounts"]:
                     if (
                         account["poll"] == "rss_only"
+                        or account["poll"] == "backup"
+                        or (
+                            account["poll"] == "event_window"
+                            and not self.eligible(role, account, now)
+                        )
                         or account.get("unverified")
                         or role["priority"] > 2
                     ):
                         continue
                     try:
                         self.poll(role, account)
+                        selected.add(account["handle"].casefold())
                         recent = self.store.state("x:last_post:" + account["user_id"])
                         cursor = self.store.state("x:cursor:" + account["user_id"], {})
                         if not cursor.get("next"):

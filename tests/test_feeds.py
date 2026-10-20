@@ -5,6 +5,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -30,6 +31,28 @@ from pipmind.feeds.service import create_app
 from pipmind.feeds.social import Social, XReads, holder_lookup, official_account, verified
 from pipmind.feeds.store import FeedStore
 from pipmind.feeds.stream import SSE
+
+
+@pytest.mark.parametrize("policy", ["event_window", "backup"])
+def test_initial_identity_refresh_does_not_bypass_paid_read_policy(store, clock, policy):
+    account = {"handle": "ExampleBank", "poll": policy, "kind": "institutional"}
+    recipe = {"id": "limited", "priority": 1, "accounts": [account]}
+    social = Social(store, Mock(), Mock(), [recipe], SimpleNamespace(rows=lambda: []), clock.now)
+
+    def refresh(role):
+        store.save(
+            "role:" + role["id"],
+            {
+                "holder": None,
+                "checked_at": stamp(clock.now()),
+                "accounts": [{**account, "user_id": "42", "unverified": False}],
+            },
+        )
+
+    social.refresh = refresh
+    social.poll = Mock()
+    social.step()
+    social.poll.assert_not_called()
 
 
 @pytest.fixture
