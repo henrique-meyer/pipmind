@@ -9,9 +9,9 @@ from urllib.parse import urlsplit
 from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
-from pipmind.shadow.maintenance import POLICY
+from pipmind.shadow.maintenance import POLICY, working_sizes
 
-PROMPT_VERSION = "shadow-context-v11"
+PROMPT_VERSION = "shadow-context-v12"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -78,8 +78,13 @@ REPAIR_INSTRUCTIONS = (
     " condition. Any already resolved BEFORE condition must retain its exact original"
     " disposition/evidence. Use only supplied evidence IDs. No tools or new facts."
     " Preserve the immutable trading decision; your response cannot edit it."
-    " Make a genuine consolidation, not a rewrite of the same long list. Aim for"
-    " no more than six views and six waits, usually under 200 bytes each, while"
+    " Make a genuine consolidation, not a rewrite of the same long list. Each"
+    " view AND each waiting_for string MUST fit 300 UTF-8 bytes independently;"
+    " total serialized working_memory MUST fit 3200 UTF-8 bytes including JSON."
+    " Fitting the total alone is insufficient. Inspect supplied entry_bytes;"
+    " characters are not UTF-8 bytes. Aim below 2400 total and 200 per entry."
+    " Use up to eight entries per list when needed instead of merging distinct"
+    " prerequisites into an oversized string. Keep mapping reasons concise while"
     " preserving all distinct meaning. Use one current-state as-of date rather"
     " than repeating today's date in every entry; retain each source's actual"
     " publication dates, numbers and verification distinctions. Shared missing-"
@@ -376,7 +381,11 @@ class FoundryModel:
             context,
             store,
             moment,
-            repair={"reason": "working_memory_bound", "candidate": candidate},
+            repair={
+                "reason": "working_memory_bound",
+                "candidate": candidate,
+                "candidate_sizes": working_sizes(candidate["working_memory"]),
+            },
         )
 
 

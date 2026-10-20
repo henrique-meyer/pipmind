@@ -1,11 +1,14 @@
 import asyncio
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 
+from pipmind.contracts import ContractError, Contracts
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.engine import ShadowEngine
+from pipmind.shadow.maintenance import validate_working, working_sizes
 from pipmind.shadow.model import FoundryModel, ModelFailure
 
 
@@ -173,3 +176,25 @@ def test_actual_request_compiler_uses_a_tool_free_bounded_correction_schema():
     )
     assert trace["phase"] == "memory_repair" and trace["prompt_bytes"] < 28000
     assert trace["input_tokens"] == 456 and trace["max_output_tokens"] == 4096
+    prompt = json.loads(captured["message"])
+    assert prompt["correction"]["candidate_sizes"] == working_sizes(candidate["working_memory"])
+    assert "300 UTF-8 bytes independently" in captured["instructions"]
+    assert "up to eight entries" in captured["instructions"]
+
+
+def test_repair_schema_rejects_oversized_merge_even_when_total_is_under_bound():
+    _, _, correction = example()
+    correction["working_memory"]["waiting_for"] = ["x" * 311]
+    assert working_sizes(correction["working_memory"])["total_bytes"] < 3200
+    with pytest.raises(ContractError, match="schema:memory-repair"):
+        Contracts().validate("memory-repair", correction)
+
+
+def test_repair_keeps_utf8_byte_guard_beyond_schema_character_limit():
+    _, _, correction = example()
+    # JSON Schema counts characters. Runtime must still enforce UTF-8 bytes.
+    correction["working_memory"]["waiting_for"] = ["\u00e9" * 151]
+    Contracts().validate("memory-repair", correction)
+    assert working_sizes(correction["working_memory"])["entry_bytes"]["w0"] == 302
+    with pytest.raises(ShadowError, match="working_memory_bound"):
+        validate_working(correction["working_memory"], now())

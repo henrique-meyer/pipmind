@@ -5,7 +5,15 @@
   "additionalProperties": false,
   "required": ["working_memory", "memory_dispositions", "candidate_dispositions"],
   "properties": {
-    "working_memory": {"$ref": "urn:pipmind:schema:v1:working-memory"},
+    "working_memory": {
+      "allOf": [
+        {"$ref": "urn:pipmind:schema:v1:working-memory"},
+        {"properties": {
+          "views": {"maxItems": 8, "uniqueItems": true, "items": {"maxLength": 300}},
+          "waiting_for": {"maxItems": 8, "uniqueItems": true, "items": {"maxLength": 300}}
+        }}
+      ]
+    },
     "memory_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"},
     "candidate_dispositions": {"$ref": "urn:pipmind:schema:v1:memory-dispositions"}
   }
