@@ -283,6 +283,24 @@ own identity, availability and cost evidence. The verified institutional cohort
 does not certify those roles. Repeated model integrity, literal fixture alignment,
 retained-context semantic fidelity and owner calibration remain separate results.
 
+The hosted additive cohort now has sixteen RSS recipes. New MarketWatch,
+Bundesbank, BLS employment and BLS CPI recipes each deliver normalized events;
+BabyPips remains an explicit HTTP 400 outage with its prior successes retained.
+The RBNZ candidate remains unavailable from the hosted network and is not added.
+The nine institutional X identities are unchanged; three broader candidate
+profiles remain excluded because official identity evidence is insufficient.
+All 33 macro catalogue selections are available, but every provider quality
+window still reports that point-in-time safety and complete source monitoring
+are unproven. Two legacy percentage labels are explicitly year-over-year series
+with unit scale one; their original events and labels are preserved.
+
+Hosted release checks confirm a full 100-headline Reuters cache and normalized
+SQL delivery, with the full-window limitation retained. The exact 86-row calendar
+snapshot and focused native retrieval pass. Original source metadata, saved
+cursors, immutable mind records, inputs, outcomes and feed prefixes match through
+the additive migration and release. No new capacity, identity/network access,
+public callback, paid provider or trading capability is introduced.
+
 The repeated-evaluation grader `shadow-live-v2` also requires every episode's
 inputs to have completed outcomes. An operational SQL failure is reported
 separately from a model refusal. Known responses/usage before a failed commit
@@ -290,6 +308,47 @@ are retained as an uncommitted attempt and a separate SQL diagnostic when
 available; they never become invented outcomes. The CLI saves partial reports
 after each episode and before an unconfirmed pause aborts the run. A clean retry
 does not erase an earlier partial episode or unknown usage.
+
+### Repeated model and retained-context measurements
+
+The current no-calendar request path was exercised in twelve starter cases,
+three repetitions each, through isolated SQL minds. The selected complete cohort
+passes all 144 `shadow-live-v1` integrity checks, with one retained 90-second
+decision timeout and 43 differences across the unchanged literal fixture checks.
+Integrity success does not establish semantic quality. The cohort has 86 phase
+calls and 95,800 known input / 14,728 output tokens; the timeout has unknown usage.
+
+Two original interrupted SQL runs are retained separately from their clean
+retries: four initialized episodes contain five committed outcomes and one pending
+input. Seven calls have retained usage; the phase, response and usage of the
+remaining unconfirmed attempt are not reconstructed. All validation minds are
+paused. The newer grader's complete-episode and commit-failure diagnostics do
+not retroactively relabel these older reports.
+
+Three retained-context trajectories process four inputs each: nine observations
+and three retained analysis items, with working state between 2,852 and 2,877
+bytes. These are present-time replays using frozen current context, with decisions
+forced for measurement. They are neither historical point-in-time tests nor a
+measurement of live decision frequency. Original prerequisites remain unresolved.
+
+Three initial calendar daily briefs did not use the available schedule. Prompt
+`shadow-context-v11` adds calendar guidance only for a daily-brief decision with
+a snapshot reference. Three corrected trials each retrieve calendar evidence,
+distinguish schedule/consensus from actuals, cite the snapshot and preserve exact
+working state. The new compiler also reproduces all 86 archived ordinary
+requests exactly with zero model calls. Prior v9/v10 experience bundles remain
+explicitly supported. Full original snapshots, model/tool traces and failed
+attempts remain private in SQL.
+
+Across the complete cohort, original interrupted runs, retained trajectories,
+calendar baselines, an extra validator run that still used v10, and the corrected
+v11 trials, 132 retained phase entries contain 378,269 known input / 40,602 known
+output tokens. Their uncached rate reference is about $0.85, excluding one known
+timeout's unknown usage and the unconfirmed pending attempt, cache adjustments
+and invoice differences. This is evaluation usage, not a monthly cost or a claim
+that timeout reliability is qualified. Three actual responses are prepared for
+owner calibration; human labels and the full-day quality/capacity gates remain
+open.
 
 ## Bounded working memory (PIP-14)
 
