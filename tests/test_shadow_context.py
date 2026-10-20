@@ -17,6 +17,57 @@ def row(identifier, part="journal", body=None):
     }
 
 
+def test_calendar_references_do_not_crowd_news_search_and_focused_reads_return_schedule():
+    record = row(
+        "calendar:synthetic",
+        part="memory",
+        body={
+            "kind": "calendar-snapshot-v1",
+            "source": "forexfactory",
+            "publication_time": None,
+            "scope": "Schedule and consensus, not actual releases.",
+            "snapshot": {
+                "fetched_at": "2026-09-15T00:00:00Z",
+                "rows": [
+                    {
+                        "title": f"Other item {i}",
+                        "country": "EUR",
+                        "date": "2026-09-16T08:00:00Z",
+                        "impact": "Low",
+                    }
+                    for i in range(12)
+                ]
+                + [
+                    {
+                        "title": "Housing Starts",
+                        "country": "USD",
+                        "date": "2026-09-16T12:30:00Z",
+                        "impact": "High",
+                        "forecast": "1.3M",
+                    }
+                ],
+            },
+        },
+    )
+    reference = record_view(record["metadata"], record["body"])
+    assert "Housing Starts" not in reference["body"] and reference["partial"]
+    focused = record_view(record["metadata"], record["body"], "USD Housing Starts")
+    values = __import__("json").loads(focused["body"])
+    assert values["total_rows"] == 13 and len(values["rows"]) == 6
+    assert values["rows"][0]["forecast"] == "1.3M" and focused["partial"]
+    assert values["publication_time"] is None and "not actual" in values["scope"]
+    bad = row(
+        "calendar:untrusted",
+        part="memory",
+        body={
+            "kind": "calendar-snapshot-v1",
+            "snapshot": {"rows": [{"date": "invalid"}]},
+        },
+    )
+    refused = __import__("json").loads(record_view(bad["metadata"], bad["body"], "USD")["body"])
+    assert refused["invalid_rows"] and refused["rows"] == []
+
+
 def legacy():
     return row(
         "old-decision",
@@ -242,6 +293,43 @@ def test_wire_context_is_compact_audited_and_tools_cannot_reinflate_old_traces()
     asyncio.run(
         model.decide({}, context(), {}, SimpleNamespace(search=lambda *args: [legacy()]), now())
     )
+
+
+def test_calendar_daily_brief_guidance_is_conditional_and_never_added_to_triage():
+    from pipmind.shadow.model import CALENDAR_INSTRUCTIONS
+
+    class Agent:
+        async def run(self, message, *, options):
+            return SimpleNamespace(text='{"wake":false,"summary":"Synthetic"}')
+
+    captured = []
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kw: captured.append(kw["instructions"]) or Agent(),
+    )
+    event = {"kind": "ClockEvent", "payload": {"reason": "daily_brief"}}
+    source = context()
+    asyncio.run(model.triage(event, source, None, now()))
+    assert CALENDAR_INSTRUCTIONS not in captured[-1]
+
+    # Invalid synthetic final JSON is enough to capture the decision request;
+    # no network/client or model execution exists in this compiler check.
+    async def decision():
+        try:
+            await model.decide(event, source, {}, None, now())
+        except ModelFailure:
+            pass
+
+    asyncio.run(decision())
+    baseline = captured[-1]
+    source["feed_status"]["calendar"] = {"record_id": "calendar:synthetic"}
+    asyncio.run(model.triage(event, source, None, now()))
+    assert CALENDAR_INSTRUCTIONS not in captured[-1]
+    asyncio.run(decision())
+    assert captured[-1].replace(CALENDAR_INSTRUCTIONS, "") == baseline
 
 
 def test_oversized_mandatory_state_is_refused_without_truncation_or_model_request():

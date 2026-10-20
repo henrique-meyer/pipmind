@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi import Request as WebRequest
 from fastapi.responses import JSONResponse
 
-from pipmind.contracts import ContractError, stamp
+from pipmind.contracts import ContractError, stamp, utc
 from pipmind.feeds.common import FeedError
 from pipmind.shadow.common import ShadowError, bounded_json, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
@@ -49,6 +49,14 @@ class FeedConsumer:
             raise ShadowError("invalid_shadow_source")
         self.store, self.url, self.token, self.source = store, url.rstrip("/"), token, source_id
         self.completion_clock = completion_clock
+        self.calendar_checked, self.calendar_info = None, {"status": "unavailable"}
+
+    def calendar(self, cached, moment):
+        from pipmind.shadow.calendar import retain_calendar
+
+        self.calendar_info = retain_calendar(self.store, cached, moment)
+        self.calendar_checked = moment
+        return self.calendar_info
 
     def poll(self, moment):
         after = self.store.checkpoint(self.source)
@@ -71,6 +79,10 @@ class FeedConsumer:
                     "coverage": page.get("coverage", "unverified"),
                     "quarantined": page.get("quarantined"),
                     "checked_at": stamp(moment),
+                    "calendar": self.calendar(page.get("calendar"), moment)
+                    if self.calendar_checked is None
+                    or (moment - self.calendar_checked).total_seconds() >= 60
+                    else self.calendar_info,
                 },
             )
             return len(page["events"])
@@ -79,13 +91,14 @@ class FeedConsumer:
 
 
 class GatewayConsumer(FeedConsumer):
-    """Only GET /state. No order URL, broker credential or command method exists."""
+    """Cached state/news GETs only; no broker credentials or command method."""
 
-    def __init__(self, *args, handoff_interval=0, **kwargs):
+    def __init__(self, *args, handoff_interval=0, relay_store=None, **kwargs):
         super().__init__(*args, **kwargs)
         if not 0 <= handoff_interval <= 3600:
             raise ShadowError("invalid_gateway_handoff_interval")
         self.handoff_interval, self.last_handoff = handoff_interval, None
+        self.relay_store, self.last_headlines = relay_store, None
 
     def poll(self, moment):
         request = Request(self.url + "/state", headers={"Authorization": "Bearer " + self.token})
@@ -95,6 +108,29 @@ class GatewayConsumer(FeedConsumer):
             moment = self.completion_clock() if self.completion_clock else moment
             if page.get("dispatch_enabled") is not False:
                 raise ValueError
+            if self.relay_store is not None and page.get("headlines_as_of"):
+                from pipmind.feeds.news import relay_page
+
+                marker = digest(
+                    encoded({k: page.get(k) for k in ("headlines_as_of", "headlines_error")})
+                )
+                if marker != self.last_headlines:
+                    request = Request(
+                        self.url + "/headlines", headers={"Authorization": "Bearer " + self.token}
+                    )
+                    with build_opener(NoRedirect()).open(request, timeout=15) as response:
+                        news = bounded_json(response.read(2_097_153), 2_097_152)
+                    if utc(news["headlines_as_of"]) < utc(page["headlines_as_of"]):
+                        raise ValueError
+                    moment = self.completion_clock() if self.completion_clock else moment
+                    relay_page(
+                        self.relay_store,
+                        news.get("headlines", []),
+                        moment,
+                        checked_at=news["headlines_as_of"],
+                        error=news.get("headlines_error"),
+                    )
+                    self.last_headlines = marker
             if self.handoff_interval:
                 if page.get("snapshots"):
                     self.store.refresh_broker_facts(*page["snapshots"], moment)
@@ -155,6 +191,7 @@ class LocalFeedConsumer:
         self.store, self.feeds = store, feeds
         self.source = feeds.source_id()
         self.completion_clock = completion_clock
+        self.calendar_checked, self.calendar_info = None, {"status": "unavailable"}
 
     def poll(self, moment):
         try:
@@ -162,12 +199,23 @@ class LocalFeedConsumer:
             moment = self.completion_clock() if self.completion_clock else moment
             if page:
                 self.store.accept(self.source, page, moment)
+            if (
+                self.calendar_checked is None
+                or (moment - self.calendar_checked).total_seconds() >= 60
+            ):
+                from pipmind.shadow.calendar import retain_calendar
+
+                cached = self.feeds.state("calendar:data")
+                observed = self.completion_clock() if self.completion_clock else moment
+                self.calendar_info = retain_calendar(self.store, cached, observed)
+                self.calendar_checked = observed
             self.store.set_runtime(
                 "feed_status",
                 {
                     "coverage": self.feeds.state("canonical:quality", {"status": "unverified"}),
                     "quarantined": self.feeds.status()["quarantined"],
                     "checked_at": stamp(moment),
+                    "calendar": self.calendar_info,
                 },
             )
             return len(page)
@@ -582,6 +630,7 @@ def from_env():
             os.environ["PIPMIND_SHADOW_GATEWAY_SOURCE_ID"],
             handoff_interval=int(os.environ.get("PIPMIND_SHADOW_GATEWAY_INTERVAL", "0")),
             completion_clock=now,
+            relay_store=feed_app.state.store if feed_app else None,
         )
     return create_app(
         store,

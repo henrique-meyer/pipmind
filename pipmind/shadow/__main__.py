@@ -71,6 +71,9 @@ def main():
                     manifest=bounded_json(read_private(args.manifest, 65536))
                     if args.manifest
                     else None,
+                    progress=lambda report: write_private(
+                        args.output, encoded({**report, "partial": True}).encode()
+                    ),
                 )
             )
             write_private(args.output, encoded(report).encode())

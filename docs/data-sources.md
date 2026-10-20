@@ -6,7 +6,7 @@ Feeds have to be reachable from an ordinary cloud host. The design does not depe
 
 ## macro-feed
 
-M3 implements the [local information feeds](feeds.md), including an opt-in stream/webhook adapter and durable hourly calendar cache. All source validation so far uses original synthetic inputs; real provider connectivity, entitlements, timing/scale mappings and endpoint recipes still need M4 live-read validation.
+M3 implements the [local information feeds](feeds.md), including an opt-in stream/webhook adapter and durable hourly calendar cache. M4 has verified hosted REST/SSE, retained windows for 33 native-unit macro series across eight currencies, and the live calendar cache. The vendor's current quality metadata marks none of those retained windows point-in-time safe and leaves source monitoring incomplete. Successful capture does not remove those limitations. Signed public webhook delivery and full-day freshness/revision/backfill qualification remain open; see [source coverage qualification](shadow.md#source-coverage-qualification-pip-14).
 
 | Source | Use | Cost | Why this one |
 | --- | --- | --- | --- |

@@ -61,6 +61,62 @@ def test_expanded_feed_status_retains_raw_facts_before_prompt_factoring(mind):
     assert mind.runtime("feed_status") == status
 
 
+def test_calendar_snapshots_keep_full_history_and_are_native_search_evidence(mind):
+    from pipmind.shadow.calendar import retain_calendar
+    from pipmind.shadow.common import encoded
+
+    cached = {
+        "fetched_at": MOMENT.isoformat(),
+        "rows": [
+            {
+                "title": "Synthetic future CPI",
+                "country": "USD",
+                "impact": "High",
+                "date": (MOMENT + timedelta(days=1)).isoformat(),
+                "forecast": "2.0%",
+                "previous": "1.9%",
+            }
+        ],
+    }
+    baseline = mind.head()
+    first = retain_calendar(mind, cached, MOMENT)
+    assert retain_calendar(mind, cached, MOMENT) == first
+    second = retain_calendar(
+        mind, {**cached, "rows": [{**cached["rows"][0], "forecast": "2.1%"}]}, MOMENT
+    )
+    assert first["record_id"] != second["record_id"]
+    assert mind.head() == baseline  # no working revision, account, or authority mutation
+    found = mind.search(first["record_id"] + " | USD CPI", MOMENT)
+    assert len(found) == 1 and found[0]["metadata"]["record_id"] == first["record_id"]
+    assert '"forecast":"2.0%"' in found[0]["body"]
+    assert '"publication_time":null' in found[0]["body"]
+    assert encoded(first).count("forecast") == 0  # only a reference enters every prompt
+    assert (
+        retain_calendar(mind, {**cached, "fetched_at": "2099-01-01T00:00:00Z"}, MOMENT)["status"]
+        == "future_snapshot"
+    )
+    from pipmind.shadow.service import LocalFeedConsumer
+
+    class Feeds:
+        def source_id(self):
+            return "synthetic-calendar-source"
+
+        def events(self, *args):
+            return []
+
+        def state(self, key, default=None):
+            return cached if key == "calendar:data" else default
+
+        def status(self):
+            return {"quarantined": 0}
+
+    consumer = LocalFeedConsumer(mind, Feeds())
+    assert consumer.poll(MOMENT) == 0
+    assert mind.runtime("feed_status")["calendar"]["record_id"] == first["record_id"]
+    consumer.poll(MOMENT + timedelta(seconds=1))
+    assert mind.runtime("feed_status")["calendar"]["record_id"] == first["record_id"]
+
+
 @pytest.mark.parametrize("case_id", SHADOW_CASES)
 def test_starter_cases_through_actual_sql_shadow_runtime(mind, case_id):
     cases = [
@@ -573,6 +629,11 @@ def test_interrupted_or_invalid_clone_changes_neither_source_nor_destination(min
         ("shadow-context-v3", "sql-memory-v2"),
         ("shadow-context-v4", "sql-memory-v2"),
         ("shadow-context-v5", "sql-memory-v2"),
+        ("shadow-context-v6", "sql-memory-v2"),
+        ("shadow-context-v7", "sql-memory-v2"),
+        ("shadow-context-v8", "sql-memory-v2"),
+        ("shadow-context-v9", "sql-memory-v2"),
+        ("shadow-context-v10", "sql-memory-v2"),
     ],
 )
 def test_legacy_context_bundle_rebuilds_retrieval_without_rewriting_history(mind, versions):
@@ -788,6 +849,76 @@ def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primar
     assert all(SqlMind(mind.connect, r["trader"]).head()["paused"] for r in report["results"])
     assert mind.status() == baseline
     assert report["human_review"].startswith("pending")
+
+
+def test_evaluation_commit_failure_retains_known_attempt_and_fails_completion(mind, monkeypatch):
+    from pipmind.shadow.evaluations import evaluate
+
+    original = SqlMind.commit
+    calls = 0
+    partial = []
+
+    def fail_once(store, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ShadowError("shadow_store_transaction_failed")
+        return original(store, *args, **kwargs)
+
+    monkeypatch.setattr(SqlMind, "commit", fail_once)
+    case = deepcopy(CASE)
+    report = asyncio.run(
+        evaluate(
+            mind.connect,
+            [case],
+            FixtureModel(case["model_responses"]),
+            repetitions=2,
+            progress=partial.append,
+        )
+    )
+    first, second = report["results"]
+    assert not first["hard_checks"]["complete_episode"]
+    assert first["failure_audit"] == "sql-and-report"
+    assert first["uncommitted_attempt"]["result"]["model_reply"]
+    assert first["outcomes"][0]["status"] == "not_completed"
+    assert first["model_refusals"] == 0 and second["hard_checks"]["complete_episode"]
+    assert report["summary"]["operational_failures"] == 1 and len(partial) == 2
+    assert all(SqlMind(mind.connect, r["trader"]).head()["paused"] for r in report["results"])
+    assert any(
+        '"evaluation-operational-failure"' in body
+        for meta, body in SqlMind(mind.connect, first["trader"]).retained()[1]
+    )
+
+
+def test_broker_headline_page_commits_events_and_coverage_atomically_in_sql(mind):
+    from pipmind.feeds.common import FeedError
+    from pipmind.feeds.news import relay_page
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    feeds = SqlFeedStore(mind.connect, profile="synthetic")
+    payload = {
+        "schema_version": 1,
+        "relay_id": "sql-relay-" + uuid4().hex,
+        "headline": "Synthetic policy statement",
+        "published_at": MOMENT.isoformat(),
+        "observed_at": MOMENT.isoformat(),
+    }
+    relay_page(feeds, [payload], MOMENT, checked_at=MOMENT.isoformat())
+    baseline = feeds.events(0, 500)
+    relay_page(feeds, [payload], MOMENT, checked_at=MOMENT.isoformat())
+    assert feeds.events(0, 500) == baseline
+    state = feeds.state("relay:status")
+    with pytest.raises(FeedError):
+        relay_page(
+            feeds,
+            [
+                {**payload, "relay_id": "never-committed"},
+                {**payload, "published_at": "2099-01-01T00:00:00Z"},
+            ],
+            MOMENT,
+            checked_at=MOMENT.isoformat(),
+        )
+    assert feeds.events(0, 500) == baseline and feeds.state("relay:status") == state
 
 
 @pytest.mark.parametrize("operation", ["feed", "inputs", "terms"])

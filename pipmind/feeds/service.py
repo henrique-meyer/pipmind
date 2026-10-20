@@ -100,6 +100,7 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
             "events": store.events(after, limit),
             "coverage": store.state("canonical:quality", {"status": "unverified"}),
             "quarantined": store.status()["quarantined"],
+            "calendar": store.state("calendar:data"),
         }
 
     @app.get("/status")

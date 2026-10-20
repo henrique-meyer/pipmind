@@ -241,6 +241,56 @@ The owner selected the FXMacroData $50 monthly plan and completed checkout; auth
 The separately approved PipMind X app uses an app-only credential in private configuration. Nine institutional account recipes now have hosted verification using actual profile fields and exact official-page backlinks, and timeline reads are active. A controlled SQL binding change preserves source identity, retained events and cursors without expanding metadata permissions. Initial reads seed at most the latest page; previously unfinished history cursors remain retained, and later live posts retain complete pagination. This is a verified institutional cohort, not completion of the broader personal office-holder, correspondent, event-window squawk or Truth Social mirror plan. No user access, X write or new credit purchase was requested. Full-day provider/broker/capacity/model-quality qualification remains tracked by PIP-14.
 
 
+## Source coverage qualification (PIP-14)
+
+The hosted source audit distinguishes configured recipes, successful provider
+reads, retained normalized events and complete-history or point-in-time claims.
+Thirty-three native-unit macro mappings cover eight currencies; unsupported
+consensus crosswalks, unknown publication/vintage and incomplete monitoring stay
+explicit. A captured REST window is not proof of complete source history. Signed
+public callback routing still needs specific approval; SSE and REST backfill do
+not certify that backup route. PMI headline coverage is not structured PMI actuals.
+
+Calendar cache snapshots also become immutable, dated SQL evidence. Model feed
+facts carry only the snapshot's record ID, fetch time and row count. Decisions
+can use `search_memory` with `record_id | currency and event title` to retrieve
+relevant schedule/consensus rows. Projections disclose omitted rows, while the
+complete original remains in SQL and experience exports. Snapshots do not flood
+ordinary news retrieval with a week's keywords. Unknown publication time stays
+unknown; future scheduled dates are observations of a schedule, not released
+actuals. Revised snapshots get distinct IDs without changing earlier evidence,
+working memory, account authority or input ordering. Cached references refresh
+at most once a minute; the provider retains its hourly polling limit.
+
+The gateway reads a bounded Reuters FX headline window every minute using its
+existing read-only session. It validates the vendor publication time separately
+from receipt, retains revisions with distinct content identities, and hands the
+cached page to the SQL news store atomically before the price handoff cadence.
+Repeated reads and consumer restarts deduplicate by stable identity. The engine
+receives normalized breaking news; it receives no broker credentials, article
+body reader or order transport. A news-only outage retains the last successful
+cache and an explicit error without interrupting price capture. Missing or future
+vendor publication times are refused. The latest 100 headlines are a bounded
+polling window: a full window or an outage never proves lossless historical wire
+coverage. News status preserves this limitation and each RSS source's last
+success independently of its latest failure. Worker liveness is not source health.
+
+Free source additions require live parsing checks and the existing controlled
+additive SQL recipe migration. Keep the original source identity, events and
+cursors; do not drop an unavailable recipe to claim complete coverage. Broader
+personal office-holder/correspondent/squawk/primary-channel recipes require their
+own identity, availability and cost evidence. The verified institutional cohort
+does not certify those roles. Repeated model integrity, literal fixture alignment,
+retained-context semantic fidelity and owner calibration remain separate results.
+
+The repeated-evaluation grader `shadow-live-v2` also requires every episode's
+inputs to have completed outcomes. An operational SQL failure is reported
+separately from a model refusal. Known responses/usage before a failed commit
+are retained as an uncommitted attempt and a separate SQL diagnostic when
+available; they never become invented outcomes. The CLI saves partial reports
+after each episode and before an unconfirmed pause aborts the run. A clean retry
+does not erase an earlier partial episode or unknown usage.
+
 ## Bounded working memory (PIP-14)
 
 Owner-approved `bounded-working-v1` keeps concise current views and active prerequisites in prompts while retaining exact earlier state, events, responses, dates and provenance in SQL. It is M4 state maintenance, separate from M7 playbook revision. Identity/playbook and all confirmed position theses remain intact. Neither age nor an unavailable article resolves a condition. Headline catalogues and general coverage gaps belong in retained evidence rather than becoming one permanent current view per item.
