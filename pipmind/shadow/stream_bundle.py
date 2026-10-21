@@ -9,12 +9,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from pipmind.contracts import private_output_allowed, stamp, utc
+from pipmind.contracts import ContractError, private_output_allowed, stamp, utc
 from pipmind.portability import BundleError
 from pipmind.shadow.bundle import RETRIEVAL_VERSION, SUPPORTED_CONTEXTS
 from pipmind.shadow.common import ShadowError, digest, encoded, now
 from pipmind.shadow.model import PROMPT_VERSION
 from pipmind.stream_portability import (
+    MAX_DIRECTORY_BYTES,
     MAX_ENTRIES,
     MAX_FILE_BYTES,
     MAX_MANIFEST_BYTES,
@@ -22,6 +23,21 @@ from pipmind.stream_portability import (
     release_cache,
     validate_stream,
 )
+
+
+def _memory_headroom():
+    for usage_path, limit_path in (
+        ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),
+        (
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+        ),
+    ):
+        current, limit = Path(usage_path), Path(limit_path)
+        if current.exists() and limit.exists() and limit.read_text().strip() != "max":
+            if int(limit.read_text()) - int(current.read_text()) < 96 * 1048576:
+                raise BundleError("stream_memory_headroom")
+            break
 
 
 def private_path(path):
@@ -75,18 +91,7 @@ def operation(folder):
             raise BundleError("stream_requires_disk_staging")
     if shutil.disk_usage(folder).free < 4 * MAX_TOTAL_BYTES:
         raise BundleError("stream_disk_headroom")
-    for usage_path, limit_path in (
-        ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),
-        (
-            "/sys/fs/cgroup/memory/memory.usage_in_bytes",
-            "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-        ),
-    ):
-        current, limit = Path(usage_path), Path(limit_path)
-        if current.exists() and limit.exists() and limit.read_text().strip() != "max":
-            if int(limit.read_text()) - int(current.read_text()) < 96 * 1048576:
-                raise BundleError("stream_memory_headroom")
-            break
+    _memory_headroom()
     with exclusive_operation():
         with tempfile.TemporaryDirectory(prefix="pipmind-stream-", dir=folder) as private:
             os.chmod(private, 0o700)
@@ -104,6 +109,165 @@ def _path(meta):
         "playbook_history": "playbook-history",
     }[part]
     return f"mind/{folder}/{digest(meta['record_id'])}.md"
+
+
+def _manifest(store, head, moment, earliest, counts, inventory):
+    """One manifest layout for export and exact inventory-free size inspection."""
+    return {
+        "format": "pipmind",
+        "schema_version": 3,
+        "mind_schema_version": 1,
+        "kind": "experience",
+        "trader_id": store.trader,
+        "lineage_id": head["lineage"],
+        "export_id": str(uuid4()),
+        "created_at": stamp(moment),
+        "checkpoint": {
+            "checkpoint_id": str(head["revision"]),
+            "event_watermark": head["watermark"],
+            "as_of": stamp(moment),
+        },
+        "coverage": {
+            "complete": True,
+            "retained_from": stamp(earliest),
+            "through": stamp(moment),
+            "gaps": [],
+            "record_counts": {
+                part: counts[part]
+                for part in (
+                    "identity",
+                    "playbook",
+                    "working_memory",
+                    "journal",
+                    "review",
+                    "memory",
+                    "playbook_history",
+                )
+            },
+        },
+        "compatibility": {
+            "application_schema": 1,
+            "application_version": "shadow-v1",
+            "prompt_version": PROMPT_VERSION,
+            "retrieval_version": RETRIEVAL_VERSION,
+            "model_version": None,
+            "inference_settings": {"max_output_tokens": 4096},
+            "compatibility_decision": "shadow-stream-v1",
+        },
+        "files": inventory,
+    }
+
+
+def _utf8_size(text):
+    """Count even an oversized source record without making its full byte copy."""
+    return sum(len(text[offset : offset + 65536].encode()) for offset in range(0, len(text), 65536))
+
+
+def inspect_experience_size(store, moment=None, *, interrupt=None):
+    """Measure a complete checkpoint without ZIP/staging or validity certification.
+
+    Continue past size limits to report the whole retained source. Only one record
+    and one small inventory-row representation are held; no inventory/path list or
+    record-body digest is built. Invalid source shapes/clocks and interruptions
+    raise without returning a partial report. Dependencies are not validated here.
+    """
+    _memory_headroom()
+    with exclusive_operation():
+        counts, earliest = Counter(), None
+        records = record_bytes = inventory_rows = names_bytes = maximum_record = 0
+        try:
+            with store.stream_retained() as (head, rows):
+                moment = moment or now()
+                # Validate the small shared envelope while the snapshot is open.
+                if (
+                    not isinstance(head.get("lineage"), str)
+                    or not head["lineage"]
+                    or type(head.get("revision")) is not int
+                    or head["revision"] < 0
+                    or not isinstance(head.get("watermark"), str)
+                    or not head["watermark"]
+                ):
+                    raise BundleError("invalid_inspection_source")
+                for meta, body in rows:
+                    store.contracts.validate("markdown-front-matter", meta)
+                    if (
+                        not isinstance(body, str)
+                        or len(meta["record_id"].encode("utf-16-le")) > 512
+                    ):
+                        raise BundleError("invalid_inspection_source")
+                    when = utc(meta["ts"])
+                    if when > moment:
+                        raise BundleError("export_clock_before_checkpoint")
+                    earliest = min(earliest, when) if earliest is not None else when
+                    name = _path(meta)
+                    content_bytes = 9 + _utf8_size(encoded(meta)) + _utf8_size(body)
+                    inventory_rows += len(
+                        encoded(
+                            {
+                                "path": name,
+                                "bytes": content_bytes,
+                                "sha256": "0" * 64,
+                            }
+                        ).encode()
+                    )
+                    names_bytes += len(name.encode("ascii"))
+                    record_bytes += content_bytes
+                    maximum_record = max(maximum_record, content_bytes)
+                    counts[meta["part"]] += 1
+                    records += 1
+                    if interrupt:
+                        interrupt()
+                if any(counts[part] != 1 for part in ("identity", "playbook", "working_memory")):
+                    raise BundleError("invalid_inspection_source")
+                manifest = _manifest(store, head, moment, earliest, counts, [])
+                # [] is already present in the base. Add only row bytes and commas.
+                inventory_bytes = 2 + inventory_rows + max(records - 1, 0)
+                manifest_bytes = len(encoded(manifest).encode()) + inventory_bytes - 2
+        except (ContractError, KeyError, TypeError, UnicodeError, AttributeError):
+            raise BundleError("invalid_inspection_source") from None
+        entries = records + 1
+        names_bytes += len("manifest.json")
+        directory_bytes = 46 * entries + names_bytes
+        expanded_bytes = record_bytes + manifest_bytes
+        archive_bytes = expanded_bytes + 76 * entries + 2 * names_bytes + 22
+        checks = [
+            ("entry_count", entries, MAX_ENTRIES),
+            ("file_size", maximum_record, MAX_FILE_BYTES),
+            ("manifest_size", manifest_bytes, MAX_MANIFEST_BYTES),
+            ("expanded_size", expanded_bytes, MAX_TOTAL_BYTES),
+            ("archive_size", archive_bytes, MAX_TOTAL_BYTES),
+            ("directory_size", directory_bytes, MAX_DIRECTORY_BYTES),
+        ]
+        violations = [
+            {"code": code, "actual": actual, "limit": limit}
+            for code, actual, limit in checks
+            if actual > limit
+        ]
+        return {
+            "schema_version": 3,
+            "inspection": "size_only",
+            "archive_layout": "stored_classic_size_projection",
+            "complete_scan": True,
+            "size_limits_met": not violations,
+            "validity_verified": False,
+            "export_created": False,
+            "clone_verified": False,
+            "records": records,
+            "record_counts": manifest["coverage"]["record_counts"],
+            "record_content_bytes": record_bytes,
+            "inventory_bytes": inventory_bytes,
+            "expanded_bytes": expanded_bytes,
+            "manifest_bytes": manifest_bytes,
+            "archive_bytes": archive_bytes,
+            "directory_bytes": directory_bytes,
+            "maximum_record_bytes": maximum_record,
+            "entries": entries,
+            "violations": violations,
+            "checkpoint": manifest["checkpoint"],
+            "checkpoint_lock_seconds": head.get("checkpoint_lock_seconds"),
+            "checkpoint_transaction_seconds": head.get("checkpoint_transaction_seconds"),
+            "checkpoint_isolation": head.get("checkpoint_isolation"),
+        }
 
 
 def export_experience_file(store, path, moment=None, *, interrupt=None):
@@ -145,49 +309,7 @@ def export_experience_file(store, path, moment=None, *, interrupt=None):
                             raise BundleError("archive_size")
                         if interrupt:
                             interrupt()
-                manifest = {
-                    "format": "pipmind",
-                    "schema_version": 3,
-                    "mind_schema_version": 1,
-                    "kind": "experience",
-                    "trader_id": store.trader,
-                    "lineage_id": head["lineage"],
-                    "export_id": str(uuid4()),
-                    "created_at": stamp(moment),
-                    "checkpoint": {
-                        "checkpoint_id": str(head["revision"]),
-                        "event_watermark": head["watermark"],
-                        "as_of": stamp(moment),
-                    },
-                    "coverage": {
-                        "complete": True,
-                        "retained_from": stamp(earliest),
-                        "through": stamp(moment),
-                        "gaps": [],
-                        "record_counts": {
-                            part: counts[part]
-                            for part in (
-                                "identity",
-                                "playbook",
-                                "working_memory",
-                                "journal",
-                                "review",
-                                "memory",
-                                "playbook_history",
-                            )
-                        },
-                    },
-                    "compatibility": {
-                        "application_schema": 1,
-                        "application_version": "shadow-v1",
-                        "prompt_version": PROMPT_VERSION,
-                        "retrieval_version": RETRIEVAL_VERSION,
-                        "model_version": None,
-                        "inference_settings": {"max_output_tokens": 4096},
-                        "compatibility_decision": "shadow-stream-v1",
-                    },
-                    "files": inventory,
-                }
+                manifest = _manifest(store, head, moment, earliest, counts, inventory)
                 payload = encoded(manifest).encode()
                 if len(payload) > MAX_MANIFEST_BYTES or total + len(payload) > MAX_TOTAL_BYTES:
                     raise BundleError("manifest_size")

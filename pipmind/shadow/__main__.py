@@ -27,6 +27,8 @@ def main():
     export = sub.add_parser("export")
     export.add_argument("--output", required=True)
     export.add_argument("--format", choices=("v2", "stream-v3"), default="v2")
+    size = sub.add_parser("export-size", help="Inspect stream-v3 sizes without creating an export")
+    size.add_argument("--output", required=True)
     clone = sub.add_parser("clone")
     clone.add_argument("--input", required=True)
     clone.add_argument("--identity", required=True)
@@ -51,6 +53,12 @@ def main():
     evaluation.add_argument("--output", required=True)
     args = parser.parse_args()
     try:
+        if args.command == "export-size":
+            from pipmind.shadow.stream_bundle import private_path
+
+            output = private_path(args.output)
+            if output.exists():
+                raise ShadowError("output_already_exists")
         connect = connector()
         if args.command == "evaluate":
             from pipmind.dataset import load_cases
@@ -111,6 +119,27 @@ def main():
                 print(encoded(export_experience_file(store, args.output)))
             else:
                 write_private(args.output, export_experience(store, now()))
+        elif args.command == "export-size":
+            from pipmind.shadow.stream_bundle import inspect_experience_size
+
+            report = inspect_experience_size(store)
+            write_private(output, encoded(report).encode())
+            print(
+                encoded(
+                    {
+                        "inspection": "size_only",
+                        "complete_scan": report["complete_scan"],
+                        "size_limits_met": report["size_limits_met"],
+                        "validity_verified": False,
+                        "export_created": False,
+                        "report_saved": True,
+                    }
+                )
+            )
+            if not report["size_limits_met"]:
+                parser.exit(
+                    2, "Size inspection completed; current stream-v3 limits are exceeded.\n"
+                )
         elif args.command == "clone":
             if args.format == "stream-v3":
                 from pipmind.shadow.stream_bundle import import_experience_file

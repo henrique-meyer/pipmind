@@ -156,6 +156,34 @@ Markdown entry and 2 MiB for the manifest. V3 accepts stored ZIP members only
 legacy archives remain on the original validator. Limits are simultaneous;
 manifest overhead can become the limiting factor before the entry count.
 
+Inspect the complete retained checkpoint before attempting a large export. Set
+`PIPMIND_DATA_DIR` to an absolute private directory outside the public checkout,
+and choose a new output filename:
+
+```sh
+python -m pipmind.shadow export-size --output "$PIPMIND_DATA_DIR/exports/size-report.json"
+```
+
+This read-only operation streams one consistent SQL checkpoint, without creating
+an archive, pausing the source, changing limits or calling a model/provider.
+It reports record counts, UTF-8 record content, the complete inventory array,
+manifest, expanded content, projected stored-ZIP archive and directory sizes,
+the largest record, and every exceeded current size/count bound. Brackets,
+commas, front matter and ZIP headers are included. It keeps no full inventory
+or history in memory. An interrupted scan refuses without a completed report.
+
+The private report is never overwritten. Exit status is **0** when the complete
+scan meets the size bounds, **2** when the complete scan exceeds them (the
+diagnostic report is still saved), and **1** for a refused operation. A
+`complete_scan` proves only that the source iteration finished; `size_limits_met`
+does not prove schema/evidence validity, sufficient export/import staging,
+clone fidelity or full-day qualification. `validity_verified`, `export_created`
+and `clone_verified` remain false.
+The result applies to its checkpoint and timestamp; continuing workers may
+change the next export's requirements. Inspection retains the manual-operation
+lock and memory-headroom guard, but needs no archive staging space. Actual
+export/import still enforce all existing disk, memory and validation guards.
+
 SQL cursor iteration captures one complete consistent checkpoint. Each record
 is written and hashed separately; no full-history byte dictionary is created.
 Validation bounds the ZIP directory before allocating its entries, rejects
