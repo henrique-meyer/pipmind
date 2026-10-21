@@ -12,6 +12,91 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 SQL_IMAGE = "pipmind-sql:local"
 APP_IMAGE = "pipmind-shadow:ci"
+SERVICE_DATABASE = "pipmind_shadow_service"
+
+
+def service_checkpoint_code():
+    """Read one exact local fixture checkpoint, returning hashes instead of bodies."""
+    return f"""
+import hashlib,json,os
+from pipmind.contracts import loads
+from pipmind.shadow.common import encoded
+from pipmind.shadow.sql import connector
+from pipmind.shadow.store import SqlMind
+assert os.environ.get('PIPMIND_SQL_LOCAL')=='true'
+assert os.environ.get('PIPMIND_SQL_DATABASE')=={SERVICE_DATABASE!r}
+assert os.environ['PIPMIND_SHADOW_TRADER'].startswith('fixture-service-')
+store=SqlMind(connector(),os.environ['PIPMIND_SHADOW_TRADER'])
+queries={{
+ 'pm_minds':('SELECT trader,lineage,binding,revision,paused,created,working,'
+             'playbook_version,parent FROM pm_minds WHERE trader=%s ORDER BY trader'),
+ 'pm_records':("SELECT pk,id,part,CONCAT(CONVERT(varchar(33),ts,126),'Z'),meta,body "
+               'FROM pm_records WHERE trader=%s ORDER BY pk'),
+ 'pm_inputs':'SELECT pk,id,facts,envelope,status FROM pm_inputs WHERE trader=%s ORDER BY pk',
+ 'pm_outcomes':'SELECT pk,event_id,result FROM pm_outcomes WHERE trader=%s ORDER BY pk',
+ 'pm_cursors':('SELECT source,seq FROM pm_cursors WHERE trader=%s '
+               'ORDER BY source COLLATE Latin1_General_100_BIN2'),
+ 'pm_terms':('SELECT t.term,t.record_pk FROM pm_terms t '
+             'JOIN pm_records r ON t.record_pk=r.pk '
+             'WHERE r.trader=%s ORDER BY t.term,t.record_pk'),
+}}
+result={{'tables':{{}}}}
+with store.transaction() as cursor:
+ head=store._head(cursor)
+ result.update(paused=head['paused'],revision=head['revision'],
+               reasoning_hold_present=store._runtime(cursor,'reasoning_hold')is not None)
+ for table,query in queries.items():
+  cursor.execute(query,(store.trader,));fingerprint=hashlib.sha256();count=0
+  while True:
+   row=cursor.fetchone()
+   if row is None:break
+   fingerprint.update(encoded(list(row)).encode());fingerprint.update(b'\\n');count+=1
+  result['tables'][table]={{'count':count,'sha256':fingerprint.hexdigest()}}
+ cursor.execute('SELECT id,status FROM pm_inputs WHERE trader=%s ORDER BY pk',(store.trader,))
+ result['input_statuses']=dict(cursor.fetchall())
+ result['pending']=sum(value=='pending'for value in result['input_statuses'].values())
+ cursor.execute('SELECT event_id,result FROM pm_outcomes WHERE trader=%s ORDER BY pk',
+                (store.trader,))
+ result['outcome_statuses']={{}}
+ for identifier,body in cursor.fetchall():
+  outcome=loads(body)
+  result['outcome_statuses'][identifier]={{'status':outcome['status'],
+                                         'dispatches':outcome['dispatches']}}
+ cursor.execute("SELECT v FROM pf_meta WHERE k='source'")
+ row=cursor.fetchone();source=row[0]if row else None
+ cursor.execute('SELECT seq FROM pm_cursors WHERE trader=%s AND source=%s',
+                (store.trader,source));row=cursor.fetchone()
+ result['feed_cursor']=row[0]if row else None
+ cursor.execute('SELECT COALESCE(MAX(seq),0) FROM pf_events')
+ result['outbox_max']=cursor.fetchone()[0]
+ cursor.execute("SELECT COUNT(*) FROM pf_inbox WHERE status='pending'")
+ result['inbox_pending']=cursor.fetchone()[0]
+print(encoded(result))
+"""
+
+
+def service_checkpoint_ready(value, expected_outcomes, *, frozen=None):
+    """No aggregate count can substitute for these exact committed identities."""
+    try:
+        ready = (
+            value["paused"] is False
+            and value["reasoning_hold_present"] is False
+            and value["pending"] == value["inbox_pending"] == 0
+            and value["feed_cursor"] == value["outbox_max"]
+            and value["tables"]["pm_inputs"]["count"] == 2
+            and value["tables"]["pm_outcomes"]["count"] == 2
+            and value["input_statuses"] == dict.fromkeys(expected_outcomes, "complete")
+            and set(value["outcome_statuses"]) == set(expected_outcomes)
+            and all(
+                value["outcome_statuses"][identifier]["status"] == status
+                and type(value["outcome_statuses"][identifier]["dispatches"]) is int
+                and value["outcome_statuses"][identifier]["dispatches"] == 0
+                for identifier, status in expected_outcomes.items()
+            )
+        )
+        return ready and (frozen is None or value == frozen)
+    except (KeyError, TypeError):
+        return False
 
 
 def command(*args, check=True, timeout=180):
@@ -121,6 +206,59 @@ def main():
             )
             return json.loads(command("docker", "exec", app, "python", "-c", code))
 
+        def service_checkpoint(expected_outcomes, *, frozen=None):
+            last = {}
+
+            def ready():
+                nonlocal last
+                last = json.loads(
+                    command("docker", "exec", app, "python", "-c", service_checkpoint_code())
+                )
+                return (
+                    last
+                    if service_checkpoint_ready(last, expected_outcomes, frozen=frozen)
+                    else None
+                )
+
+            try:
+                return wait(ready)
+            except RuntimeError:
+                # Bounded diagnostics contain counts/status/phase codes, never
+                # retained payloads, request tokens, environment or SQL bodies.
+                diagnostic = {
+                    "error": "service_checkpoint_not_ready_or_changed",
+                    "paused": last.get("paused"),
+                    "revision": last.get("revision"),
+                    "pending": last.get("pending"),
+                    "inbox_pending": last.get("inbox_pending"),
+                    "feed_cursor": last.get("feed_cursor"),
+                    "outbox_max": last.get("outbox_max"),
+                    "row_counts": {
+                        key: row["count"] for key, row in last.get("tables", {}).items()
+                    },
+                    "frozen_table_matches": {
+                        key: row == frozen["tables"].get(key)
+                        for key, row in last.get("tables", {}).items()
+                    }
+                    if frozen is not None
+                    else {},
+                    "outcome_statuses": [
+                        row["status"] for row in last.get("outcome_statuses", {}).values()
+                    ],
+                }
+                try:
+                    response = request("/status")
+                    state = response["body"]
+                    diagnostic.update(
+                        http_status=response["status"],
+                        worker_phase=state.get("reasoning_worker", {}).get("phase"),
+                        worker_error_type=state.get("reasoning_worker", {}).get("error_type"),
+                    )
+                except (RuntimeError, ValueError, KeyError):
+                    diagnostic["status_probe"] = "unavailable"
+                print("FAIL: " + json.dumps(diagnostic, sort_keys=True), flush=True)
+                raise
+
         try:
             command("docker", "network", "create", "--internal", network)
             command(
@@ -211,12 +349,26 @@ def main():
             )
             summary["stream_experience"] = json.loads(stream)
             print("PASS: complete streaming SQL clone within existing demo allocation", flush=True)
+            # Unit tests intentionally retain inbox/outbox history. Their pending
+            # captures can normalize even with external reads disabled, so the
+            # restart fixture gets its own database on the SAME local SQL server.
+            if sqlcmd(f"CREATE DATABASE {SERVICE_DATABASE};") is None:
+                raise RuntimeError("sql_service_database_failed")
+            environment = app_env.read_text()
+            previous = "PIPMIND_SQL_DATABASE=pipmind_shadow\n"
+            assert environment.count(previous) == 1
+            app_env.write_text(
+                environment.replace(previous, f"PIPMIND_SQL_DATABASE={SERVICE_DATABASE}\n")
+            )
             code = (
-                "import os; from pipmind.shadow.sql import connector; "
+                "import os; from pipmind.shadow.sql import connector,migrate,fulltext; "
                 "from pipmind.shadow.store import SqlMind; "
                 "from pipmind.shadow.common import now,digest; "
                 "from pipmind.shadow.fixtures import IDENTITY; "
-                "s=SqlMind(connector(),os.environ['PIPMIND_SHADOW_TRADER']); "
+                "assert os.environ.get('PIPMIND_SQL_LOCAL')=='true'; "
+                f"assert os.environ['PIPMIND_SQL_DATABASE']=={SERVICE_DATABASE!r}; "
+                "c=connector(); migrate(c); fulltext(c); "
+                "s=SqlMind(c,os.environ['PIPMIND_SHADOW_TRADER']); "
                 "s.initialize(IDENTITY,{'version':'v1','text':'Synthetic'},now().isoformat(),"
                 "binding=digest('synthetic-service')); s.set_paused(False)"
             )
@@ -265,6 +417,7 @@ def main():
                 )
             )
             # Exercise the actual SQL outbox -> local consumer -> shadow journal path.
+            news_identifier = "smoke-news:" + suffix
             command(
                 "docker",
                 "exec",
@@ -274,8 +427,9 @@ def main():
                 "from pipmind.feeds.sql_store import SqlFeedStore; "
                 "from pipmind.shadow.sql import connector; "
                 "from pipmind.feeds.fixtures import pulse; from pipmind.shadow.common import now; "
-                "s=SqlFeedStore(connector()); t=now(); "
-                "\nwith s.transaction() as d: s.emit(d,'news',pulse('news',t),t)",
+                "s=SqlFeedStore(connector()); t=now(); p=pulse('news',t); "
+                f"p['event_id']={news_identifier!r}; "
+                "\nwith s.transaction() as d: s.emit(d,'news',p,t)",
             )
             from datetime import UTC, datetime
 
@@ -295,9 +449,8 @@ def main():
             }
             packet = {"source": "smoke", "events": [{"sequence": 1, "event": event}]}
             assert request("/inputs", body=packet)["status"] == 200
-            wait(lambda: request("/status")["body"]["pending"] == 0)
-            before = request("/status")["body"]["outcomes"]
-            assert before >= 2
+            expected_outcomes = {news_identifier: "analysis_retained", identifier: "observed"}
+            service_checkpoint(expected_outcomes)
             memory = []
             memory_probe = (
                 "from pathlib import Path; "
@@ -315,9 +468,12 @@ def main():
             print(
                 f"PASS: warm SDK and isolated workers peak {max(memory) // 1048576} MiB", flush=True
             )
+            # Freeze the complete quiet source AFTER warming, rather than comparing
+            # restart state against an outcome count sampled before later commits.
+            before = service_checkpoint(expected_outcomes)
             command("docker", "restart", "--time", "10", app)
             wait(lambda: request("/healthz", auth=False))
-            wait(lambda: request("/status")["body"].get("outcomes") == before)
+            service_checkpoint(expected_outcomes, frozen=before)
             command("docker", "stop", "--time", "10", sql)
             packet["events"][0]["sequence"] = 2
             assert request("/inputs", body=packet)["status"] == 503
@@ -327,7 +483,7 @@ def main():
             # SQL accepting server-level queries does not imply that the
             # application database has completed recovery. Verify the actual
             # authenticated state within the same bounded readiness window.
-            wait(lambda: request("/status")["body"].get("outcomes") == before)
+            service_checkpoint(expected_outcomes, frozen=before)
             wait(
                 lambda: all(
                     row["alive"] for row in request("/feeds/status")["body"]["workers"].values()
@@ -347,6 +503,9 @@ def main():
                 "demo_allocation": True,
                 "integrated_feed_workers": True,
                 "sql_feed_handoff": True,
+                "named_events_completed": True,
+                "restart_exact_source_checkpoint": True,
+                "service_database_isolated": True,
             }
             output = private / "shadow-ci"
             output.mkdir(exist_ok=True)
