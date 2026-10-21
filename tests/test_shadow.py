@@ -49,7 +49,11 @@ def test_injected_foundry_call_has_bounded_tools_strict_output_and_usage():
     assert captured["options"]["response_format"] == {"type": "json_object"}
 
 
-@pytest.mark.parametrize("raw", ["```json\n{}\n```", '{"wake":true}', "x" * 65537])
+@pytest.mark.parametrize(
+    "raw",
+    ["```json\n{}\n```", '{"wake":true}', "x" * 65537],
+    ids=["markdown-fence", "missing-summary", "oversized-output"],
+)
 def test_malformed_or_oversized_output_never_becomes_a_decision(raw):
     class Agent:
         async def run(self, *a, **kw):

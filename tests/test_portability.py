@@ -61,7 +61,11 @@ def test_inherited_record_provenance_is_not_reassigned_to_checkpoint_owner(contr
     assert any(row["source_trader"] == "synthetic-ancestor" for row in bundle.records)
 
 
-@pytest.mark.parametrize("content", [b"not a ZIP", b"PK", b"", b"x" * 2_097_153])
+@pytest.mark.parametrize(
+    "content",
+    [b"not a ZIP", b"PK", b"", b"x" * 2_097_153],
+    ids=["not-zip", "truncated-header", "empty", "oversized-container"],
+)
 def test_invalid_or_oversized_containers_fail_closed(content, contracts):
     with pytest.raises(BundleError):
         validate_bundle(content, contracts)

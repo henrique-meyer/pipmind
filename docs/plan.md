@@ -315,7 +315,7 @@ PIP-14 remains the M4 umbrella. Its scoped subtasks and the later milestone stor
 | P1 | [PIP-29](https://nitro.atlassian.net/browse/PIP-29) | Implement original-trader recovery and account-assignment handover | M5 | To Do |
 | P1 | [PIP-30](https://nitro.atlassian.net/browse/PIP-30) | Implement demo-only order transport and prove a reconciled flat round trip | M6 | To Do |
 | P2 | [PIP-31](https://nitro.atlassian.net/browse/PIP-31) | Implement evidence-grounded autonomous review behind trusted Auto Learn controls | M7 | To Do |
-| P2 | [PIP-33](https://nitro.atlassian.net/browse/PIP-33) | Review deferred M4 source and local tooling issues with the owner | M4 | To Do |
+| P2 | [PIP-33](https://nitro.atlassian.net/browse/PIP-33) | Review deferred M4 source and local tooling issues with the owner | M4 | In Progress |
 
 PIP-32 adds an audited atomic compare-and-resume operation under the source lock: exact paused revision/head, pending input, no hold and owner-control hash must match in the same transaction as resume. Actual SQL tests must reject stale/concurrent/held states without mutation. Code delivery is complete with this change and its required SQL checks; hosted deployment and use remain under PIP-20. This is release-control hardening, not M5 ownership fencing or permission to trade.
 
@@ -367,3 +367,12 @@ without activating it. Preserve old report semantics, traces and source isolatio
 Offline and real SQL controls cover progress/failure linkage and caller mutation.
 This is local evidence, not provider attestation, a new qualification pass flag,
 an expected-manifest CLI, policy activation or authorization for hosted calls.
+
+PIP-33 includes a bounded Windows test-harness correction: assign descriptive
+short IDs to oversized negative-input parameter cases so pytest can publish
+PYTEST_CURRENT_TEST within Windows environment-variable limits. Preserve the
+original payloads, assertions and runtime bounds. Verify normal pytest execution
+of both oversized rejection paths, bounded collected IDs and the complete offline
+Windows suite; retain required Linux/SQL/container checks. Other parked findings
+and historical evidence limitations remain open. This does not change production
+code, dependencies, hosted state or qualification requirements.
