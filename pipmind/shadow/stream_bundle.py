@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from pipmind.contracts import ROOT, stamp, utc
+from pipmind.contracts import private_output_allowed, stamp, utc
 from pipmind.portability import BundleError
 from pipmind.shadow.bundle import RETRIEVAL_VERSION, SUPPORTED_CONTEXTS
 from pipmind.shadow.common import ShadowError, digest, encoded, now
@@ -26,9 +26,7 @@ from pipmind.stream_portability import (
 
 def private_path(path):
     path = Path(path).resolve()
-    if path.is_relative_to(ROOT) and not any(
-        path.is_relative_to(parent) for parent in (ROOT / ".data", ROOT / "evals/reports")
-    ):
+    if not private_output_allowed(path):
         raise ShadowError("output_must_be_private")
     return path
 

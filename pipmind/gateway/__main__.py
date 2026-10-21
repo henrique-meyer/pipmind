@@ -5,14 +5,14 @@ import json
 import sys
 from pathlib import Path
 
-from pipmind.contracts import ROOT, ContractError
+from pipmind.contracts import ContractError, data_dir, private_output_allowed
 from pipmind.gateway.recording import run_recording
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["replay", "serve"])
-    parser.add_argument("--output", type=Path, default=ROOT / ".data" / "gateway-replay")
+    parser.add_argument("--output", type=Path, default=data_dir() / "gateway-replay")
     parser.add_argument("--host", choices=["127.0.0.1", "0.0.0.0"], default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8081)
     args = parser.parse_args(argv)
@@ -27,9 +27,7 @@ def main(argv=None):
             )
             return 0
         output = args.output.resolve()
-        if output.is_relative_to(ROOT) and not any(
-            output.is_relative_to(base) for base in (ROOT / ".data", ROOT / "evals" / "reports")
-        ):
+        if not private_output_allowed(output):
             raise ContractError("output_must_be_private")
         output.mkdir(parents=True, exist_ok=True)
         # Every invocation starts an independent synthetic session/ledger.

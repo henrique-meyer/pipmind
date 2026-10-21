@@ -11,7 +11,15 @@ from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 
-from pipmind.contracts import ROOT, ContractError, Contracts, loads, utc
+from pipmind.contracts import (
+    ROOT,
+    ContractError,
+    Contracts,
+    loads,
+    private_output_allowed,
+    reports_dir,
+    utc,
+)
 from pipmind.core import (
     CONTEXT_VERSION,
     INSTRUCTIONS,
@@ -345,7 +353,7 @@ def main(argv=None):
     parser.add_argument("command", choices=["validate", "run", "record-baseline"])
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--week", type=Path, default=DEFAULT_WEEK)
-    parser.add_argument("--output", type=Path, default=ROOT / "evals" / "reports" / "latest")
+    parser.add_argument("--output", type=Path, default=reports_dir() / "latest")
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument(
         "--responses", type=Path, help="Candidate scripted response overrides, no code"
@@ -356,9 +364,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         output = args.output.resolve()
-        if output.is_relative_to(ROOT) and not any(
-            output.is_relative_to(base) for base in (ROOT / ".data", ROOT / "evals" / "reports")
-        ):
+        if not private_output_allowed(output):
             raise ContractError("output_must_be_private")
         cases, weeks = load_cases(args.dataset), load_cases(args.week, starter=False)
         if len(weeks) != 1:

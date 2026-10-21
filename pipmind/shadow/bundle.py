@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 from uuid import uuid4
 
-from pipmind.contracts import ROOT, loads, stamp, utc
+from pipmind.contracts import loads, private_output_allowed, stamp, utc
 from pipmind.portability import BundleError, validate_bundle
 from pipmind.shadow.common import ShadowError, digest, encoded
 from pipmind.shadow.model import PROMPT_VERSION
@@ -137,9 +137,7 @@ def import_experience(store, content, moment, binding, expected_identity, *, int
 
 def write_private(path, content):
     path = Path(path).resolve()
-    if path.is_relative_to(ROOT) and not any(
-        path.is_relative_to(parent) for parent in (ROOT / ".data", ROOT / "evals/reports")
-    ):
+    if not private_output_allowed(path):
         raise ShadowError("output_must_be_private")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Exclusive creation avoids overwriting an owner's existing bundle.

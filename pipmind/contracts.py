@@ -2,6 +2,7 @@
 
 import json
 import math
+import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +12,30 @@ from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_ROOT = ROOT / "contracts" / "v1"
+
+
+def _configured_dir(name, default):
+    value = os.environ.get(name, "").strip()
+    return Path(value).expanduser().resolve() if value else default
+
+
+def data_dir():
+    """Private working-data root: PIPMIND_DATA_DIR, else the ignored in-repo .data/."""
+    return _configured_dir("PIPMIND_DATA_DIR", ROOT / ".data")
+
+
+def reports_dir():
+    """Private report root: PIPMIND_REPORTS_DIR, else the ignored in-repo evals/reports/."""
+    return _configured_dir("PIPMIND_REPORTS_DIR", ROOT / "evals" / "reports")
+
+
+def private_output_allowed(path):
+    """Outside the checkout anything goes; inside it only the ignored private roots."""
+    path = Path(path).resolve()
+    if not path.is_relative_to(ROOT):
+        return True
+    roots = (ROOT / ".data", ROOT / "evals" / "reports", data_dir(), reports_dir())
+    return any(path.is_relative_to(root) for root in roots)
 
 
 class ContractError(ValueError):
