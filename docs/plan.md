@@ -87,7 +87,7 @@ PIP-45 implementation began on2026-10-21: pure session/accounting types and exac
 math are separate from the isolated SQL adapter. Independent implementers own
 disjoint files; root serializes Git/Jira and mandatory real-SQL test integration.
 PIP-46 follows the reviewed stable session API and same-cursor lock ordering;
-its implementation waits for that prerequisite. No hosted or PIP-17 change.
+PIP-45's prerequisite is merged in PR #87. No hosted or PIP-17 change.
 Session observations bind cumulative external cash flow to the equity checkpoint's
 coverage period and evidence, preserving original facts and avoiding repeated-flow
 addition. Newer incomplete observations cannot expose older facts as current.
@@ -492,3 +492,20 @@ inference, explicit fixture owner retry and progress on a fresh input. Retain
 exact immutable history, candidates and usage, active-policy checkpoint lineage
 and old-prerequisite retrieval. Exercise real request/wire assembly with injected
 synthetic responses; keep the one-repair-per-attempt bound and zero dispatches.
+
+PIP-46 implementation uses separate pure admission and SQL modules with dedicated
+unit tests and root-integrated mandatory SQL checks. Freeze exact requests and a
+sorted explicit policy book; retain their full immutable bodies, hash references
+and token-free receipts. Recompute reconciliation and match the durable session
+revision/equity/checkpoint. Require observed full-size opposite-side protective
+stops and each held/reserved instrument's own freshness and exposure limits.
+Pending risk remains gross across directions and sessions; no automatic release.
+A coherent external session-order count advances monotonically even on ordinary
+later risk refusal. One lease/session/admission transaction reads all reservations,
+checks combined financial/count limits, records refusal or reserves atomically,
+and rechecks fresh time and lease before commit. Same-body retries return the
+original receipt; changed bodies/session/book conflict and uncertain commits stay
+uncertain. Actual SQL tests must prove both adequately funded concurrent proposals
+can reserve, cap races admit only one, and staged expiry/interruption rolls back.
+These are isolated code deliveries with synthetic limits, not dispatch authority,
+owner policy approval, hosted activation, M4 qualification or broker attestations.
