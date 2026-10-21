@@ -64,6 +64,8 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 
 ## PIP-14 — Complete M4 live qualification
 
+- Private-layout follow-up: migrate operational helpers to explicit external data/report/deployment roots and explicit application source paths; verify them offline from independent working directories and preserve historical evidence. No hosted deployment or shadow-validation resume is part of this migration.
+
 - Current coverage/evaluation pass: verify hosted macro mappings, publication/unit/scale evidence, news/analysis delivery, social roles, outage/backfill and quarantine behavior against actual retained inputs. Repeat isolated real-model cases against the deployed prompt while ordered source catch-up continues; preserve original attempts and report integrity, semantic fidelity, refusals/timeouts, usage and human-calibration needs separately. Reuse approved subscriptions and capacity; public callbacks, new paid sources/credits and infrastructure changes remain outside this pass. Source outages and unsupported coverage must remain explicit gaps rather than passing by omission.
 - Calendar handoff: retain complete dated schedule/consensus snapshots as immutable SQL evidence and expose a compact retrieval reference in model feed facts. Keep publication time unknown, distinguish scheduled entries from actual releases, retain every snapshot without rewriting earlier facts, and validate retrieval and prompt size without copying the entire week into each request.
 
@@ -287,6 +289,6 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 ## PIP-19 - Configurable private data paths
 
 - Story: [PIP-19](https://nitro.atlassian.net/browse/PIP-19)
-- Status: In progress
+- Status: Done — PR #67 merged; configurable application paths verified offline.
 - Private working data, reports and Azure deployment state can live outside the checkout. `PIPMIND_DATA_DIR`, `PIPMIND_REPORTS_DIR` and `PIPMIND_AZURE_DIR` select those roots; when empty, the ignored in-repo `.data/`, `evals/reports/` and `.azure/` remain the defaults, so CI and fresh clones behave as before.
 - Output guards accept the configured roots in addition to the in-repo ignored ones. Nothing loads env files automatically; process variables stay authoritative.
