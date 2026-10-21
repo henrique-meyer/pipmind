@@ -126,7 +126,12 @@ def close_session(db):
 
 
 @contextmanager
-def transaction(connect, resource="pipmind-shadow"):
+def transaction(connect, resource="pipmind-shadow", *, passthrough=()):
+    """Preserve explicitly selected domain refusals; normalize storage failures.
+
+    Callers may opt in fixed-code domain exception classes without coupling this
+    SQL layer to their service. Session disposal still aborts uncommitted work.
+    """
     db = None
     try:
         db = connect()
@@ -148,6 +153,8 @@ def transaction(connect, resource="pipmind-shadow"):
         yield cur
         db.commit()
     except ShadowError:
+        raise
+    except passthrough:
         raise
     except Exception:
         raise ShadowError("shadow_store_transaction_failed") from None

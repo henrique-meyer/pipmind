@@ -132,12 +132,20 @@ class FeedStore:
                 "DELETE FROM alerts WHERE sequence <= (SELECT MAX(sequence)-1000 FROM alerts)"
             )
 
-    def ingest(self, producer, key, raw, fingerprint, received, *, cursor=None):
+    def ingest(
+        self, producer, key, raw, fingerprint, received, *, cursor=None, duplicate_facts=None
+    ):
         if producer not in KINDS or len(encoded(raw).encode()) > 262_144 or len(key) > 512:
             raise FeedError("invalid_feed_inbox")
         with self.transaction() as db:
-            row = db.execute("SELECT fingerprint FROM inbox WHERE key=?", (key,)).fetchone()
-            if row and row[0] != fingerprint:
+            row = db.execute("SELECT fingerprint,raw FROM inbox WHERE key=?", (key,)).fetchone()
+            if row and (
+                row[0] != fingerprint
+                or (
+                    duplicate_facts is not None
+                    and encoded(duplicate_facts(loads(row[1]))) != encoded(duplicate_facts(raw))
+                )
+            ):
                 raise FeedError("conflicting_feed_delivery")
             if not row:
                 db.execute(

@@ -117,6 +117,43 @@ def announcement(data):
         raise FeedError("invalid_macro_notification") from None
 
 
+def announcement_facts(data):
+    """Compare durable announcement data, independent of delivery envelopes.
+
+    Keep every merged field: private mappings can select a nonstandard prior
+    field. Webhook headers/wrappers and SSE frame IDs are already outside this
+    data object. Do not use mutable calendar context for duplicate identity.
+    """
+    _, row = announcement(data)
+    for field in (
+        "val",
+        "change",
+        "val_mom",
+        "pct_change_mom",
+        "pct_change_yoy",
+        "previous",
+        "forecast",
+        "announcement_datetime",
+        "official_planned_release_datetime",
+    ):
+        row.setdefault(field, None)
+    row.setdefault("records_written", 1)
+    row.setdefault("update_of_event_id", None)
+    row.setdefault(
+        "publication_time_status",
+        "unverified" if row.get("announcement_datetime") is not None else "unknown",
+    )
+    row.setdefault("publication_time_precision", "unknown")
+    return {
+        "currency": data["currency"].upper(),
+        "indicator": data["indicator"],
+        "announcement": row,
+        # Normalization reads these controls at top level, not from the row.
+        "records_written": data.get("records_written", 1),
+        "update_of_event_id": data.get("update_of_event_id"),
+    }
+
+
 def accept(store, data, now, *, stream_id=None):
     key, row = announcement(data)
     if stream_id is not None and stream_id != key:
@@ -135,6 +172,7 @@ def accept(store, data, now, *, stream_id=None):
         identity(encoded(facts)),
         now,
         cursor=("fxmd:last_event_id", key) if stream_id is not None else None,
+        duplicate_facts=announcement_facts,
     )
 
 

@@ -3410,3 +3410,320 @@ def test_stream_size_snapshot_does_not_mix_a_concurrent_committed_writer(mind, m
             worker.join(10)
         control.execute(f"DROP DATABASE [{name}]")
         admin.close()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"val": 2.6}, {"previous": 1.2}, {"records_written": 2}],
+    ids=["legacy-hash-conflict", "same-hash-previous", "same-hash-multirow"],
+)
+def test_sql_signed_webhook_collision_is_409_but_storage_failure_is_503(mind, monkeypatch, change):
+    from fastapi.testclient import TestClient
+
+    from pipmind.feeds.fixtures import signature
+    from pipmind.feeds.service import create_app
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    store = SqlFeedStore(mind.connect)
+    data = {
+        "event_id": "sql-webhook-" + uuid4().hex,
+        "currency": "USD",
+        "indicator": "synthetic_cpi",
+        "date": "2026-10-18",
+        "val": 2.5,
+    }
+    token, secret = "synthetic-" + "a" * 32, "synthetic-webhook-key"
+    with TestClient(create_app(store, token, secret=secret, now=lambda: MOMENT)) as client:
+        headers, raw = signature(data, MOMENT, secret)
+        first = client.post("/webhooks/fxmacrodata", headers=headers, content=raw)
+        assert first.status_code == 200 and first.json() == {"accepted": True, "duplicate": False}
+        capture = store.capture("fxmd:" + data["event_id"])
+        assert client.post("/webhooks/fxmacrodata", headers=headers, content=raw).json() == {
+            "accepted": True,
+            "duplicate": True,
+        }
+        changed_headers, changed_raw = signature({**data, **change}, MOMENT, secret)
+        collision = client.post(
+            "/webhooks/fxmacrodata", headers=changed_headers, content=changed_raw
+        )
+        assert collision.status_code == 409
+        assert collision.json() == {"error": "conflicting_feed_delivery"}
+        assert store.capture("fxmd:" + data["event_id"]) == capture
+        recovered = client.post("/webhooks/fxmacrodata", headers=headers, content=raw)
+        assert recovered.status_code == 200 and recovered.json() == {
+            "accepted": True,
+            "duplicate": True,
+        }
+        assert store.capture("fxmd:" + data["event_id"]) == capture
+
+        connect, closed, inserted = store.connect, [], []
+
+        class Cursor:
+            def __init__(self, cursor):
+                self.cursor = cursor
+
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+
+            def execute(self, statement, *args):
+                self.cursor.execute(statement, *args)
+                if statement.startswith("INSERT pf_inbox("):
+                    inserted.append(True)
+                    raise OSError("synthetic private driver detail must never reach HTTP")
+                return self
+
+        class Connection:
+            def __init__(self):
+                self.database = connect()
+
+            def __getattr__(self, name):
+                return getattr(self.database, name)
+
+            def cursor(self):
+                return Cursor(self.database.cursor())
+
+            def close(self):
+                self.database.close()
+                closed.append(True)
+
+        failure = {**data, "event_id": "sql-webhook-failure-" + uuid4().hex}
+        failure_headers, failure_raw = signature(failure, MOMENT, secret)
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "connect", Connection)
+            unavailable = client.post(
+                "/webhooks/fxmacrodata",
+                headers=failure_headers,
+                content=failure_raw,
+            )
+        assert unavailable.status_code == 503
+        assert unavailable.json() == {"error": "feed_store_unavailable"}
+        assert inserted == closed == [True]
+        assert store.capture("fxmd:" + failure["event_id"]) is None
+        assert store.capture("fxmd:" + data["event_id"]) == capture
+        retry = client.post("/webhooks/fxmacrodata", headers=failure_headers, content=failure_raw)
+        assert retry.status_code == 200 and retry.json() == {"accepted": True, "duplicate": False}
+        accepted_after_failure = store.capture("fxmd:" + failure["event_id"])
+        reopened = SqlFeedStore(mind.connect)
+        with TestClient(
+            create_app(reopened, token, secret=secret, now=lambda: MOMENT)
+        ) as restarted:
+            duplicate = restarted.post(
+                "/webhooks/fxmacrodata",
+                headers=failure_headers,
+                content=failure_raw,
+            )
+        assert duplicate.status_code == 200 and duplicate.json() == {
+            "accepted": True,
+            "duplicate": True,
+        }
+        assert reopened.capture("fxmd:" + failure["event_id"]) == accepted_after_failure
+        with reopened.transaction() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM pf_inbox WHERE k=%s", ("fxmd:" + failure["event_id"],)
+            )
+            assert cursor.fetchone()[0] == 1
+
+
+def test_sql_macro_semantic_conflict_preserves_original_raw_fingerprint_and_stream_cursor(mind):
+    from pipmind.feeds.common import FeedError
+    from pipmind.feeds.macro import accept
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    store = SqlFeedStore(mind.connect)
+    data = {
+        "event_id": "semantic-cursor-" + uuid4().hex,
+        "currency": "USD",
+        "indicator": "synthetic_cpi",
+        "date": "2026-10-18",
+        "val": 2.5,
+    }
+    assert accept(store, data, MOMENT, stream_id=data["event_id"]) is False
+    with store.transaction() as cursor:
+        cursor.execute(
+            "SELECT fingerprint,raw,received,status FROM pf_inbox WHERE k=%s",
+            ("fxmd:" + data["event_id"],),
+        )
+        original = cursor.fetchone()
+    later_cursor = "retained-newer-" + uuid4().hex
+    store.save("fxmd:last_event_id", later_cursor)
+    # `previous` is absent from the legacy hash but changes normalized semantics.
+    with pytest.raises(FeedError, match="^conflicting_feed_delivery$"):
+        accept(
+            store,
+            {**data, "previous": 1.2},
+            MOMENT + timedelta(seconds=1),
+            stream_id=data["event_id"],
+        )
+    reopened = SqlFeedStore(mind.connect)
+    assert reopened.state("fxmd:last_event_id") == later_cursor
+    with reopened.transaction() as cursor:
+        cursor.execute(
+            "SELECT fingerprint,raw,received,status FROM pf_inbox WHERE k=%s",
+            ("fxmd:" + data["event_id"],),
+        )
+        assert cursor.fetchone() == original
+    # An unchanged HTTP-style replay remains idempotent without a stream checkpoint write.
+    assert accept(reopened, data, MOMENT + timedelta(seconds=2)) is True
+    assert reopened.state("fxmd:last_event_id") == later_cursor
+
+
+def test_sql_quality_save_failure_rolls_back_valid_page_cursor_and_inbox_completion(
+    mind, monkeypatch
+):
+    from pipmind.feeds.common import FeedError, identity
+    from pipmind.feeds.fixtures import pulse
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    store = SqlFeedStore(mind.connect)
+    key, cursor_key = "quality-capture:" + uuid4().hex, "quality-cursor:" + uuid4().hex
+    payload = {**pulse("macro", MOMENT), "event_id": "quality-event:" + uuid4().hex}
+    raw = {"synthetic_original_capture": ["exact", "café", None]}
+    store.ingest("macro", key, raw, identity(key), MOMENT, cursor=(cursor_key, "accepted"))
+    original_capture = store.capture(key)
+    original_quality = store.state("canonical:quality")
+    quarantined = store.status()["quarantined"]
+    saved, staged = store.save, []
+    patch_key = "synthetic-quality:" + uuid4().hex
+    patch_value = {patch_key: {"point_in_time_safe": False, "monitoring": "unknown"}}
+
+    def fail_after_valid_writes(name, value, *, db=None):
+        if name == "canonical:quality":
+            assert db is not None
+            assert store.state(cursor_key, db=db) == "complete"
+            db.execute("SELECT status FROM pf_inbox WHERE k=%s", (key,))
+            assert db.fetchone()[0] == "complete"
+            db.execute("SELECT COUNT(*) FROM pf_events WHERE k=%s", (payload["event_id"],))
+            assert db.fetchone()[0] == 1
+            staged.append(True)
+            raise OSError("synthetic transient SQL write interruption")
+        return saved(name, value, db=db)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "save", fail_after_valid_writes)
+        with pytest.raises(FeedError, match="^feed_store_unavailable$"):
+            store.complete_batch(
+                "macro",
+                key,
+                [payload],
+                MOMENT,
+                cursor=(cursor_key, "complete"),
+                state_patch=("canonical:quality", patch_value),
+            )
+    assert staged == [True]
+    assert store.capture(key) == original_capture
+    assert store.state(cursor_key) == "accepted"
+    assert store.state("canonical:quality") == original_quality
+    assert store.status()["quarantined"] == quarantined
+    with store.transaction() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM pf_events WHERE k=%s", (payload["event_id"],))
+        assert cursor.fetchone()[0] == 0
+    store.complete_batch(
+        "macro",
+        key,
+        [payload],
+        MOMENT,
+        cursor=(cursor_key, "complete"),
+        state_patch=("canonical:quality", patch_value),
+    )
+    expected_quality = {**(original_quality or {}), **patch_value}
+    reopened = SqlFeedStore(mind.connect)
+    assert reopened.state(cursor_key) == "complete"
+    assert reopened.state("canonical:quality") == expected_quality
+    assert reopened.capture(key) == {**original_capture, "status": "complete"}
+    with reopened.transaction() as cursor:
+        cursor.execute("SELECT envelope FROM pf_events WHERE k=%s", (payload["event_id"],))
+        rows = cursor.fetchall()
+    assert len(rows) == 1 and loads(rows[0][0])["payload"] == payload
+
+
+def test_sql_local_handoff_recovers_a_committed_input_page_after_lost_acknowledgement(
+    mind, monkeypatch
+):
+    from pipmind.feeds.fixtures import pulse
+    from pipmind.feeds.sql_store import SqlFeedStore
+    from pipmind.shadow.service import LocalFeedConsumer
+
+    feeds = SqlFeedStore(mind.connect)
+    source = feeds.source_id()
+    # pf_events is shared by the disposable test database. This new synthetic mind
+    # begins at the prior fixture boundary; never delete or replay earlier tests.
+    with feeds.transaction() as cursor:
+        cursor.execute("SELECT COALESCE(MAX(seq),0) FROM pf_events")
+        baseline = cursor.fetchone()[0]
+    with mind.transaction() as cursor:
+        cursor.execute(
+            "INSERT pm_cursors(trader,source,seq) VALUES(%s,%s,%s)", (mind.trader, source, baseline)
+        )
+    first = {**pulse("news", MOMENT), "event_id": "handoff-first:" + uuid4().hex}
+    second = {**first, "event_id": "handoff-second:" + uuid4().hex}
+    provider_cursor = "handoff-provider:" + uuid4().hex
+    feeds.page("news", [first, second], provider_cursor, "first-page", MOMENT)
+    expected = feeds.events(baseline, 100)
+    assert [row["event"]["message_id"] for row in expected] == [
+        first["event_id"],
+        second["event_id"],
+    ]
+    consumer = LocalFeedConsumer(mind, feeds)
+    accept, connect = mind.accept, mind.connect
+    committed, closed = [], []
+
+    class LostAcknowledgement:
+        def __init__(self):
+            self.database = connect()
+
+        def __getattr__(self, name):
+            return getattr(self.database, name)
+
+        def commit(self):
+            self.database.commit()  # Real durability precedes the lost response.
+            committed.append(True)
+            raise OSError("synthetic acknowledgement lost after SQL commit")
+
+        def close(self):
+            self.database.close()
+            closed.append(True)
+
+    def uncertain_accept(*args, **kwargs):
+        with monkeypatch.context() as patch:
+            patch.setattr(mind, "connect", LostAcknowledgement)
+            return accept(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(mind, "accept", uncertain_accept)
+        with pytest.raises(ShadowError, match="^shadow_store_transaction_failed$"):
+            consumer.poll(MOMENT)
+    assert committed == closed == [True]
+    reopened = SqlMind(connect, mind.trader)
+    assert reopened.checkpoint(source) == expected[-1]["sequence"]
+    assert reopened.status()["pending"] == 2 and reopened.status()["outcomes"] == 0
+    before = checked_resume_state(reopened)
+    restarted = LocalFeedConsumer(reopened, SqlFeedStore(connect))
+    assert restarted.poll(MOMENT) == 0
+    after = checked_resume_state(reopened)
+    assert all(after[key] == before[key] for key in ["inputs", "outcomes", "cursors"])
+    assert after["retained"][0] == before["retained"][0]
+    current_records = {meta["record_id"]: (meta, body) for meta, body in after["retained"][1]}
+    assert all(
+        current_records[meta["record_id"]] == (meta, body) for meta, body in before["retained"][1]
+    )
+    assert reopened.runtime("feed_status")["coverage"] == feeds.state(
+        "canonical:quality",
+        {"status": "unverified"},
+    )
+    assert feeds.state(provider_cursor) == "first-page"
+    later = {**first, "event_id": "handoff-later:" + uuid4().hex}
+    feeds.page("news", [later], provider_cursor, "next-page", MOMENT + timedelta(seconds=1))
+    assert restarted.poll(MOMENT + timedelta(seconds=1)) == 1
+    assert reopened.status()["pending"] == 3 and reopened.status()["outcomes"] == 0
+    with reopened.transaction() as cursor:
+        cursor.execute(
+            "SELECT id,envelope FROM pm_inputs WHERE trader=%s ORDER BY pk", (mind.trader,)
+        )
+        accepted = cursor.fetchall()
+    assert [identifier for identifier, _ in accepted] == [
+        first["event_id"],
+        second["event_id"],
+        later["event_id"],
+    ]
+    assert [loads(body) for _, body in accepted[:2]] == [row["event"] for row in expected]
+    assert feeds.events(baseline, 2) == expected and feeds.state(provider_cursor) == "next-page"
