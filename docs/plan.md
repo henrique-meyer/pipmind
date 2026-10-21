@@ -1,5 +1,26 @@
 # Implementation plan
 
+## Parallel code delivery and separate qualification (2026-10-21)
+
+Offline implementation may proceed concurrently across stable service/core
+boundaries. M4 completion gates deployment/activation and later qualification;
+it does not block isolated M5 code development. Code-only tasks close when their
+reviewed PR merges. Qualification tasks close only with their actual evidence.
+The hosted app remains unchanged in this delivery window. PIP-17's robot library,
+owner controls, shared shadow storage and working-copy implementation are excluded.
+
+| Deliverable | Scope and acceptance | Integration boundary |
+| --- | --- | --- |
+| [PIP-34](https://nitro.atlassian.net/browse/PIP-34) | News-feed durable conditional GET and bounded per-source retry recovery; valid 304 creates no event, failed parse/commit cannot advance validators, restart preserves retries and healthy peers/relay progress. | Own news polling and dedicated tests/guide; no provider calls or recipe changes. PIP-21 retains live coverage. |
+| [PIP-35](https://nitro.atlassian.net/browse/PIP-35) | Pure fail-closed risk-increasing proposal preflight using explicit numerical policy and exact Decimal facts; missing/invalid/stale facts, kill/loss stops and exceeded boundaries refuse. No owner risk defaults. | New safety module/tests/guide only; no execution authority, SQL migration, library controls or runtime wiring. PIP-28 retains enforced M5 integration. |
+| [PIP-36](https://nitro.atlassian.net/browse/PIP-36) | Core reconciliation of normalized broker snapshots against known obligations; distinct positions, mismatches, duplicate/conflicting/stale/incomplete facts and ambiguous commands produce explicit findings, without modifying inputs. | New core module/tests/guide; gateway remains a transport/snapshot producer. No corrective orders, lease, zero-order certification or PIP-17 changes. |
+
+Root serializes Jira/Git, shared plan changes, contracts and integration. Each
+implementer owns disjoint files in a separate worktree and supplies meaningful
+offline tests. Hosted/provider/model calls, orders, capacity changes and activation
+remain outside this scope. Subsequent code tasks are independent of the hosted
+qualification chain unless their specific interface needs an unfinished feature.
+
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
 ## PIP-16 — Robot library, Auto Learn and protected rolling saves
