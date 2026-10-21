@@ -5260,3 +5260,543 @@ def test_safety_session_sql_same_cursor_lease_composition_and_bounded_corruption
     with pytest.raises(SessionUnavailable, match="^session_store_unavailable$"):
         store.read()
     assert _safety_session_observation_count_ci(mind, store) == 1
+
+
+def _safety_admission_request_ci(
+    *,
+    now,
+    request_id="request-A",
+    account="synthetic-account",
+    session_id="session-A",
+    caps=None,
+    margin=None,
+    marks=(),
+    count=0,
+):
+    from copy import deepcopy
+    from dataclasses import replace
+    from datetime import timedelta
+    from decimal import Decimal as D
+
+    from pipmind.contracts import stamp
+    from pipmind.reconciliation import Binding, Freshness, SnapshotFacts
+    from pipmind.safety import Conversion, ProposalFacts, RiskFacts, RiskPolicy
+    from pipmind.safety.admission import (
+        AdmissionRequest,
+        ReconciliationEvidence,
+        ReservationMark,
+        checkpoint_digest,
+        policy_book_digest,
+    )
+    from pipmind.safety.session import (
+        EquityObservation,
+        SessionBinding,
+        SessionSpec,
+        advance,
+        initial_state,
+    )
+
+    if margin is None:
+        margin = D("40")
+    when, start, end = (
+        stamp(now),
+        stamp(now - timedelta(hours=12)),
+        stamp(now + timedelta(hours=12)),
+    )
+    p = RiskPolicy(
+        "synthetic-policy",
+        account,
+        "demo",
+        "USD",
+        "EUR/USD",
+        D("2000"),
+        D("5000"),
+        D("10000"),
+        D("50"),
+        D("100"),
+        D("100"),
+        D("200"),
+        D("0"),
+        10,
+        60,
+        30,
+        30,
+    )
+    book = (replace(p, **(caps or {})),)
+    account_body = {
+        "schema_version": 1,
+        "as_of": when,
+        "currency": "USD",
+        "balance": D("10000"),
+        "equity": D("10000"),
+        "margin_used": D("1000"),
+        "margin_available": D("9000"),
+    }
+    observed = SnapshotFacts(
+        Binding(account, "demo"),
+        account_body,
+        {"schema_version": 1, "as_of": when, "positions": []},
+        (),
+        True,
+        True,
+        (),
+        when,
+        True,
+        (),
+        when,
+        True,
+    )
+    evidence = ReconciliationEvidence(
+        deepcopy(observed),
+        observed,
+        Freshness(timedelta(seconds=30), timedelta(seconds=2)),
+        (),
+        (),
+        (),
+        (),
+        (),
+    )
+    conversion = Conversion("USD", "USD", D("1"), when)
+    quote = ProposalFacts("EUR/USD", D("1.1"), D("1.1002"), when, D("1"), margin, conversion)
+    facts = RiskFacts(
+        account,
+        "demo",
+        when,
+        True,
+        True,
+        False,
+        False,
+        start,
+        end,
+        D("10000"),
+        D("0"),
+        count,
+        quote,
+        (),
+    )
+    spec = SessionSpec(
+        SessionBinding(account, "demo", "USD"),
+        session_id,
+        book[0].policy_id,
+        policy_book_digest(book),
+        start,
+        end,
+        D("10000"),
+        "opening-evidence",
+        book[0].max_daily_loss,
+        60,
+    )
+    observation = EquityObservation(
+        spec.binding,
+        session_id,
+        "source-observation",
+        when,
+        when,
+        D("10000"),
+        D("0"),
+        True,
+        True,
+        start,
+        when,
+        checkpoint_digest(evidence, facts),
+        "flow-evidence",
+    )
+    state, _ = advance(initial_state(spec), observation, now=now)
+    order = {
+        "schema_version": 1,
+        "client_order_id": request_id,
+        "action": "open",
+        "instrument": "EUR/USD",
+        "side": "buy",
+        "size": D("1000"),
+        "order_type": "market",
+        "stop": D("1.09"),
+    }
+    pending = tuple(
+        ReservationMark(key, D("1.1"), D("1.1002"), when, conversion, margin) for key in marks
+    )
+    request = AdmissionRequest(order, facts, evidence, pending, state.revision, state.latest_sha256)
+    return request, state, book
+
+
+def _admission_sql_case_ci(mind, *, caps=None, margin=None):
+    from datetime import UTC
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from pipmind.safety.admission_sql import SqlAdmissionStore, bootstrap
+    from pipmind.safety.lease_sql import LeaseBinding, SqlLeaseStore
+    from pipmind.safety.lease_sql import bootstrap as lease_bootstrap
+    from pipmind.safety.session_sql import SqlSessionStore
+    from pipmind.safety.session_sql import bootstrap as session_bootstrap
+
+    # Create explicit isolated schema before sampling the synthetic source clock.
+    session_bootstrap(mind.connect)
+    lease_bootstrap(mind.connect)
+    bootstrap(mind.connect)
+    with mind.transaction() as cur:
+        cur.execute("SELECT SYSUTCDATETIME()")
+        now = cur.fetchone()[0].replace(tzinfo=UTC)
+    factory = _safety_admission_request_ci
+    request, state, book = factory(
+        now=now,
+        account="synthetic-" + uuid4().hex,
+        caps=caps,
+        margin=Decimal("40") if margin is None else margin,
+        marks=("request-A", "request-B"),
+    )
+    sessions = SqlSessionStore(mind.connect, state.spec.binding, state.spec.session_id)
+    sessions.initialize(state.spec)
+    sessions.observe(state.latest, now=now)
+    assert sessions.read() == state
+    leases = SqlLeaseStore(
+        mind.connect,
+        LeaseBinding(state.spec.binding.account_id, "demo", "admission"),
+        "synthetic-trusted-epoch",
+    )
+    leases.initialize()
+    grant = leases.acquire("synthetic-owner", ttl_seconds=30)
+    store = SqlAdmissionStore(mind.connect, leases, sessions, book)
+    return store, leases, sessions, grant, request, book, now
+
+
+def _admission_sql_counts_ci(mind, store):
+    with mind.transaction() as cur:
+        result = []
+        for name in ("accounts", "journal", "reservations", "floors"):
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_admission_" + name + "_v1 WHERE account_key=%s",
+                (store._key,),
+            )
+            result.append(cur.fetchone()[0])
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.pm_safety_admission_books_v1 WHERE sha256=%s",
+            (store._book_hash,),
+        )
+        return tuple(result) + (cur.fetchone()[0],)
+
+
+def test_admission_sql_genuine_concurrent_budgets_and_funded_both(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from decimal import Decimal as D
+    from threading import Barrier
+
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+
+    cases = (
+        ({}, D("40"), 2),
+        ({"max_gross_exposure": D("1500")}, D("40"), 1),
+        ({"max_total_planned_loss": D("15")}, D("40"), 1),
+        ({"max_session_orders": 1}, D("40"), 1),
+        ({}, D("5000"), 1),
+    )
+    for caps, margin, expected in cases:
+        store, leases, sessions, grant, first, book, now = _admission_sql_case_ci(
+            mind,
+            caps=caps,
+            margin=margin,
+        )
+        second, _, _ = _safety_admission_request_ci(
+            now=now,
+            account=book[0].account_id,
+            request_id="request-B",
+            caps=caps,
+            margin=margin,
+            marks=("request-A", "request-B"),
+        )
+        barrier = Barrier(2)
+
+        def admit(request, _store=store, _grant=grant, _barrier=barrier):
+            _barrier.wait(timeout=10)
+            return _store.admit(_grant, request)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a, b = pool.submit(admit, first), pool.submit(admit, second)
+            receipts = (a.result(timeout=20), b.result(timeout=20))
+        assert sum(item["assessment"].within_limits for item in receipts) == expected
+        assert all(item["dispatch_authorized"] is False for item in receipts)
+        assert len(store.snapshot()[0]) == expected
+        assert _admission_sql_counts_ci(mind, store) == (1, 2, expected, 1, 1)
+        reopened = SqlAdmissionStore(mind.connect, leases, sessions, book)
+        assert tuple(reopened.lookup(item["request_id"]) for item in receipts) == receipts
+        assert reopened.snapshot() == store.snapshot()
+        assert reopened.admit(grant, first) in receipts
+
+
+def test_admission_sql_staged_failure_interrupt_and_lease_or_source_expiry(mind):
+    import pytest
+
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.lease_sql import LeaseRefused, LeaseUnavailable, SqlLeaseStore
+
+    for mode in ("error", "interrupt", "disconnect", "lease_expiry", "source_expiry"):
+        caps = {"quote_max_age_seconds": 3} if mode == "source_expiry" else None
+        store, leases, sessions, grant, request, book, _ = _admission_sql_case_ci(mind, caps=caps)
+        if mode == "lease_expiry":
+            grant = leases.renew(grant, ttl_seconds=2)
+        before = _admission_sql_counts_ci(mind, store)
+        staged, closes, disconnects = [], [], []
+        delay_markers, delay_errors = [], []
+
+        class Cursor:
+            def __init__(self, cur, db):
+                self.cur, self.db = cur, db
+
+            def execute(
+                self,
+                query,
+                *args,
+                _mode=mode,
+                _staged=staged,
+                _disconnects=disconnects,
+                _delay_markers=delay_markers,
+                _delay_errors=delay_errors,
+            ):
+                result = self.cur.execute(query, *args)
+                if query.startswith("INSERT INTO dbo.pm_safety_admission_reservations_v1"):
+                    _staged.append(True)
+                    if _mode == "error":
+                        raise OSError("synthetic private failure after SQL insert")
+                    if _mode == "interrupt":
+                        raise KeyboardInterrupt("synthetic interruption after SQL insert")
+                    if _mode == "disconnect":
+                        # Real SQL socket closes with the staged transaction uncommitted.
+                        self.db.close()
+                        _disconnects.append(True)
+                        raise OSError("synthetic disconnect after SQL insert")
+                    # Pinned pytds infers string parameters as NVARCHAR(MAX).
+                    # Use fixed SQL literals, matching the proven lease expiry test.
+                    delay_sql = (
+                        "WAITFOR DELAY '00:00:03.100'"
+                        if _mode == "source_expiry"
+                        else "WAITFOR DELAY '00:00:02.100'"
+                    )
+                    _delay_markers.append("entered")
+                    try:
+                        self.cur.execute(delay_sql)
+                    except Exception as error:
+                        number = getattr(error, "number", None)
+                        _delay_errors.append(
+                            (type(error).__name__, number if type(number) is int else None)
+                        )
+                        raise
+                    _delay_markers.append("completed")
+                return result
+
+            def __getattr__(self, name):
+                return getattr(self.cur, name)
+
+        class Connection:
+            def __init__(self):
+                self.db = mind.connect()
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return Cursor(self.db.cursor(), self.db)
+
+            def commit(self):
+                pytest.fail("staged failed/expired admission committed")
+
+            def close(self, _closes=closes):
+                _closes.append(True)
+                self.db.close()
+
+        guarded_lease = SqlLeaseStore(Connection, leases.binding, leases.authority_epoch)
+        guarded = SqlAdmissionStore(mind.connect, guarded_lease, sessions, book)
+        expected = {"interrupt": KeyboardInterrupt, "lease_expiry": LeaseRefused}.get(
+            mode,
+            LeaseUnavailable,
+        )
+        try:
+            with pytest.raises(
+                expected, match="^lease_expired$" if mode == "lease_expiry" else None
+            ):
+                guarded.admit(grant, request)
+        except BaseException:
+            # Synthetic mode/stage/type/number only; never print driver text or tokens.
+            print("admission_expiry_diagnostic", mode, staged, delay_markers, delay_errors)
+            raise
+        assert staged == closes == [True], mode
+        if mode in ("lease_expiry", "source_expiry"):
+            assert delay_markers == ["entered", "completed"] and not delay_errors, mode
+        assert disconnects == ([True] if mode == "disconnect" else [])
+        assert _admission_sql_counts_ci(mind, store) == before
+        assert store.lookup(request.order["client_order_id"]) is None
+        assert store.snapshot() == ((), 0)
+
+
+def test_admission_sql_session_latch_writer_serializes_before_admission(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from datetime import timedelta
+    from decimal import Decimal
+    from threading import Event
+
+    from pipmind.contracts import stamp
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.lease_sql import SqlLeaseStore
+    from pipmind.safety.session_sql import SqlSessionStore
+
+    store, leases, sessions, grant, request, book, now = _admission_sql_case_ci(mind)
+    staged, release, admission_waiting = Event(), Event(), Event()
+
+    class Cursor:
+        def __init__(self, cur, writer):
+            self.cur, self.writer = cur, writer
+
+        def execute(self, query, *args):
+            if (
+                not self.writer
+                and "sp_getapplock" in query
+                and args
+                and args[0][0].startswith("pipmind-safety-session-v1:")
+            ):
+                admission_waiting.set()
+            result = self.cur.execute(query, *args)
+            if self.writer and query.startswith(
+                "UPDATE dbo.pm_safety_session_sessions_v1 SET state="
+            ):
+                staged.set()
+                if not release.wait(timeout=8):
+                    raise RuntimeError("synthetic writer release timeout")
+            return result
+
+        def __getattr__(self, name):
+            return getattr(self.cur, name)
+
+    class Connection:
+        def __init__(self, writer):
+            self.db, self.writer = mind.connect(), writer
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return Cursor(self.db.cursor(), self.writer)
+
+        def commit(self):
+            return self.db.commit()
+
+        def close(self):
+            self.db.close()
+
+    writer = SqlSessionStore(lambda: Connection(True), sessions.binding, sessions.session_id)
+    guarded_lease = SqlLeaseStore(lambda: Connection(False), leases.binding, leases.authority_epoch)
+    guarded = SqlAdmissionStore(mind.connect, guarded_lease, sessions, book)
+    latest = sessions.read().latest
+    older = stamp(now - timedelta(seconds=1))
+    breach = replace(
+        latest,
+        observation_id="historical-breach",
+        as_of=older,
+        cash_flow_ends_at=older,
+        equity=Decimal("9000"),
+        account_evidence_id="historical-breach-source",
+    )
+    after_writer = replace(request, expected_session_revision=2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        write = pool.submit(writer.observe, breach, now=now)
+        try:
+            assert staged.wait(timeout=5)
+            attempt = pool.submit(guarded.admit, grant, after_writer)
+            assert admission_waiting.wait(timeout=5)
+            assert not write.done() and not attempt.done()
+        finally:
+            release.set()
+        assert write.result(timeout=10).daily_loss_latched
+        receipt = attempt.result(timeout=10)
+    assert not receipt["assessment"].within_limits
+    assert receipt["assessment"].effective_session_latched is True
+    assert store.snapshot()[0] == ()
+    assert sessions.read().revision == 2 and sessions.read().daily_loss_latched
+    assert store.lookup(request.order["client_order_id"]) == receipt
+
+
+def test_admission_sql_lost_ack_exact_lookup_retry_conflict_and_uncertainty(mind):
+    from dataclasses import replace
+
+    import pytest
+
+    from pipmind.safety.admission import AdmissionRefused
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.lease_sql import LeaseCommitUnknown, SqlLeaseStore
+
+    store, leases, sessions, grant, request, book, _ = _admission_sql_case_ci(mind)
+    commits, closes = [], []
+
+    class LostAck:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return self.db.cursor()
+
+        def commit(self):
+            self.db.commit()
+            commits.append(True)
+            raise SystemExit("synthetic lost commit acknowledgement")
+
+        def close(self):
+            closes.append(True)
+            self.db.close()
+
+    uncertain_lease = SqlLeaseStore(LostAck, leases.binding, leases.authority_epoch)
+    uncertain = SqlAdmissionStore(mind.connect, uncertain_lease, sessions, book)
+    with pytest.raises(LeaseCommitUnknown, match="^lease_commit_unknown$"):
+        uncertain.admit(grant, request)
+    assert commits == closes == [True]
+    assert _admission_sql_counts_ci(mind, store) == (1, 1, 1, 1, 1)
+    original = store.lookup(request.order["client_order_id"])
+    assert original["assessment"].within_limits
+    assert store.admit(grant, request) == original
+    changed = replace(request, expected_session_revision=0)
+    with pytest.raises(AdmissionRefused, match="^conflicting_admission_request$"):
+        store.admit(grant, changed)
+    with pytest.raises(LeaseCommitUnknown, match="^lease_commit_unknown$"):
+        uncertain.admit(grant, changed)
+    assert _admission_sql_counts_ci(mind, store) == (1, 1, 1, 1, 1)
+    assert store.lookup(request.order["client_order_id"]) == original
+    assert len(store.snapshot()[0]) == 1
+
+
+def test_admission_sql_new_owner_cannot_erase_pending_budget_or_rewrite_receipt(mind):
+    from decimal import Decimal
+
+    import pytest
+
+    from pipmind.safety.lease_sql import LeaseRefused
+
+    caps = {"max_gross_exposure": Decimal("1500")}
+    store, leases, _, old_grant, first, book, now = _admission_sql_case_ci(mind, caps=caps)
+    original = store.admit(old_grant, first)
+    assert original["assessment"].within_limits
+    second, _, _ = _safety_admission_request_ci(
+        now=now,
+        account=book[0].account_id,
+        request_id="request-B",
+        caps=caps,
+        marks=("request-A", "request-B"),
+    )
+    before = _admission_sql_counts_ci(mind, store)
+    leases.release(old_grant)
+    current = leases.acquire("replacement-owner", ttl_seconds=30)
+    assert current.generation == old_grant.generation + 1
+    with pytest.raises(LeaseRefused, match="^lease_stale_owner$"):
+        store.admit(old_grant, second)
+    assert _admission_sql_counts_ci(mind, store) == before
+    assert store.admit(current, first) == original
+    assert original["lease_owner_id"] == old_grant.owner_id
+    assert original["lease_generation"] == old_grant.generation
+    denied = store.admit(current, second)
+    assert not denied["assessment"].within_limits
+    assert denied["lease_owner_id"] == current.owner_id
+    assert _admission_sql_counts_ci(mind, store) == (1, 2, 1, 1, 1)
+    assert len(store.snapshot()[0]) == 1
