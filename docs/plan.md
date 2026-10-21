@@ -346,3 +346,13 @@ final report. Refuse preexisting paths before database/model access; preserve th
 latest completed attempt report on interruption or failure. Exercise multiple
 progress callbacks, final persistence and failure/reuse cases offline so the
 required repetitions cannot fail by colliding with their own first checkpoint.
+
+PIP-23 usage summaries must separate attempted model calls from explicitly
+call-free and synthetic traces, identify legacy/unconfirmed attempt flags, retain
+known token-side lower bounds and explicit or partially missing unknown usage,
+and include memory-repair phases. Count committed and uncommitted attempts without
+discarding original traces or interpreting attempted calls as successful service
+execution or an invoice. Offline counterexamples and isolated SQL evaluator
+regressions must cover these distinctions. Provenance preparation must distinguish
+observed active memory policy from source-version constants; this correction does
+not activate a new evaluation policy or change budgets or live-call authority.
