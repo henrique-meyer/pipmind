@@ -60,6 +60,14 @@ trusted external authority renewal and broker reconciliation. No dispatch or
 runtime activation is added. Root serializes self-contained new SQL cases into
 the existing mandatory SQL test file; the PIP-17 smoke script remains untouched.
 
+Strict PIP-42 policy evidence distinguishes read-only absence in a reserved
+namespace before creation from actual initialized policy. Starter strict mode
+supports absent fixture policy; present/bounded/unknown requirements refuse
+before evaluator writes. Recheck initialized policy before unpause/inference;
+an unexpected policy/race retains the initialized paused mind and failure, and
+must not be reported as a zero-write preflight refusal. Exact-class effective
+local settings may be bound without certifying custom models/provider facts.
+
 PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
 PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
 groundwork. These statuses do not imply M4, deployed health, order safety or a
