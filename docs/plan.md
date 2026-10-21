@@ -302,7 +302,7 @@ PIP-14 remains the M4 umbrella. Its scoped subtasks and the later milestone stor
 
 | Priority | Work item | Scope | Milestone | Status |
 | --- | --- | --- | --- | --- |
-| P0 | [PIP-32](https://nitro.atlassian.net/browse/PIP-32) | Make shadow release resume atomic against source revision and holds | M4 | In Progress |
+| P0 | [PIP-32](https://nitro.atlassian.net/browse/PIP-32) | Make shadow release resume atomic against source revision and holds | M4 | Done |
 | P0 | [PIP-20](https://nitro.atlassian.net/browse/PIP-20) | Qualify the processing-throughput correction on the selected release | M4 | To Do |
 | P1 | [PIP-23](https://nitro.atlassian.net/browse/PIP-23) | Repeat current-prompt model evals and bounded-state growth checks | M4 | In Progress |
 | P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | To Do |
@@ -317,6 +317,8 @@ PIP-14 remains the M4 umbrella. Its scoped subtasks and the later milestone stor
 | P2 | [PIP-31](https://nitro.atlassian.net/browse/PIP-31) | Implement evidence-grounded autonomous review behind trusted Auto Learn controls | M7 | To Do |
 | P2 | [PIP-33](https://nitro.atlassian.net/browse/PIP-33) | Review deferred M4 source and local tooling issues with the owner | M4 | To Do |
 
-PIP-32 adds an audited atomic compare-and-resume operation under the source lock: exact paused revision/head, pending input, no hold and owner-control hash must match in the same transaction as resume. Actual SQL tests must reject stale/concurrent/held states without mutation. This is release-control hardening, not M5 ownership fencing or permission to trade.
+PIP-32 adds an audited atomic compare-and-resume operation under the source lock: exact paused revision/head, pending input, no hold and owner-control hash must match in the same transaction as resume. Actual SQL tests must reject stale/concurrent/held states without mutation. Code delivery is complete with this change and its required SQL checks; hosted deployment and use remain under PIP-20. This is release-control hardening, not M5 ownership fencing or permission to trade.
+
+PIP-27 must first resolve the retained-history export capacity risk: the inventory manifest can reach its bound before the archive byte or entry limits. Review a compatible bounded-memory format extension and test complete inventory, dependency preservation, rejection/cleanup and paused clone fidelity. Current limits remain enforced until that extension is approved; failed or oversized exports cannot qualify a partial history.
 
 Execution order: atomic release control → throughput/current model qualification → source/role and owner-quality disposition → complete timely shadow day → measured cost/capacity and full retained-mind clone. M5 safety and recovery precede M6 demo orders; M7 reuses PIP-17 controls. Human calibration remains unassigned to await owner scoring. PIP-33 records smaller findings for later discussion and does not block unrelated work. Numeric risk limits and demo-order authority remain explicit owner decisions.

@@ -2908,3 +2908,274 @@ def test_sql_approved_budget_accepts_retained_shape_without_repair_or_rewriting(
     assert [v["phase"] for v in result["usage"]] == ["triage", "decision"] and result[
         "dispatches"
     ] == 0
+
+
+def checked_resume_request(mind):
+    from pipmind.shadow.common import encoded
+
+    events, _ = episode(mind)
+    identifier = "owner-pause:" + uuid4().hex
+    body = encoded({"mode": "shadow", "status": "owner_control", "operation": "pause_for_release"})
+    with mind.transaction() as c:
+        mind._insert(c, metadata(identifier, "journal", MOMENT.isoformat(), mind.trader), body)
+        c.execute(
+            "UPDATE pm_minds SET paused=1,revision=revision+1 WHERE trader=%s", (mind.trader,)
+        )
+    return {
+        "expected_head": mind.head(),
+        "expected_pending": events[0],
+        "owner_control_id": identifier,
+        "owner_control_sha256": digest(body),
+        "request_id": "release-resume:" + uuid4().hex,
+        "moment": MOMENT,
+    }
+
+
+def checked_resume_state(mind):
+    retained = mind.retained()
+    with mind.transaction() as c:
+        result = {"retained": retained}
+        for name, query in {
+            "inputs": "SELECT id,facts,envelope,status FROM pm_inputs WHERE trader=%s ORDER BY pk",
+            "outcomes": "SELECT event_id,result FROM pm_outcomes WHERE trader=%s ORDER BY pk",
+            "cursors": "SELECT source,seq FROM pm_cursors WHERE trader=%s ORDER BY source",
+            "runtime": "SELECT k,v FROM pm_runtime WHERE trader=%s ORDER BY k",
+        }.items():
+            c.execute(query, (mind.trader,))
+            result[name] = c.fetchall()
+    return result
+
+
+def test_checked_resume_commits_one_audited_revision_and_is_idempotent(mind):
+    kwargs = checked_resume_request(mind)
+    before = checked_resume_state(mind)
+    result = mind.resume_checked(**kwargs)
+    after = checked_resume_state(mind)
+    assert result == {
+        "operation_id": "owner-resume:" + digest(kwargs["request_id"]),
+        "request_sha256": result["request_sha256"],
+        "before_revision": kwargs["expected_head"]["revision"],
+        "after_revision": kwargs["expected_head"]["revision"] + 1,
+        "pending_event": kwargs["expected_pending"]["message_id"],
+        "resumed": True,
+        "dispatches": 0,
+        "idempotent": False,
+    }
+    assert mind.head() == {
+        **kwargs["expected_head"],
+        "paused": False,
+        "revision": result["after_revision"],
+    }
+    assert all(after[key] == before[key] for key in ["inputs", "outcomes", "cursors", "runtime"])
+    assert after["retained"][1][:-1] == before["retained"][1]
+    meta, raw = after["retained"][1][-1]
+    audit = loads(raw)
+    assert meta["record_id"] == result["operation_id"]
+    assert meta["evidence_ids"] == [kwargs["owner_control_id"]]
+    assert audit["operation"] == "checked_resume" and audit["status"] == "owner_control"
+    assert audit["before"] == kwargs["expected_head"] and audit["after"] == mind.head()
+    assert audit["request"]["expected_pending"] == kwargs["expected_pending"]
+    assert audit["request"]["owner_control_sha256"] == kwargs["owner_control_sha256"]
+    assert audit["request_sha256"] == result["request_sha256"]
+    repeat = mind.resume_checked(**{**kwargs, "moment": MOMENT + timedelta(seconds=1)})
+    assert repeat == {**result, "idempotent": True}
+    assert checked_resume_state(mind) == after
+
+
+def test_checked_resume_rejects_moment_before_owner_control_without_mutation(mind):
+    kwargs = checked_resume_request(mind)
+    kwargs["moment"] = MOMENT - timedelta(seconds=1)
+    # The pending event is available; only the later owner-control dependency
+    # makes this timestamp invalid for an audited resume.
+    assert utc(kwargs["expected_pending"]["available_at"]) <= kwargs["moment"]
+    before = checked_resume_state(mind)
+    with pytest.raises(ShadowError, match="checked_resume_owner_control_future"):
+        mind.resume_checked(**kwargs)
+    assert checked_resume_state(mind) == before
+
+
+@pytest.mark.parametrize("field,value", [("revision", -1), ("working", {}), ("lineage", "other")])
+def test_checked_resume_rejects_stale_or_changed_head_without_mutation(mind, field, value):
+    kwargs = checked_resume_request(mind)
+    # A stale request still has an individually valid revision.
+    kwargs["expected_head"][field] = (
+        kwargs["expected_head"][field] + 1 if field == "revision" else value
+    )
+    before = checked_resume_state(mind)
+    with pytest.raises(ShadowError, match="checked_resume_state_changed"):
+        mind.resume_checked(**kwargs)
+    assert checked_resume_state(mind) == before
+
+
+@pytest.mark.parametrize(
+    "fault", ["hold", "pending", "hash", "missing_control", "not_owner_control"]
+)
+def test_checked_resume_rejects_changed_guards_without_mutation(mind, fault):
+    from pipmind.shadow.common import encoded
+
+    kwargs = checked_resume_request(mind)
+    if fault == "hold":
+        with mind.transaction() as c:
+            mind._set_runtime(c, "reasoning_hold", {"reason": "new_worker_hold"})
+        expected = "checked_resume_reasoning_hold"
+    elif fault == "pending":
+        changed = deepcopy(kwargs["expected_pending"])
+        changed["message_id"] += ":different-pending"
+        if "event_id" in changed["payload"]:
+            changed["payload"]["event_id"] = changed["message_id"]
+        kwargs["expected_pending"] = changed
+        expected = "checked_resume_pending_changed"
+    elif fault == "hash":
+        kwargs["owner_control_sha256"] = "0" * 64
+        expected = "checked_resume_owner_control"
+    elif fault == "missing_control":
+        kwargs["owner_control_id"] = "missing-owner-control"
+        expected = "checked_resume_owner_control"
+    else:
+        body = encoded({"mode": "shadow", "status": "observed", "operation": "pause_for_release"})
+        identifier = "not-owner-control:" + uuid4().hex
+        with mind.transaction() as c:
+            mind._insert(c, metadata(identifier, "journal", MOMENT.isoformat(), mind.trader), body)
+        kwargs.update(owner_control_id=identifier, owner_control_sha256=digest(body))
+        expected = "checked_resume_owner_control"
+    before = checked_resume_state(mind)
+    with pytest.raises(ShadowError, match=expected):
+        mind.resume_checked(**kwargs)
+    assert checked_resume_state(mind) == before
+
+
+def test_checked_resume_refuses_changed_request_id_reuse_and_new_stale_request(mind):
+    kwargs = checked_resume_request(mind)
+    mind.resume_checked(**kwargs)
+    before = checked_resume_state(mind)
+    changed = deepcopy(kwargs)
+    changed["expected_head"]["working"]["views"].append("Changed retry request")
+    with pytest.raises(ShadowError, match="checked_resume_request_conflict"):
+        mind.resume_checked(**changed)
+    with pytest.raises(ShadowError, match="checked_resume_state_changed"):
+        mind.resume_checked(**{**kwargs, "request_id": "another-owner-request"})
+    assert checked_resume_state(mind) == before
+
+
+@pytest.mark.parametrize("change", ["advanced", "held"])
+def test_checked_resume_idempotent_retry_cannot_resume_after_progress_or_new_hold(mind, change):
+    kwargs = checked_resume_request(mind)
+    mind.resume_checked(**kwargs)
+    if change == "advanced":
+        engine = ShadowEngine(
+            mind, FixtureModel(deepcopy(CASE["model_responses"])), clock=lambda: MOMENT
+        )
+        assert asyncio.run(engine.step())
+        expected = "checked_resume_state_changed"
+    else:
+        mind.set_paused(True)
+        with mind.transaction() as c:
+            mind._set_runtime(c, "reasoning_hold", {"reason": "new_hold_after_resume"})
+        expected = "checked_resume_reasoning_hold"
+    before = checked_resume_state(mind)
+    with pytest.raises(ShadowError, match=expected):
+        mind.resume_checked(**kwargs)
+    assert checked_resume_state(mind) == before
+
+
+@pytest.mark.parametrize("failure", ["audit", "update"])
+def test_checked_resume_rolls_back_audit_and_revision_on_failure(mind, monkeypatch, failure):
+    kwargs = checked_resume_request(mind)
+    before = checked_resume_state(mind)
+    injected = []
+    if failure == "audit":
+        original = mind._insert
+
+        def insert(*args):
+            original(*args)
+            injected.append("after_actual_audit_insert")
+            raise ShadowError("synthetic_resume_failure")
+
+        monkeypatch.setattr(mind, "_insert", insert)
+    else:
+        connect = mind.connect
+
+        class Cursor:
+            def __init__(self, cursor):
+                self.cursor = cursor
+
+            def __getattr__(self, key):
+                return getattr(self.cursor, key)
+
+            def execute(self, sql, *args):
+                self.cursor.execute(sql, *args)
+                if sql.startswith("UPDATE pm_minds SET paused=0"):
+                    injected.append("after_actual_resume_update")
+                    raise ShadowError("synthetic_resume_failure")
+                return self
+
+        class Connection:
+            def __init__(self):
+                self.db = connect()
+
+            def __getattr__(self, key):
+                return getattr(self.db, key)
+
+            def cursor(self):
+                return Cursor(self.db.cursor())
+
+        monkeypatch.setattr(mind, "connect", Connection)
+    with pytest.raises(ShadowError, match="synthetic_resume_failure"):
+        mind.resume_checked(**kwargs)
+    monkeypatch.undo()
+    assert len(injected) == 1 and checked_resume_state(mind) == before
+
+
+def test_checked_resume_serializes_concurrent_owner_requests(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    kwargs = checked_resume_request(mind)
+    barrier = Barrier(2)
+
+    def resume(identifier):
+        barrier.wait(timeout=10)
+        try:
+            return mind.resume_checked(**{**kwargs, "request_id": identifier})
+        except ShadowError as error:
+            return str(error)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(resume, ["concurrent-owner-one", "concurrent-owner-two"]))
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert "checked_resume_state_changed" in results
+    assert mind.head()["revision"] == kwargs["expected_head"]["revision"] + 1
+    audits = [
+        loads(body)
+        for meta, body in mind.retained()[1]
+        if meta["record_id"].startswith("owner-resume:")
+    ]
+    assert len(audits) == 1 and not mind.head()["paused"]
+
+
+def test_checked_resume_observes_hold_created_by_a_writer_holding_source_lock(mind):
+    from threading import Event, Thread
+
+    kwargs = checked_resume_request(mind)
+    entered, finished = Event(), Event()
+    results = []
+
+    def resume():
+        entered.set()
+        try:
+            mind.resume_checked(**kwargs)
+        except ShadowError as error:
+            results.append(str(error))
+        finally:
+            finished.set()
+
+    with mind.transaction() as c:
+        worker = Thread(target=resume)
+        worker.start()
+        assert entered.wait(5) and not finished.wait(0.05)
+        mind._set_runtime(c, "reasoning_hold", {"reason": "concurrent_writer_hold"})
+        c.execute("UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (mind.trader,))
+    worker.join(timeout=10)
+    assert not worker.is_alive() and results == ["checked_resume_reasoning_hold"]
+    assert mind.head()["paused"] and mind.pending() == kwargs["expected_pending"]
+    assert not any(meta["record_id"].startswith("owner-resume:") for meta, _ in mind.retained()[1])

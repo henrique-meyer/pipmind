@@ -160,6 +160,142 @@ class SqlMind:
                 (paused, self.trader),
             )
 
+    def resume_checked(
+        self,
+        *,
+        expected_head,
+        expected_pending,
+        owner_control_id,
+        owner_control_sha256,
+        request_id,
+        moment,
+    ):
+        """Audit and resume one exact owner-paused source under its existing lock.
+
+        This is an owner release control, not trading ownership/fencing. An identical
+        request can acknowledge an immediately completed resume, but cannot resume
+        a source that has since progressed, changed or acquired another hold.
+        """
+        try:
+            expected_head, expected_pending = deepcopy(expected_head), deepcopy(expected_pending)
+            valid = (
+                isinstance(expected_head, dict)
+                and expected_head.get("paused") is True
+                and type(expected_head.get("revision")) is int
+                and expected_head["revision"] >= 0
+                and isinstance(expected_pending, dict)
+                and isinstance(request_id, str)
+                and 0 < len(request_id.encode("utf-16-le")) <= 512
+                and isinstance(owner_control_id, str)
+                and 0 < len(owner_control_id.encode("utf-16-le")) <= 512
+                and isinstance(owner_control_sha256, str)
+                and len(owner_control_sha256) == 64
+                and all(c in "0123456789abcdef" for c in owner_control_sha256)
+            )
+            if not valid:
+                raise ShadowError("invalid_checked_resume")
+            moment = utc(stamp(moment))
+            if validate_event(expected_pending, self.contracts) > moment:
+                raise ShadowError("invalid_checked_resume")
+            request = {
+                "request_id": request_id,
+                "expected_head": expected_head,
+                "expected_pending": expected_pending,
+                "owner_control_id": owner_control_id,
+                "owner_control_sha256": owner_control_sha256,
+            }
+            request_body = encoded(request)
+            if len(request_body.encode()) > 524288:
+                raise ShadowError("invalid_checked_resume")
+        except (AttributeError, ContractError, TypeError, ValueError):
+            raise ShadowError("invalid_checked_resume") from None
+        request_sha256 = digest(request_body)
+        operation_id = "owner-resume:" + digest(request_id)
+        after = {**expected_head, "paused": False, "revision": expected_head["revision"] + 1}
+        receipt = {
+            "operation_id": operation_id,
+            "request_sha256": request_sha256,
+            "before_revision": expected_head["revision"],
+            "after_revision": after["revision"],
+            "pending_event": event_id(expected_pending),
+            "resumed": True,
+            "dispatches": 0,
+        }
+        with self.transaction() as cur:
+            head = self._head(cur)
+            if self._runtime(cur, "reasoning_hold") is not None:
+                raise ShadowError("checked_resume_reasoning_hold")
+            cur.execute(
+                "SELECT part,body,ts FROM pm_records WHERE trader=%s AND id=%s",
+                (self.trader, owner_control_id),
+            )
+            control = cur.fetchone()
+            if not control or control[0] != "journal" or digest(control[1]) != owner_control_sha256:
+                raise ShadowError("checked_resume_owner_control")
+            if control[2].replace(tzinfo=UTC) > moment:
+                raise ShadowError("checked_resume_owner_control_future")
+            try:
+                body = loads(control[1])
+                if (
+                    not isinstance(body, dict)
+                    or body.get("mode") != "shadow"
+                    or body.get("status") != "owner_control"
+                    or not isinstance(body.get("operation"), str)
+                    or not body["operation"]
+                ):
+                    raise ShadowError("checked_resume_owner_control")
+            except ContractError:
+                raise ShadowError("checked_resume_owner_control") from None
+            cur.execute(
+                "SELECT part,body FROM pm_records WHERE trader=%s AND id=%s",
+                (self.trader, operation_id),
+            )
+            existing = cur.fetchone()
+            if existing:
+                try:
+                    audit = loads(existing[1])
+                    matches = (
+                        existing[0] == "journal"
+                        and isinstance(audit, dict)
+                        and audit.get("operation") == "checked_resume"
+                        and audit.get("request_sha256") == request_sha256
+                        and encoded(audit.get("request")) == request_body
+                        and encoded(audit.get("result")) == encoded(receipt)
+                    )
+                except ContractError:
+                    matches = False
+                if not matches:
+                    raise ShadowError("checked_resume_request_conflict")
+                if encoded(head) != encoded(after):
+                    raise ShadowError("checked_resume_state_changed")
+                if encoded(self._pending(cur)) != encoded(expected_pending):
+                    raise ShadowError("checked_resume_pending_changed")
+                return {**receipt, "idempotent": True}
+            if encoded(head) != encoded(expected_head):
+                raise ShadowError("checked_resume_state_changed")
+            if encoded(self._pending(cur)) != encoded(expected_pending):
+                raise ShadowError("checked_resume_pending_changed")
+            audit = {
+                "mode": "shadow",
+                "status": "owner_control",
+                "operation": "checked_resume",
+                "request_sha256": request_sha256,
+                "request": request,
+                "result": receipt,
+                "before": head,
+                "after": after,
+            }
+            self._insert(
+                cur,
+                metadata(operation_id, "journal", stamp(moment), self.trader, [owner_control_id]),
+                encoded(audit),
+            )
+            cur.execute(
+                "UPDATE pm_minds SET paused=0,revision=revision+1 WHERE trader=%s",
+                (self.trader,),
+            )
+            return {**receipt, "idempotent": False}
+
     def _runtime(self, cur, key, default=None):
         cur.execute("SELECT v FROM pm_runtime WHERE trader=%s AND k=%s", (self.trader, key))
         row = cur.fetchone()
