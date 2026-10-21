@@ -5533,15 +5533,25 @@ def test_admission_sql_staged_failure_interrupt_and_lease_or_source_expiry(mind)
         caps = {"quote_max_age_seconds": 3} if mode == "source_expiry" else None
         store, leases, sessions, grant, request, book, _ = _admission_sql_case_ci(mind, caps=caps)
         if mode == "lease_expiry":
-            grant = leases.renew(grant, ttl_seconds=1)
+            grant = leases.renew(grant, ttl_seconds=2)
         before = _admission_sql_counts_ci(mind, store)
         staged, closes, disconnects = [], [], []
+        delay_markers, delay_errors = [], []
 
         class Cursor:
             def __init__(self, cur, db):
                 self.cur, self.db = cur, db
 
-            def execute(self, query, *args, _mode=mode, _staged=staged, _disconnects=disconnects):
+            def execute(
+                self,
+                query,
+                *args,
+                _mode=mode,
+                _staged=staged,
+                _disconnects=disconnects,
+                _delay_markers=delay_markers,
+                _delay_errors=delay_errors,
+            ):
                 result = self.cur.execute(query, *args)
                 if query.startswith("INSERT INTO dbo.pm_safety_admission_reservations_v1"):
                     _staged.append(True)
@@ -5554,8 +5564,23 @@ def test_admission_sql_staged_failure_interrupt_and_lease_or_source_expiry(mind)
                         self.db.close()
                         _disconnects.append(True)
                         raise OSError("synthetic disconnect after SQL insert")
-                    delay = "00:00:03.100" if _mode == "source_expiry" else "00:00:01.100"
-                    self.cur.execute("WAITFOR DELAY %s", (delay,))
+                    # Pinned pytds infers string parameters as NVARCHAR(MAX).
+                    # Use fixed SQL literals, matching the proven lease expiry test.
+                    delay_sql = (
+                        "WAITFOR DELAY '00:00:03.100'"
+                        if _mode == "source_expiry"
+                        else "WAITFOR DELAY '00:00:02.100'"
+                    )
+                    _delay_markers.append("entered")
+                    try:
+                        self.cur.execute(delay_sql)
+                    except Exception as error:
+                        number = getattr(error, "number", None)
+                        _delay_errors.append(
+                            (type(error).__name__, number if type(number) is int else None)
+                        )
+                        raise
+                    _delay_markers.append("completed")
                 return result
 
             def __getattr__(self, name):
@@ -5585,9 +5610,18 @@ def test_admission_sql_staged_failure_interrupt_and_lease_or_source_expiry(mind)
             mode,
             LeaseUnavailable,
         )
-        with pytest.raises(expected):
-            guarded.admit(grant, request)
-        assert staged == closes == [True]
+        try:
+            with pytest.raises(
+                expected, match="^lease_expired$" if mode == "lease_expiry" else None
+            ):
+                guarded.admit(grant, request)
+        except BaseException:
+            # Synthetic mode/stage/type/number only; never print driver text or tokens.
+            print("admission_expiry_diagnostic", mode, staged, delay_markers, delay_errors)
+            raise
+        assert staged == closes == [True], mode
+        if mode in ("lease_expiry", "source_expiry"):
+            assert delay_markers == ["entered", "completed"] and not delay_errors, mode
         assert disconnects == ([True] if mode == "disconnect" else [])
         assert _admission_sql_counts_ci(mind, store) == before
         assert store.lookup(request.order["client_order_id"]) is None
