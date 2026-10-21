@@ -31,7 +31,7 @@ The Jira board separates existing merged code from outstanding live evidence:
 | [PIP-40](https://nitro.atlassian.net/browse/PIP-40): composed SQL memory recovery regression | PR #77 | PIP-23: actual repeated-model behavior |
 | [PIP-41](https://nitro.atlassian.net/browse/PIP-41): Windows oversized-input test execution | PR #76 | PIP-33: separate remaining tooling/evidence notes |
 
-Concrete next code deliverables, currently To Do:
+The next independent code deliverables began on 2026-10-21:
 
 - [PIP-42](https://nitro.atlassian.net/browse/PIP-42): compare expected local
   evaluation provenance against frozen cases/effective settings before mutable
@@ -46,6 +46,27 @@ Concrete next code deliverables, currently To Do:
   tests. Review the separate schema interface before coding; exclude PIP-17 state,
   runtime activation and order transport. Database-restore limitations and broker
   reconciliation remain explicit.
+
+PIP-42 owns evaluator provenance/runner code and a separate CLI, excluding the
+PIP-17 shadow CLI/model/context/store/SQL/service files. PIP-43 owns the feeds
+coverage projection and private feed-service route, using only bounded durable
+observations and explicit unknowns, without mutating source state. PIP-44 owns
+isolated safety lease tables and a separate SQL adapter: explicit bootstrap,
+account/environment/resource binding, server-time expiry, opaque owner/generation
+tokens and same-transaction compare-and-act. Check expiry again before commit;
+do not retry uncertain acknowledgements as successes. In-database generations
+alone do not survive restoration as an external fence; recovery still needs
+trusted external authority renewal and broker reconciliation. No dispatch or
+runtime activation is added. Root serializes self-contained new SQL cases into
+the existing mandatory SQL test file; the PIP-17 smoke script remains untouched.
+
+Strict PIP-42 policy evidence distinguishes read-only absence in a reserved
+namespace before creation from actual initialized policy. Starter strict mode
+supports absent fixture policy; present/bounded/unknown requirements refuse
+before evaluator writes. Recheck initialized policy before unpause/inference;
+an unexpected policy/race retains the initialized paused mind and failure, and
+must not be reported as a zero-write preflight refusal. Exact-class effective
+local settings may be bound without certifying custom models/provider facts.
 
 PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
 PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
