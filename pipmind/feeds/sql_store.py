@@ -69,7 +69,7 @@ class SqlFeedStore:
     @contextmanager
     def transaction(self):
         try:
-            with transaction(self.connect, "pipmind-feed-store") as cur:
+            with transaction(self.connect, "pipmind-feed-store", passthrough=(FeedError,)) as cur:
                 if self.profile is not None:
                     if bound_profile(cur) != self.profile:
                         raise ShadowError("feed_store_profile_changed")
@@ -121,13 +121,21 @@ class SqlFeedStore:
             )
             db.execute("DELETE FROM pf_alerts WHERE seq <= (SELECT MAX(seq)-1000 FROM pf_alerts)")
 
-    def ingest(self, producer, key, raw, fingerprint, received, *, cursor=None):
+    def ingest(
+        self, producer, key, raw, fingerprint, received, *, cursor=None, duplicate_facts=None
+    ):
         if producer not in KINDS or len(encoded(raw).encode()) > 262144 or len(key) > 512:
             raise FeedError("invalid_feed_inbox")
         with self.transaction() as db:
-            db.execute("SELECT fingerprint FROM pf_inbox WHERE k=%s", (key,))
+            db.execute("SELECT fingerprint,raw FROM pf_inbox WHERE k=%s", (key,))
             old = db.fetchone()
-            if old and old[0] != fingerprint:
+            if old and (
+                old[0] != fingerprint
+                or (
+                    duplicate_facts is not None
+                    and encoded(duplicate_facts(loads(old[1]))) != encoded(duplicate_facts(raw))
+                )
+            ):
                 raise FeedError("conflicting_feed_delivery")
             if not old:
                 db.execute(
