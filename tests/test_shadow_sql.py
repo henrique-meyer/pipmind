@@ -4950,3 +4950,313 @@ def test_safety_lease_sql_lost_ack_retains_committed_effect_without_replay(mind)
     # A separately checked known grant can still be renewed; callback was NOT replayed.
     assert store.renew(grant, ttl_seconds=30).generation == grant.generation
     assert callbacks == [True]
+
+
+def _safety_session_case_ci(mind, *, initialize=True):
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from pipmind.contracts import utc
+    from pipmind.safety.session import EquityObservation, SessionBinding, SessionSpec
+    from pipmind.safety.session_sql import SqlSessionStore, bootstrap
+
+    spec = SessionSpec(
+        SessionBinding("synthetic-" + uuid4().hex, "demo", "USD"),
+        "session-A",
+        "synthetic-policy",
+        "a" * 64,
+        "2026-10-21T00:00:00Z",
+        "2026-10-22T00:00:00Z",
+        Decimal("1000"),
+        "opening-proof",
+        Decimal("100"),
+        60,
+    )
+    observed = EquityObservation(
+        spec.binding,
+        spec.session_id,
+        "observation-A",
+        "2026-10-21T12:00:00Z",
+        "2026-10-21T12:00:00Z",
+        Decimal("950"),
+        Decimal("20"),
+        True,
+        True,
+        spec.started_at,
+        "2026-10-21T12:00:00Z",
+        "account-proof",
+        "cash-flow-proof",
+    )
+    bootstrap(mind.connect)
+    store = SqlSessionStore(mind.connect, spec.binding, spec.session_id)
+    if initialize:
+        store.initialize(spec)
+    return store, spec, observed, utc("2026-10-21T12:00:00Z")
+
+
+def _safety_session_observation_count_ci(mind, store):
+    with mind.transaction() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.pm_safety_session_observations_v1 "
+            "WHERE account_key=%s AND session_id=%s",
+            (store._key, store.session_id),
+        )
+        return cur.fetchone()[0]
+
+
+def test_safety_session_sql_concurrent_overlap_and_currency_pin(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from threading import Barrier
+
+    import pytest
+
+    from pipmind.safety.session import SessionRefused
+    from pipmind.safety.session_sql import SqlSessionStore
+
+    store, spec, _, _ = _safety_session_case_ci(mind, initialize=False)
+    barrier = Barrier(2)
+
+    def initialize(sid):
+        candidate = SqlSessionStore(mind.connect, spec.binding, sid)
+        barrier.wait(timeout=10)
+        try:
+            return candidate.initialize(replace(spec, session_id=sid))
+        except SessionRefused as exc:
+            assert str(exc) == "overlapping_safety_session"
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = [pool.submit(initialize, sid) for sid in ("session-A", "session-B")]
+        results = [a.result(timeout=20), b.result(timeout=20)]
+    assert sum(value is not None for value in results) == 1
+    winner = next(value for value in results if value is not None)
+    actual = SqlSessionStore(mind.connect, spec.binding, winner.spec.session_id)
+    assert actual.read() == winner
+    assert actual.initialize(winner.spec) == winner
+    currency = replace(spec.binding, currency="EUR")
+    changed = SqlSessionStore(mind.connect, currency, "different-currency")
+    with pytest.raises(SessionRefused, match="^session_binding_mismatch$"):
+        changed.initialize(replace(spec, binding=currency, session_id=changed.session_id))
+    assert actual.read() == winner
+    with mind.transaction() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.pm_safety_session_sessions_v1 WHERE account_key=%s",
+            (store._key,),
+        )
+        assert cur.fetchone()[0] == 1
+
+
+def test_safety_session_sql_duplicate_collision_historical_latch_and_reopen(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from decimal import Decimal
+    from threading import Barrier
+
+    import pytest
+
+    from pipmind.safety.session import SessionRefused
+    from pipmind.safety.session_sql import SqlSessionStore
+
+    store, spec, event, now = _safety_session_case_ci(mind)
+    barrier = Barrier(2)
+
+    def append():
+        barrier.wait(timeout=10)
+        return store.observe(event, now=now)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = pool.submit(append), pool.submit(append)
+        first, retry = a.result(timeout=20), b.result(timeout=20)
+    assert first == retry and first.revision == 1 and first.daily_loss == Decimal("70")
+    assert _safety_session_observation_count_ci(mind, store) == 1
+    original = store.read()
+    with pytest.raises(SessionRefused, match="^conflicting_session_observation$"):
+        store.observe(replace(event, equity=Decimal("949")), now=now)
+    with pytest.raises(SessionRefused, match="^conflicting_session_time$"):
+        store.observe(
+            replace(event, observation_id="instant-alias", as_of="2026-10-21T12:00:00+00:00"),
+            now=now,
+        )
+    assert store.read() == original
+    historical = replace(
+        event,
+        observation_id="historical-breach",
+        as_of="2026-10-21T11:00:00Z",
+        cash_flow_ends_at="2026-10-21T11:00:00Z",
+        equity=Decimal("800"),
+    )
+    breach = store.observe(historical, now=now)
+    assert breach.daily_loss == Decimal("220") and not breach.became_current
+    assert breach.daily_loss_latched
+    current = store.read()
+    assert current.latest == event and current.daily_loss == Decimal("70")
+    assert current.daily_loss_latched and current.revision == 2
+    with pytest.raises(SessionRefused, match="^conflicting_session_time$"):
+        store.observe(replace(historical, observation_id="old-time-collision"), now=now)
+    reopened = SqlSessionStore(mind.connect, spec.binding, spec.session_id)
+    assert reopened.read() == current and reopened.initialize(spec) == current
+    assert reopened.observe(event, now=now) == first  # Original pre-latch receipt stays exact.
+    assert _safety_session_observation_count_ci(mind, store) == 2
+    adjacent = replace(
+        spec, session_id="next-session", started_at=spec.ends_at, ends_at="2026-10-23T00:00:00Z"
+    )
+    next_store = SqlSessionStore(mind.connect, adjacent.binding, adjacent.session_id)
+    assert not next_store.initialize(adjacent).daily_loss_latched
+    assert reopened.read() == current  # New session cannot erase preceding latch/history.
+
+
+def test_safety_session_sql_staged_write_error_and_interrupt_rollback(mind):
+    import pytest
+
+    from pipmind.safety.session import SessionUnavailable
+    from pipmind.safety.session_sql import SqlSessionStore
+
+    for failure in (RuntimeError, KeyboardInterrupt):
+        store, spec, event, now = _safety_session_case_ci(mind)
+        before = store.read()
+        staged = []
+        closes = []
+
+        class FailingCursor:
+            def __init__(self, cursor):
+                self.cursor = cursor
+
+            def execute(self, query, *args, _failure=failure, _staged=staged):
+                if query.startswith("UPDATE dbo.pm_safety_session_sessions_v1 SET state="):
+                    _staged.append(True)  # Observation INSERT already completed on real SQL.
+                    raise _failure("synthetic interruption after staged observation")
+                return self.cursor.execute(query, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+
+        class FailingConnection:
+            def __init__(self):
+                self.db = mind.connect()
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return FailingCursor(self.db.cursor())
+
+            def commit(self):
+                pytest.fail("failed transaction attempted commit")
+
+            def close(self, _closes=closes):
+                _closes.append(True)
+                self.db.close()
+
+        interrupted = SqlSessionStore(FailingConnection, spec.binding, spec.session_id)
+        expected = SessionUnavailable if failure is RuntimeError else KeyboardInterrupt
+        with pytest.raises(expected):
+            interrupted.observe(event, now=now)
+        assert staged == closes == [True]
+        assert store.read() == before
+        assert _safety_session_observation_count_ci(mind, store) == 0
+        receipt = store.observe(event, now=now)
+        assert store.observe(event, now=now) == receipt
+        assert _safety_session_observation_count_ci(mind, store) == 1
+
+
+def test_safety_session_sql_lost_ack_preserves_effect_and_stable_retry(mind):
+    import pytest
+
+    from pipmind.safety.session import SessionCommitUnknown
+    from pipmind.safety.session_sql import SqlSessionStore
+
+    store, spec, event, now = _safety_session_case_ci(mind)
+    commits, closes = [], []
+
+    class LostAck:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return self.db.cursor()
+
+        def commit(self):
+            self.db.commit()
+            commits.append(True)
+            raise SystemExit("synthetic interruption after SQL committed")
+
+        def close(self):
+            closes.append(True)
+            self.db.close()
+
+    uncertain = SqlSessionStore(LostAck, spec.binding, spec.session_id)
+    with pytest.raises(SessionCommitUnknown, match="^session_commit_unknown$"):
+        uncertain.observe(event, now=now)
+    assert commits == closes == [True]
+    reopened = SqlSessionStore(mind.connect, spec.binding, spec.session_id)
+    assert reopened.read().revision == 1
+    assert _safety_session_observation_count_ci(mind, store) == 1
+    receipt = reopened.observe(event, now=now)
+    assert receipt.revision == 1 and reopened.read().revision == 1
+    assert _safety_session_observation_count_ci(mind, store) == 1
+
+
+def test_safety_session_sql_same_cursor_lease_composition_and_bounded_corruption(mind):
+    import pytest
+
+    from pipmind.contracts import utc
+    from pipmind.safety.lease_sql import LeaseBinding, SqlLeaseStore
+    from pipmind.safety.lease_sql import bootstrap as lease_bootstrap
+    from pipmind.safety.session import SessionUnavailable, fingerprint
+    from pipmind.safety.session_sql import SqlSessionStore
+
+    store, spec, event, now = _safety_session_case_ci(mind)
+    original_receipt = store.observe(event, now=now)
+    before = store.read()
+    lease_bootstrap(mind.connect)
+    leases = SqlLeaseStore(
+        mind.connect,
+        LeaseBinding(spec.binding.account_id, "demo", "session-read"),
+        "synthetic-trusted-epoch",
+    )
+    leases.initialize()
+    grant = leases.acquire("synthetic-owner", ttl_seconds=30)
+
+    def forbidden_connection():
+        pytest.fail("same-cursor session read opened an independent connection")
+
+    same_cursor = SqlSessionStore(forbidden_connection, spec.binding, spec.session_id)
+    assert leases.compare_and_act(grant, same_cursor.read_in_transaction) == before
+    assert store.read() == before
+    with mind.transaction() as cur:
+        cur.execute(
+            "UPDATE dbo.pm_safety_session_observations_v1 SET as_of=DATEADD(second,1,as_of) "
+            "WHERE account_key=%s AND session_id=%s AND observation_id=%s",
+            (store._key, store.session_id, event.observation_id),
+        )
+    with pytest.raises(SessionUnavailable, match="^session_store_unavailable$"):
+        store.observe(event, now=now)
+    assert store.read() == before
+    with mind.transaction() as cur:
+        cur.execute(
+            "UPDATE dbo.pm_safety_session_observations_v1 SET as_of=%s "
+            "WHERE account_key=%s AND session_id=%s AND observation_id=%s",
+            (
+                utc(event.as_of).replace(tzinfo=None),
+                store._key,
+                store.session_id,
+                event.observation_id,
+            ),
+        )
+    assert store.observe(event, now=now) == original_receipt
+    malformed = '"' + "synthetic-private-canary" * 4000 + '"'
+    with mind.transaction() as cur:
+        cur.execute(
+            "UPDATE dbo.pm_safety_session_sessions_v1 SET state=%s,state_sha256=%s "
+            "WHERE account_key=%s AND session_id=%s",
+            (malformed, fingerprint(malformed), store._key, store.session_id),
+        )
+    with pytest.raises(SessionUnavailable, match="^session_store_unavailable$"):
+        store.read()
+    assert _safety_session_observation_count_ci(mind, store) == 1
