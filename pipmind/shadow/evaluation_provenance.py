@@ -120,6 +120,71 @@ def _configured_model(model):
     }
 
 
+def effective_local_settings(model):
+    """Read imported consumer constants and allowlisted local model settings.
+
+    This is a configuration observation, not loaded-bytecode or provider proof.
+    Inconsistent imported aliases refuse strict preflight rather than guessing
+    which component's advertised version represents the whole run.
+    """
+    from pipmind.shadow import (
+        context,
+        engine,
+        evaluation_usage,
+        evaluations,
+        maintenance,
+        working_refs,
+    )
+    from pipmind.shadow import model as models
+
+    if (
+        models.CONTEXT_VERSION != context.CONTEXT_VERSION
+        or models.POLICY != maintenance.POLICY
+        or engine.POLICY != maintenance.POLICY
+        or models.MAX_BYTES != maintenance.MAX_BYTES
+        or models.VERSION != working_refs.VERSION
+        or working_refs.MAX_ENTRIES != maintenance.MAX_ENTRIES
+    ):
+        raise ShadowError("evaluation_preflight_inconsistent_imports")
+    configured = _configured_model(model)
+    if configured["kind"] == "unknown":
+        raise ShadowError("evaluation_preflight_unknown_model")
+    credential_mode = None
+    fixture_responses_sha256 = None
+    fields = vars(model)  # Exact supported classes were established above.
+    if type(model) is FoundryModel:
+        credential_mode = fields.get("credential_mode")
+        if type(credential_mode) is not str or credential_mode not in {
+            "managed-identity",
+            "azure-cli",
+        }:
+            raise ShadowError("evaluation_preflight_unknown_model")
+    else:
+        if "responses" not in fields:
+            raise ShadowError("evaluation_preflight_unknown_model")
+        fixture_responses_sha256 = digest(encoded(freeze_json(fields["responses"])))
+    return {
+        "capabilities": {
+            "normal_prompt_version": models.PROMPT_VERSION,
+            "repair_prompt_version": models.REPAIR_PROMPT_VERSION,
+            "context_version": context.CONTEXT_VERSION,
+            "working_policy_version": maintenance.POLICY,
+            "working_budget": {
+                "version": maintenance.BUDGET_VERSION,
+                "max_bytes": maintenance.MAX_BYTES,
+                "max_entries_per_list": maintenance.MAX_ENTRIES,
+                "max_text_bytes": maintenance.MAX_TEXT_BYTES,
+            },
+            "working_codec_version": working_refs.VERSION,
+            "usage_accounting_version": evaluation_usage.ACCOUNTING_VERSION,
+            "grader_version": evaluations.GRADER_VERSION,
+        },
+        "configured_model": configured,
+        "credential_mode": credential_mode,
+        "fixture_responses_sha256": fixture_responses_sha256,
+    }
+
+
 def _artifact(path):
     receipt = {
         "path": path,
