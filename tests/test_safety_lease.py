@@ -292,6 +292,30 @@ def test_callback_failure_preserves_pretransaction_state_and_hides_driver_detail
     assert db.effects == [] and db.connections[-1].closed
 
 
+@pytest.mark.parametrize("error_type", [LeaseRefused, LeaseUnavailable, LeaseCommitUnknown])
+def test_callback_domain_exceptions_are_not_internal_verdicts_or_private_error_leaks(
+    owned, error_type
+):
+    db, store, grant = owned
+    before = deepcopy(db.rows)
+    attempts = []
+
+    def callback(cur):
+        attempts.append(True)
+        cur.execute("SYNTHETIC EFFECT", ("must rollback",))
+        raise error_type("PRIVATE_CALLBACK_DETAILS")
+
+    with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$") as raised:
+        store.compare_and_act(grant, callback)
+    assert type(raised.value) is LeaseUnavailable
+    assert "PRIVATE_CALLBACK_DETAILS" not in str(raised.value)
+    assert "PRIVATE_CALLBACK_DETAILS" not in repr(raised.value)
+    assert raised.value.__suppress_context__
+    assert attempts == [True]
+    assert db.rows == before and db.effects == []
+    assert db.connections[-1].closed and not db.connections[-1].committed
+
+
 @pytest.mark.parametrize("failure", ["before", "after"])
 def test_lost_commit_ack_is_uncertain_in_both_possible_database_states(owned, failure):
     db, store, grant = owned

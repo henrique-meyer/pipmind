@@ -320,7 +320,12 @@ class SqlLeaseStore:
 
         def operation(cur):
             before = self._checked(cur, grant)
-            result = sql_callback(cur)
+            try:
+                result = sql_callback(cur)
+            except Exception:
+                # Callback-owned exception classes/text are not internal lease
+                # verdicts. Preserve only our fixed pre-commit failure code.
+                raise LeaseUnavailable("lease_store_unavailable") from None
             after = self._checked(cur, grant)  # Expiry rolls back callback effects.
             _need(before == after, "lease_callback_changed_lease")
             return result
