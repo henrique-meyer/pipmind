@@ -283,3 +283,10 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Excludes: new Azure resources or capacity/cost changes, public owner controls, marketplace/sharing service, live trading and robot-library runtime implementation.
 - Initial landing validation: all 25 landing HTTP/SEO/configuration tests and three offline analytics checks pass. Configured and unconfigured local packaged-runtime smoke checks pass, including assets, metadata, anchors, HEAD/404 and private-route isolation. Browser checks at desktop and 375/320-pixel phone widths verify navigation, readable layout, no horizontal overflow, preserved footer/green brand periods and no console/CSP errors. Ruff passes; required PR CI supplies actual non-root container, full suite, Bicep and secret checks. The ignored local SEO procedure/evidence is updated. PR #55 was a source-only release; the approved follow-up adds automatic delivery below.
 - Automatic delivery validation: workflow syntax and twelve offline Git-history/error-injection release-gate cases pass, alongside the three analytics checks. Gate cases cover unreleased site changes followed by docs, backend-only changes, pipeline/gate changes, bootstrap and API/SHA/history/diff failures. Required PR CI precedes merge; the first automatic main run must publish/deploy and pass the existing image/revision/HTTPS smoke suite. Live release evidence stays in private deployment state and Jira.
+
+## PIP-19 - Configurable private data paths
+
+- Story: [PIP-19](https://nitro.atlassian.net/browse/PIP-19)
+- Status: In progress
+- Private working data, reports and Azure deployment state can live outside the checkout. `PIPMIND_DATA_DIR`, `PIPMIND_REPORTS_DIR` and `PIPMIND_AZURE_DIR` select those roots; when empty, the ignored in-repo `.data/`, `evals/reports/` and `.azure/` remain the defaults, so CI and fresh clones behave as before.
+- Output guards accept the configured roots in addition to the in-repo ignored ones. Nothing loads env files automatically; process variables stay authoritative.

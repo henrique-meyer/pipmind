@@ -37,8 +37,9 @@ def wait(predicate, seconds=100):
 def main():
     suffix = uuid4().hex[:12]
     network, sql, app = ["pipmind-m4-" + key + "-" + suffix for key in ("net", "sql", "app")]
-    private = ROOT / ".data"
-    private.mkdir(exist_ok=True)
+    configured = os.environ.get("PIPMIND_DATA_DIR", "").strip()
+    private = Path(configured).expanduser().resolve() if configured else ROOT / ".data"
+    private.mkdir(parents=True, exist_ok=True)
     (private / "shadow-ci" / "summary.json").unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix="m4-", dir=private) as temporary:
         work = Path(temporary).resolve()

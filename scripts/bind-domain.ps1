@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)][string]$ConfigFile,
-    [string]$DnsServer
+    [string]$DnsServer,
+    # Private Azure state directory; defaults to PIPMIND_AZURE_DIR, else the ignored <repo>/.azure.
+    [string]$PrivateDirectory = $env:PIPMIND_AZURE_DIR
 )
 $ErrorActionPreference = 'Stop'
 $config = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
@@ -17,7 +19,8 @@ if (-not ($cname | Where-Object { $_.NameHost.TrimEnd('.') -eq $target })) { thr
 $txt = @(Resolve-DnsName -Name "asuid.$($config.customHostname)" -Type TXT @dnsOptions)
 if (-not ($txt | Where-Object { ($_.Strings -join '') -eq $app.properties.customDomainVerificationId })) { throw 'Ownership TXT does not match' }
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$privateDirectory = Join-Path $repoRoot '.azure'
+if (-not $PrivateDirectory) { $PrivateDirectory = Join-Path $repoRoot '.azure' }
+$privateDirectory = $PrivateDirectory
 New-Item -ItemType Directory -Path $privateDirectory -Force | Out-Null
 $parameterFile = Join-Path $privateDirectory 'domain-parameters.local.json'
 $existingDomains = @($app.properties.configuration.ingress.customDomains | Where-Object { $_ -and $_.name -ne $config.customHostname })

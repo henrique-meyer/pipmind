@@ -8,6 +8,7 @@ in ignored files. No SQL password or Graph directory role is needed.
 import argparse
 import ipaddress
 import json
+import os
 from pathlib import Path
 from uuid import UUID
 
@@ -15,7 +16,11 @@ from uuid import UUID
 def private_file(value):
     path = Path(value).resolve()
     root = Path.cwd().resolve()
-    if not any(path.is_relative_to(root / name) for name in (".azure", ".data")):
+    roots = [root / ".azure", root / ".data"]
+    for name in ("PIPMIND_AZURE_DIR", "PIPMIND_DATA_DIR"):
+        if os.environ.get(name, "").strip():
+            roots.append(Path(os.environ[name].strip()).expanduser().resolve())
+    if not any(path.is_relative_to(base) for base in roots):
         raise ValueError("bootstrap inputs must be private local files")
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
