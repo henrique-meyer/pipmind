@@ -132,79 +132,84 @@ async def evaluate(
             # Synthetic initial working/account state belongs only to this new
             # evaluation mind. It never becomes a hosted account binding.
             contracts.validate("working-memory", initial["working_memory"])
-            with store.transaction() as cur:
-                cur.execute(
-                    "SELECT v FROM pm_runtime WHERE trader=%s AND k='memory_policy'", (trader,)
-                )
-                policy_row = cur.fetchone()
-                observed_policy = {
-                    "observation": "isolated_runtime_before_processing",
-                    **_policy_facts(policy_row, absent_only=preflight is not None),
-                }
-                if preflight is not None:
-                    try:
-                        compare_observed_policy(
-                            expected_local_provenance,
-                            _policy_facts(policy_row, absent_only=True),
+            try:
+                with store.transaction() as cur:
+                    cur.execute(
+                        "SELECT v FROM pm_runtime WHERE trader=%s AND k='memory_policy'", (trader,)
+                    )
+                    policy_row = cur.fetchone()
+                    observed_policy = {
+                        "observation": "isolated_runtime_before_processing",
+                        **_policy_facts(policy_row, absent_only=preflight is not None),
+                    }
+                    if preflight is not None:
+                        try:
+                            compare_observed_policy(
+                                expected_local_provenance,
+                                _policy_facts(policy_row, absent_only=True),
+                            )
+                        except ShadowError:
+                            # initialize() has already committed a paused mind. This
+                            # path is deliberately distinct from zero-write preflight.
+                            report["preflight_refusal"] = {
+                                "phase": "post_initialization",
+                                "code": "evaluation_preflight_policy_mismatch",
+                                "trader": trader,
+                                "case_id": case["case_id"],
+                                "repetition": repetition + 1,
+                                "observed_memory_policy": observed_policy,
+                                "initialized_mind_retained": True,
+                                "unpause_attempted": False,
+                                "failure_audit": "report-only",
+                                "checkpoint_persistence": "unconfirmed",
+                            }
+                            raise EvaluationPreflightRefusal(report) from None
+                    working = encoded(initial["working_memory"])
+                    cur.execute("UPDATE pm_minds SET working=%s WHERE trader=%s", (working, trader))
+                    cur.execute(
+                        "UPDATE pm_records SET body=%s WHERE trader=%s AND part='working_memory'",
+                        (working, trader),
+                    )
+                    for key, value in (
+                        (
+                            "broker_snapshots",
+                            {
+                                "account": case["initial_account"],
+                                "positions": case["initial_positions"],
+                                "synthetic_fixture": True,
+                            },
+                        ),
+                        (
+                            "evaluation",
+                            {
+                                "run_id": report["run_id"],
+                                "case_id": case["case_id"],
+                                "case_sha256": case_sha256,
+                                "repetition": repetition + 1,
+                                "runtime_provenance_sha256": provenance_sha256,
+                                "observed_memory_policy": observed_policy,
+                                **({"local_preflight": deepcopy(preflight)} if preflight else {}),
+                            },
+                        ),
+                    ):
+                        cur.execute(
+                            "INSERT pm_runtime VALUES(%s,%s,%s)", (trader, key, encoded(value))
                         )
-                    except ShadowError:
-                        # initialize() has already committed a paused mind. This
-                        # path is deliberately distinct from zero-write preflight.
-                        report["preflight_refusal"] = {
-                            "phase": "post_initialization",
-                            "code": "evaluation_preflight_policy_mismatch",
-                            "trader": trader,
-                            "case_id": case["case_id"],
-                            "repetition": repetition + 1,
-                            "observed_memory_policy": observed_policy,
-                            "initialized_mind_retained": True,
-                            "unpause_attempted": False,
-                            "failure_audit": "report-only",
-                            "checkpoint_persistence": "unconfirmed",
-                        }
-                        if progress:
-                            try:
-                                progress(deepcopy(report))
-                            except Exception:
-                                # Private callback errors cannot replace the
-                                # refusal or hide access to retained evidence.
-                                pass
-                            else:
-                                report["preflight_refusal"]["checkpoint_persistence"] = (
-                                    "callback_returned"
-                                )
-                        else:
-                            report["preflight_refusal"]["checkpoint_persistence"] = "not_requested"
-                        raise EvaluationPreflightRefusal(report) from None
-                working = encoded(initial["working_memory"])
-                cur.execute("UPDATE pm_minds SET working=%s WHERE trader=%s", (working, trader))
-                cur.execute(
-                    "UPDATE pm_records SET body=%s WHERE trader=%s AND part='working_memory'",
-                    (working, trader),
-                )
-                for key, value in (
-                    (
-                        "broker_snapshots",
-                        {
-                            "account": case["initial_account"],
-                            "positions": case["initial_positions"],
-                            "synthetic_fixture": True,
-                        },
-                    ),
-                    (
-                        "evaluation",
-                        {
-                            "run_id": report["run_id"],
-                            "case_id": case["case_id"],
-                            "case_sha256": case_sha256,
-                            "repetition": repetition + 1,
-                            "runtime_provenance_sha256": provenance_sha256,
-                            "observed_memory_policy": observed_policy,
-                            **({"local_preflight": deepcopy(preflight)} if preflight else {}),
-                        },
-                    ),
-                ):
-                    cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (trader, key, encoded(value)))
+            except EvaluationPreflightRefusal:
+                # A report sink may read this retained mind. Release the
+                # transaction-owned SQL lock before delivering its evidence.
+                if progress:
+                    try:
+                        progress(deepcopy(report))
+                    except Exception:
+                        # Private callback errors cannot replace the
+                        # refusal or hide access to retained evidence.
+                        pass
+                    else:
+                        report["preflight_refusal"]["checkpoint_persistence"] = "callback_returned"
+                else:
+                    report["preflight_refusal"]["checkpoint_persistence"] = "not_requested"
+                raise EvaluationPreflightRefusal(report) from None
             store.set_paused(False)
             active = {}
             operational_error = None

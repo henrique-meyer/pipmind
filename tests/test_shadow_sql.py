@@ -1294,7 +1294,15 @@ def test_sql_expected_evaluation_postinit_policy_refusal_retains_paused_initiali
     monkeypatch.setattr(FixtureModel, "triage", forbidden_model)
     source_before = mind.head(), mind.retained()
     partials = []
-    with pytest.raises(ShadowError, match="evaluation_preflight_policy_mismatch"):
+
+    def retain_after_unlock(report):
+        # A fresh SQL connection must reacquire the trader lock after the
+        # refusal observation has exited its transaction, without timing out.
+        saved = SqlMind(mind.connect, report["preflight_refusal"]["trader"])
+        assert saved.head()["paused"] and saved.head()["revision"] == 0
+        partials.append(deepcopy(report))
+
+    with pytest.raises(ShadowError, match="evaluation_preflight_policy_mismatch") as raised:
         asyncio.run(
             evaluate(
                 mind.connect,
@@ -1302,7 +1310,7 @@ def test_sql_expected_evaluation_postinit_policy_refusal_retains_paused_initiali
                 model,
                 repetitions=2,
                 expected_local_provenance=expected,
-                progress=partials.append,
+                progress=retain_after_unlock,
             )
         )
     assert len(initialized) == 1 and calls == []
@@ -1320,6 +1328,9 @@ def test_sql_expected_evaluation_postinit_policy_refusal_retains_paused_initiali
     assert refusal["phase"] == "post_initialization"
     assert refusal["trader"] == retained.trader and refusal["initialized_mind_retained"]
     assert refusal["failure_audit"] == "report-only" and refusal["unpause_attempted"] is False
+    assert raised.value.partial_report["preflight_refusal"]["checkpoint_persistence"] == (
+        "callback_returned"
+    )
     assert (mind.head(), mind.retained()) == source_before
 
 

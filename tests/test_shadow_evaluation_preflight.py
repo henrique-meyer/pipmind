@@ -455,3 +455,60 @@ def test_postinit_api_exception_preserves_private_report_without_progress_or_on_
         assert error.partial_report["preflight_refusal"] == refusal
     assert sql.calls == sql.unpauses == 0
     assert next(state for state in sql.states.values() if state["initialized"])["paused"]
+
+
+def test_postinit_refusal_callback_can_read_retained_state_after_sql_lock_released(monkeypatch):
+    cases, model = inputs()
+    policy = {"version": "unexpected-synthetic-policy"}
+    sql = FakeSQL(initialized_policy=policy)
+    original_store = sql.store
+    lock_depth, retained_reads = 0, []
+
+    def locked_store(connect, trader):
+        store = original_store(connect, trader)
+        original_transaction = store.transaction
+
+        @contextmanager
+        def transaction():
+            nonlocal lock_depth
+            # A second connection cannot reacquire the same transaction-owned
+            # exclusive SQL app lock while the policy observation holds it.
+            assert lock_depth == 0, "same-mind callback read blocked by active SQL lock"
+            lock_depth += 1
+            try:
+                with original_transaction() as cursor:
+                    yield cursor
+            finally:
+                lock_depth -= 1
+
+        store.transaction = transaction
+        return store
+
+    monkeypatch.setattr(sql, "store", locked_store)
+
+    def progress(report):
+        trader = report["preflight_refusal"]["trader"]
+        retained = sql.store(sql, trader)
+        with retained.transaction():
+            retained_reads.append(deepcopy(retained.retained()))
+        report["preflight_refusal"]["code"] = "callback mutation"
+
+    with pytest.raises(preflight.EvaluationPreflightRefusal) as raised:
+        run(monkeypatch, sql, cases, model, intent(cases, model), progress=progress)
+
+    assert len(retained_reads) == 1 and lock_depth == 0
+    head, records = retained_reads[0]
+    assert head == {
+        "paused": True,
+        "working": {"views": [], "position_theses": [], "waiting_for": []},
+    }
+    assert any(meta["part"] == "identity" for meta, _ in records)
+    refusal = raised.value.partial_report["preflight_refusal"]
+    assert refusal["code"] == "evaluation_preflight_policy_mismatch"
+    assert refusal["checkpoint_persistence"] == "callback_returned"
+    state = sql.states[refusal["trader"]]
+    assert state["policy"] == policy
+    assert state["inputs"] == state["outcomes"] == {}
+    assert state["pending"] == []
+    assert "evaluation" not in state and "broker_snapshots" not in state
+    assert sql.writes == 1 and sql.calls == sql.unpauses == 0
