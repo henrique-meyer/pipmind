@@ -376,3 +376,18 @@ of both oversized rejection paths, bounded collected IDs and the complete offlin
 Windows suite; retain required Linux/SQL/container checks. Other parked findings
 and historical evidence limitations remain open. This does not change production
 code, dependencies, hosted state or qualification requirements.
+
+PIP-23's next offline audit checks active-policy growth and repair coverage across
+repeated consolidation, dependency/reference preservation, failed repair rollback,
+restart and subsequent progress. Add only concrete missing regressions or fixes
+with synthetic model fixtures and disposable SQL. Preserve complete source history
+and every budget, prompt, model-call, output and format bound. Distinguish an
+intentionally preserved hold from demonstrated progress; this does not activate
+policy in starter evaluations or qualify real-model behavior or a hosted day.
+
+The selected regression composes successive consolidation with reordered
+unresolved prerequisites, an invalid-correction hold, reopening without automatic
+inference, explicit fixture owner retry and progress on a fresh input. Retain
+exact immutable history, candidates and usage, active-policy checkpoint lineage
+and old-prerequisite retrieval. Exercise real request/wire assembly with injected
+synthetic responses; keep the one-repair-per-attempt bound and zero dispatches.

@@ -3175,6 +3175,281 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
     assert result["dispatches"] == 0
 
 
+def test_sql_sequential_consolidations_recover_after_restart_and_use_current_wire_indices(mind):
+    from types import SimpleNamespace
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import entries, working_digest, working_sizes
+    from pipmind.shadow.model import FoundryModel
+
+    full_text = (
+        "EACH official CPI full text and methodology remain required; no prerequisite resolved."
+    )
+    prior = (
+        "Comparable prior and revision-vintage evidence remain required; no prerequisite resolved."
+    )
+    before = {
+        "views": [f"USD condition {i}: " + "\\" * 250 for i in range(8)],
+        "waiting_for": [
+            full_text,
+            prior,
+            *[f"Other prerequisite {i}: " + "b" * 150 for i in range(3)],
+        ],
+        "position_theses": [],
+    }
+    after_first = {
+        "views": [f"USD condition {i}: " + "\\" * 260 for i in range(8)],
+        "waiting_for": [
+            prior,
+            full_text,
+            "Other prerequisites 0,1,2 and first added prerequisite remain unresolved: "
+            + "d" * 210,
+        ],
+        "position_theses": [],
+    }
+    after_retry = {
+        "views": ["USD conditions 0,1,2,3,4,5,6,7 remain uncertain."],
+        "waiting_for": [
+            full_text,
+            prior,
+            "Other prerequisites 0,1,2 plus both added prerequisites remain unresolved.",
+        ],
+        "position_theses": [],
+    }
+    with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("sequential-before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            encoded(before),
+        )
+        mind._write_working(cur, before, MOMENT)
+    activate_bounded(mind)
+    origin = mind.runtime("memory_policy")["origin_checkpoint"]
+    original_head = mind.head()
+    originals = {
+        m["record_id"]: (m, b) for m, b in mind.retained()[1] if m["part"] != "working_memory"
+    }
+    events, fixture = episode(mind)
+    first = events[0]
+    second = deepcopy(first)
+    second["message_id"] = second["payload"]["event_id"] = "sequential-second"
+    second["available_at"] = (MOMENT + timedelta(seconds=1)).isoformat()
+    candidates = {}
+    for event, state, text in (
+        (first, before, "First added prerequisite: " + "c" * 260),
+        (second, after_first, "Second added prerequisite: " + "e" * 270),
+    ):
+        candidate = deepcopy(fixture.responses[first["message_id"]]["reply"])
+        candidate.update(
+            action="hold",
+            evidence_ids=[event["message_id"]],
+            tool_calls=[],
+            memory_dispositions=[],
+            working_memory={**deepcopy(state), "waiting_for": [*state["waiting_for"], text]},
+        )
+        candidates[event["message_id"]] = candidate
+    for state in (before, after_first, after_retry):
+        assert working_sizes(state)["total_bytes"] <= 5000
+        assert max(working_sizes(state)["entry_bytes"].values()) <= 300
+        assert len(state["views"]) <= 8 and len(state["waiting_for"]) <= 8
+    for candidate in candidates.values():
+        state = candidate["working_memory"]
+        assert working_sizes(state)["total_bytes"] > 5000
+        assert max(working_sizes(state)["entry_bytes"].values()) <= 300
+        assert len(state["views"]) <= 8 and len(state["waiting_for"]) <= 8
+
+    def mappings(source, target, identifier):
+        rows = []
+        for key, text in entries(source).items():
+            field = "views" if key[0] == "v" else "waiting_for"
+            if text in target[field]:
+                destination, disposition = key[0] + str(target[field].index(text)), "retained"
+            elif key[0] == "v" and len(source["views"]) == len(target["views"]):
+                destination, disposition = key, "updated"
+            else:
+                destination, disposition = ("v0" if key[0] == "v" else "w2"), "merged"
+            rows.append(
+                {
+                    "from": key,
+                    "to": destination,
+                    "disposition": disposition,
+                    "reason": "Keep every named uncertainty and unresolved prerequisite",
+                    "evidence_ids": [identifier],
+                }
+            )
+        return rows
+
+    corrections = {}
+    for event, source, target in ((first, before, after_first), (second, after_first, after_retry)):
+        identifier = event["message_id"]
+        corrections[identifier] = {
+            "working_memory": target,
+            "memory_dispositions": mappings(source, target, identifier),
+            "candidate_dispositions": mappings(
+                candidates[identifier]["working_memory"], target, identifier
+            ),
+        }
+    invalid = deepcopy(corrections[second["message_id"]])
+    invalid["candidate_dispositions"].pop()
+    calls, repair_usage = [], {}
+
+    class Repair(FixtureModel):
+        async def triage(self, event, *args):
+            calls.append(("triage", event["message_id"]))
+            return {"wake": True, "summary": "Synthetic growth input"}, {
+                "phase": "triage",
+                "synthetic": True,
+            }
+
+        async def decide(self, event, *args):
+            calls.append(("decision", event["message_id"]))
+            return deepcopy(candidates[event["message_id"]]), {
+                "phase": "decision",
+                "synthetic": True,
+            }
+
+        async def repair_memory(self, event, context, candidate, *args):
+            identifier = event["message_id"]
+            calls.append(("memory_repair", identifier))
+            assert context["working_memory"] == (
+                before if identifier == first["message_id"] else after_first
+            )
+            assert candidate == candidates[identifier]
+            usage = {
+                "phase": "memory_repair",
+                "synthetic": True,
+                "input_tokens": 12,
+                "output_tokens": 34,
+            }
+            repair_usage.setdefault(identifier, []).append(deepcopy(usage))
+            value = (
+                invalid
+                if identifier == second["message_id"] and len(repair_usage[identifier]) == 1
+                else corrections[identifier]
+            )
+            return deepcopy(value), usage
+
+    model = Repair({})
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    assert mind.head()["working"] == after_first and len(repair_usage[first["message_id"]]) == 1
+    first_outcome = mind.outcome(first["message_id"])
+    assert first_outcome["memory_repair"]["candidate"] == candidates[first["message_id"]]
+    assert first_outcome["memory_repair"]["response"] == corrections[first["message_id"]]
+    assert first_outcome["memory_repair"]["before_sha256"] == working_digest(before)
+    first_policy = mind.runtime("memory_policy")
+    moment = MOMENT + timedelta(seconds=1)
+    mind.accept("sequential", [{"sequence": 1, "event": second}], moment)
+    assert not asyncio.run(ShadowEngine(mind, model, clock=lambda: moment).step())
+    held_id = mind.runtime("reasoning_hold")["attempt_id"]
+    held_records = {
+        m["record_id"]: (m, b) for m, b in mind.retained()[1] if m["part"] != "working_memory"
+    }
+    held_body = held_records[held_id][1]
+    held = loads(held_body)
+    assert held["memory_repair"]["candidate"] == candidates[second["message_id"]]
+    assert held["memory_repair"]["response"] == invalid
+    assert held["memory_repair"]["before_sha256"] == working_digest(after_first)
+    assert held["usage"][-1] == repair_usage[second["message_id"]][0]
+    reopened = SqlMind(mind.connect, mind.trader)
+    assert reopened.head()["paused"] and reopened.head()["working"] == after_first
+    assert reopened.runtime("memory_policy") == first_policy and reopened.pending() == second
+    assert reopened.outcome(second["message_id"]) is None
+    paused_calls = deepcopy(calls)
+    assert not asyncio.run(ShadowEngine(reopened, model, clock=lambda: moment).step())
+    assert calls == paused_calls and len(repair_usage[second["message_id"]]) == 1
+    assert (held_records[held_id][0], held_body) in reopened.retained()[1]
+    reopened.set_paused(False)  # Explicit fixture-owner retry, not automatic hosted recovery.
+    assert asyncio.run(ShadowEngine(reopened, model, clock=lambda: moment).step())
+    assert reopened.head()["working"] == after_retry and reopened.pending() is None
+    assert (
+        reopened.runtime("reasoning_hold") is None and len(repair_usage[second["message_id"]]) == 2
+    )
+    assert reopened.status()["outcomes"] == 2
+    retry = reopened.outcome(second["message_id"])
+    assert retry["memory_repair"]["response"] == corrections[second["message_id"]]
+    assert retry["memory_repair"]["before_sha256"] == working_digest(after_first)
+    assert [row["phase"] for row in retry["usage"]] == ["triage", "decision", "memory_repair"]
+
+    fresh = deepcopy(second)
+    fresh["message_id"] = fresh["payload"]["event_id"] = "sequential-fresh"
+    fresh["available_at"] = (MOMENT + timedelta(seconds=2)).isoformat()
+    moment += timedelta(seconds=1)
+    reopened.accept("sequential", [{"sequence": 2, "event": fresh}], moment)
+    wire = {
+        "action": "hold",
+        "reasoning": "Carry unresolved prerequisites from the persisted after-state.",
+        "evidence_ids": [fresh["message_id"]],
+        "tool_calls": [],
+        "memory_dispositions": [],
+        "working_memory": {"views": [0], "waiting_for": [1, 0, 2], "position_theses": []},
+    }
+    wire_calls = []
+
+    def factory(phase, **kwargs):
+        class Agent:
+            async def run(self, message, **options):
+                wire_calls.append(phase)
+                value = (
+                    {"wake": True, "summary": "Synthetic post-restart carry"}
+                    if phase == "triage"
+                    else wire
+                )
+                return SimpleNamespace(
+                    text=encoded(value),
+                    usage_details={"input_token_count": 10, "output_token_count": 5},
+                )
+
+        return Agent()
+
+    adapter = FoundryModel(
+        "https://synthetic.invalid/api/projects/test", "t", "d", enabled=True, factory=factory
+    )
+    assert asyncio.run(ShadowEngine(reopened, adapter, clock=lambda: moment).step())
+    result = reopened.outcome(fresh["message_id"])
+    assert wire_calls == ["triage", "decision"] and "memory_repair" not in result
+    assert result["context"]["working_memory"] == after_retry
+    assert result["reply"]["working_memory"]["waiting_for"] == [
+        prior,
+        full_text,
+        after_retry["waiting_for"][2],
+    ]
+    assert result["usage"][-1]["wire_response"] == wire
+    assert result["reply"]["working_memory"]["views"] == after_retry["views"]
+    assert result["usage"][-1]["working_memory_references"]["views"] == [{"after": 0, "before": 0}]
+    assert result["usage"][-1]["working_memory_references"]["waiting_for"][0] == {
+        "after": 0,
+        "before": 1,
+    }
+    final = SqlMind(mind.connect, mind.trader)
+    assert (
+        not final.head()["paused"] and final.pending() is None and final.status()["outcomes"] == 3
+    )
+    assert final.checkpoint("sequential") == 2 and final.status()["dispatches"] == 0
+    assert final.head()["binding"] == original_head["binding"]
+    retained = {
+        m["record_id"]: (m, b) for m, b in final.retained()[1] if m["part"] != "working_memory"
+    }
+    assert all(retained[key] == value for key, value in originals.items())
+    assert all(retained[key] == value for key, value in held_records.items())
+    assert retained[held_id][1] == held_body
+    policy = final.runtime("memory_policy")
+    assert policy["origin_checkpoint"] == origin
+    checkpoint, chain = policy["checkpoint"], []
+    while checkpoint is not None:
+        assert checkpoint not in chain
+        chain.append(checkpoint)
+        checkpoint_meta, body = retained[checkpoint]
+        transition = loads(body)
+        assert working_sizes(transition["after"])["total_bytes"] <= 5000
+        previous = transition["previous_checkpoint"]
+        assert previous is None or previous in checkpoint_meta["evidence_ids"]
+        checkpoint = previous
+    assert len(chain) == 4 and chain[-1] == origin
+    assert [len(repair_usage[event["message_id"]]) for event in (first, second)] == [1, 2]
+    found = final.search(origin + " | w0 EACH official CPI full text methodology", moment)
+    assert found and found[0]["metadata"]["record_id"] == origin and full_text in found[0]["body"]
+
+
 def test_sql_approved_budget_accepts_retained_shape_without_repair_or_rewriting(mind):
     from pipmind.shadow.common import encoded
     from pipmind.shadow.maintenance import working_sizes
