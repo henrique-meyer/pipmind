@@ -3019,7 +3019,11 @@ def test_checked_resume_rejects_changed_guards_without_mutation(mind, fault):
             mind._set_runtime(c, "reasoning_hold", {"reason": "new_worker_hold"})
         expected = "checked_resume_reasoning_hold"
     elif fault == "pending":
-        kwargs["expected_pending"] = deepcopy(CASE["events"][1])
+        changed = deepcopy(kwargs["expected_pending"])
+        changed["message_id"] += ":different-pending"
+        if "event_id" in changed["payload"]:
+            changed["payload"]["event_id"] = changed["message_id"]
+        kwargs["expected_pending"] = changed
         expected = "checked_resume_pending_changed"
     elif fault == "hash":
         kwargs["owner_control_sha256"] = "0" * 64
