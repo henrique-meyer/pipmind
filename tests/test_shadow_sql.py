@@ -4334,3 +4334,104 @@ def test_sql_local_handoff_recovers_a_committed_input_page_after_lost_acknowledg
     ]
     assert [loads(body) for _, body in accepted[:2]] == [row["event"] for row in expected]
     assert feeds.events(baseline, 2) == expected and feeds.state(provider_cursor) == "next-page"
+
+
+def test_sql_news_page_and_validators_rollback_then_restart_revalidates_without_duplicates(
+    monkeypatch,
+):
+    from pipmind.contracts import stamp
+    from pipmind.core import SimulatedClock
+    from pipmind.feeds.common import FeedError, ReadResult
+    from pipmind.feeds.news import News
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    connect = connector()
+    store = SqlFeedStore(connect)
+    clock = SimulatedClock(utc("2026-10-20T10:00:00Z"))
+    sid = "news-" + uuid4().hex
+    source = {"id": sid, "url": "https://rss.invalid/feed", "kind": "breaking"}
+    keys = {kind: "rss:" + kind + ":" + sid for kind in ("http", "last", "poll")}
+    unrelated = "news-checkpoint:" + uuid4().hex
+    store.save(unrelated, {"source_cursor": 123, "pending_page": "retained"})
+    source_id = store.source_id()
+    with store.transaction() as db:
+        db.execute("SELECT COALESCE(MAX(seq),0) FROM pf_events")
+        baseline = db.fetchone()[0]
+        db.execute("SELECT k,v FROM pf_meta")
+        binding = dict(db.fetchall())
+    modified = "Tue, 20 Oct 2026 09:00:00 GMT"
+    xml = (
+        b"<rss><channel><item><guid>one</guid><title>Original</title>"
+        b"<link>https://news.invalid/one</link><pubDate>Tue, 20 Oct 2026 09:00:00 GMT</pubDate>"
+        b"</item></channel></rss>"
+    )
+
+    class HTTP:
+        def __init__(self, *replies):
+            self.replies, self.calls = list(replies), []
+
+        def get(self, target, *, headers=None):
+            self.calls.append((target, dict(headers or {})))
+            return self.replies.pop(0)
+
+    first = HTTP(ReadResult(200, xml, {"ETag": '"original"', "Last-Modified": modified}))
+    News(store, first, [source], clock.now).step()
+    original = store.events(after=baseline)
+    assert len(original) == 1
+    last_success = store.state(keys["last"])
+    clock.advance(clock.now() + timedelta(seconds=300))
+    real_save, injected = store.save, False
+
+    def fail_after_last_success_write(key, value, *, db=None):
+        nonlocal injected
+        real_save(key, value, db=db)
+        if key == keys["last"] and not injected:
+            injected = True
+            # Events and new validators have already been written in this SQL
+            # transaction; the thrown domain error must roll all of them back.
+            raise FeedError("feed_store_unavailable")
+
+    monkeypatch.setattr(store, "save", fail_after_last_success_write)
+    changed = xml.replace(b"Original", b"Revised")
+    failed = HTTP(ReadResult(200, changed, {"ETag": '"revised"'}))
+    News(store, failed, [source], clock.now).step()
+    assert injected
+    assert store.events(after=baseline) == original
+    assert store.state(keys["last"]) == last_success
+    assert store.state(keys["http"]) == {
+        "etag": '"original"',
+        "last_modified": modified,
+        "failures": 1,
+    }
+    monkeypatch.setattr(store, "save", real_save)
+
+    # Reopen the real SQL adapter: only the successful representation's validators
+    # can be used. Revalidation is a successful read with no new event effect.
+    reopened = SqlFeedStore(connect)
+    assert reopened.source_id() == source_id
+    assert reopened.state(unrelated) == {"source_cursor": 123, "pending_page": "retained"}
+    clock.advance(clock.now() + timedelta(seconds=300))
+    unchanged = HTTP(ReadResult(304, b"", {}))
+    News(reopened, unchanged, [source], clock.now).step()
+    assert unchanged.calls == [
+        (source["url"], {"If-None-Match": '"original"', "If-Modified-Since": modified})
+    ]
+    assert reopened.events(after=baseline) == original
+    assert reopened.state(keys["last"]) == stamp(clock.now())
+    assert reopened.state(keys["http"]) == {
+        "etag": '"original"',
+        "last_modified": modified,
+        "failures": 0,
+    }
+
+    clock.advance(clock.now() + timedelta(seconds=300))
+    recovered = HTTP(ReadResult(200, changed, {"ETag": '"revised"'}))
+    News(reopened, recovered, [source], clock.now).step()
+    final = reopened.events(after=baseline)
+    assert len(final) == 2 and final[0] == original[0]
+    assert final[1]["event"]["payload"]["headline"] == "Revised"
+    assert reopened.state(keys["http"]) == {"etag": '"revised"', "failures": 0}
+    assert reopened.state(unrelated) == {"source_cursor": 123, "pending_page": "retained"}
+    with reopened.transaction() as db:
+        db.execute("SELECT k,v FROM pf_meta")
+        assert dict(db.fetchall()) == binding
