@@ -4519,7 +4519,7 @@ def test_safety_lease_sql_serializes_competing_owners_and_preserves_restart(mind
 def test_safety_lease_sql_callback_error_and_expiry_rollback_exact_effects(mind):
     import pytest
 
-    from pipmind.safety.lease_sql import LeaseRefused, LeaseUnavailable
+    from pipmind.safety.lease_sql import LeaseRefused, LeaseUnavailable, SqlLeaseStore
 
     store = _safety_lease_store_for_ci(mind)
     key = _safety_lease_effect_for_ci(mind)
@@ -4538,6 +4538,33 @@ def test_safety_lease_sql_callback_error_and_expiry_rollback_exact_effects(mind)
         store.compare_and_act(grant, failed)
     assert callbacks == ["failure"]
     assert mind.runtime(key) == {"value": "before"}
+
+    # Drop the actual SQL connection after a staged write, before the final
+    # ownership read. An unavailable store must return no callback result and
+    # disconnect must abort the uncommitted effect. No server-wide outage or
+    # shared service state is changed by this disposable-session fault.
+    connections = []
+
+    def disconnectable():
+        db = mind.connect()
+        connections.append(db)
+        return db
+
+    interrupted = SqlLeaseStore(disconnectable, store.binding, store.authority_epoch)
+
+    def disconnected(cur):
+        callbacks.append("connection_loss")
+        cur.execute(
+            "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k=%s",
+            ('{"value":"lost connection must rollback"}', mind.trader, key),
+        )
+        connections[-1].close()
+        return "must not escape unavailable SQL"
+
+    with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$"):
+        interrupted.compare_and_act(grant, disconnected)
+    assert len(connections) == 1 and callbacks == ["failure", "connection_loss"]
+    assert mind.runtime(key) == {"value": "before"}
     store.release(grant)
     short = store.acquire("owner-B", ttl_seconds=2)
 
@@ -4552,7 +4579,7 @@ def test_safety_lease_sql_callback_error_and_expiry_rollback_exact_effects(mind)
 
     with pytest.raises(LeaseRefused, match="^lease_expired$"):
         store.compare_and_act(short, expired)
-    assert callbacks == ["failure", "expiry"]
+    assert callbacks == ["failure", "connection_loss", "expiry"]
     assert mind.runtime(key) == {"value": "before"}
     with pytest.raises(LeaseRefused, match="^lease_expired$"):
         store.renew(short, ttl_seconds=300)
