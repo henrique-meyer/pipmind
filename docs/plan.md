@@ -21,6 +21,37 @@ offline tests. Hosted/provider/model calls, orders, capacity changes and activat
 remain outside this scope. Subsequent code tasks are independent of the hosted
 qualification chain unless their specific interface needs an unfinished feature.
 
+The Jira board separates existing merged code from outstanding live evidence:
+
+| Completed code delivery | Merged source | Remaining qualification |
+| --- | --- | --- |
+| [PIP-37](https://nitro.atlassian.net/browse/PIP-37): complete-history export sizing | PR #71 | PIP-27: fresh sizing/format decisions and retained-day clone |
+| [PIP-38](https://nitro.atlassian.net/browse/PIP-38): feed fact conflicts and restart isolation | PR #72 | PIP-21: live source coverage and upstream limitations |
+| [PIP-39](https://nitro.atlassian.net/browse/PIP-39): evaluation persistence, usage and local provenance | PRs #73–#75 | PIP-23: current-model execution and growth quality; PIP-24: human calibration |
+| [PIP-40](https://nitro.atlassian.net/browse/PIP-40): composed SQL memory recovery regression | PR #77 | PIP-23: actual repeated-model behavior |
+| [PIP-41](https://nitro.atlassian.net/browse/PIP-41): Windows oversized-input test execution | PR #76 | PIP-33: separate remaining tooling/evidence notes |
+
+Concrete next code deliverables, currently To Do:
+
+- [PIP-42](https://nitro.atlassian.net/browse/PIP-42): compare expected local
+  evaluation provenance against frozen cases/effective settings before mutable
+  evaluation work; mismatches refuse without SQL writes/model calls. Descriptive
+  external claims remain unverified. Avoid the PIP-17 CLI files.
+- [PIP-43](https://nitro.atlassian.net/browse/PIP-43): private per-source feed
+  coverage projection from durable observation facts, including configured but
+  unseen/failed sources and explicit unknowns. No fetches, public exposure or
+  invented completeness; reuse PIP-34 news facts once merged.
+- [PIP-44](https://nitro.atlassian.net/browse/PIP-44): isolated SQL ownership lease
+  and monotonic fencing primitives with actual concurrency/interruption/outage
+  tests. Review the separate schema interface before coding; exclude PIP-17 state,
+  runtime activation and order transport. Database-restore limitations and broker
+  reconciliation remain explicit.
+
+PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
+PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
+groundwork. These statuses do not imply M4, deployed health, order safety or a
+completed FX day. Historical sections below retain their dated delivery notes.
+
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
 ## PIP-16 — Robot library, Auto Learn and protected rolling saves
