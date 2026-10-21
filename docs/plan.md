@@ -64,6 +64,8 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 
 ## PIP-14 — Complete M4 live qualification
 
+- Overnight preparation: reconcile versioned evaluation/source evidence and human-calibration gaps; harden offline release/evaluation guards for thesis coverage, exact report/source binding, wire fidelity, unknown usage and observed/refused outcomes. Keep hosted state unchanged; schedule separate live release/full-day gates and record minor issues in the backlog.
+
 - Private-layout follow-up: migrate operational helpers to explicit external data/report/deployment roots and explicit application source paths; verify them offline from independent working directories and preserve historical evidence. No hosted deployment or shadow-validation resume is part of this migration.
 
 - Current coverage/evaluation pass: verify hosted macro mappings, publication/unit/scale evidence, news/analysis delivery, social roles, outage/backfill and quarantine behavior against actual retained inputs. Repeat isolated real-model cases against the deployed prompt while ordered source catch-up continues; preserve original attempts and report integrity, semantic fidelity, refusals/timeouts, usage and human-calibration needs separately. Reuse approved subscriptions and capacity; public callbacks, new paid sources/credits and infrastructure changes remain outside this pass. Source outages and unsupported coverage must remain explicit gaps rather than passing by omission.
@@ -292,3 +294,29 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Status: Done — PR #67 merged; configurable application paths verified offline.
 - Private working data, reports and Azure deployment state can live outside the checkout. `PIPMIND_DATA_DIR`, `PIPMIND_REPORTS_DIR` and `PIPMIND_AZURE_DIR` select those roots; when empty, the ignored in-repo `.data/`, `evals/reports/` and `.azure/` remain the defaults, so CI and fresh clones behave as before.
 - Output guards accept the configured roots in addition to the in-repo ignored ones. Nothing loads env files automatically; process variables stay authoritative.
+
+
+## Next qualification and delivery work
+
+PIP-14 remains the M4 umbrella. Its scoped subtasks and the later milestone stories below have separate acceptance criteria and explicit dependencies in Jira. Planning priorities are labels (P0/P1/P2), not deployment or trading authorization. Hosted changes remain deferred; offline preparation can proceed in parallel.
+
+| Priority | Work item | Scope | Milestone | Status |
+| --- | --- | --- | --- | --- |
+| P0 | [PIP-32](https://nitro.atlassian.net/browse/PIP-32) | Make shadow release resume atomic against source revision and holds | M4 | In Progress |
+| P0 | [PIP-20](https://nitro.atlassian.net/browse/PIP-20) | Qualify the processing-throughput correction on the selected release | M4 | To Do |
+| P1 | [PIP-23](https://nitro.atlassian.net/browse/PIP-23) | Repeat current-prompt model evals and bounded-state growth checks | M4 | In Progress |
+| P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | To Do |
+| P1 | [PIP-22](https://nitro.atlassian.net/browse/PIP-22) | Verify broader read-only social roles before activating recipes | M4 | To Do |
+| P1 | [PIP-24](https://nitro.atlassian.net/browse/PIP-24) | Calibrate reasoning and memory fidelity with owner-scored samples | M4 | To Do |
+| P1 | [PIP-25](https://nitro.atlassian.net/browse/PIP-25) | Capture one complete timely open-FX shadow day with independent zero-order evidence | M4 | To Do |
+| P1 | [PIP-26](https://nitro.atlassian.net/browse/PIP-26) | Reconcile full-day model/provider charges and existing-capacity measurements | M4 | To Do |
+| P1 | [PIP-27](https://nitro.atlassian.net/browse/PIP-27) | Export and clone the complete retained mind after the qualified day | M4 | To Do |
+| P1 | [PIP-28](https://nitro.atlassian.net/browse/PIP-28) | Implement the M5 hard risk boundary, ownership fencing and reconciliation | M5 | To Do |
+| P1 | [PIP-29](https://nitro.atlassian.net/browse/PIP-29) | Implement original-trader recovery and account-assignment handover | M5 | To Do |
+| P1 | [PIP-30](https://nitro.atlassian.net/browse/PIP-30) | Implement demo-only order transport and prove a reconciled flat round trip | M6 | To Do |
+| P2 | [PIP-31](https://nitro.atlassian.net/browse/PIP-31) | Implement evidence-grounded autonomous review behind trusted Auto Learn controls | M7 | To Do |
+| P2 | [PIP-33](https://nitro.atlassian.net/browse/PIP-33) | Review deferred M4 source and local tooling issues with the owner | M4 | To Do |
+
+PIP-32 adds an audited atomic compare-and-resume operation under the source lock: exact paused revision/head, pending input, no hold and owner-control hash must match in the same transaction as resume. Actual SQL tests must reject stale/concurrent/held states without mutation. This is release-control hardening, not M5 ownership fencing or permission to trade.
+
+Execution order: atomic release control → throughput/current model qualification → source/role and owner-quality disposition → complete timely shadow day → measured cost/capacity and full retained-mind clone. M5 safety and recovery precede M6 demo orders; M7 reuses PIP-17 controls. Human calibration remains unassigned to await owner scoring. PIP-33 records smaller findings for later discussion and does not block unrelated work. Numeric risk limits and demo-order authority remain explicit owner decisions.
