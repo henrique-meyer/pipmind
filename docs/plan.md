@@ -68,6 +68,21 @@ an unexpected policy/race retains the initialized paused mind and failure, and
 must not be reported as a zero-write preflight refusal. Exact-class effective
 local settings may be bound without certifying custom models/provider facts.
 
+The following code deliveries are prepared in To Do beneath PIP-28. They do not
+start hosted execution or require owner risk numbers to implement synthetic tests:
+
+| Next deliverable | Concrete acceptance | Dependencies and ownership |
+| --- | --- | --- |
+| [PIP-45](https://nitro.atlassian.net/browse/PIP-45): durable session equity and daily-loss latch | Exact Decimal cash-flow-adjusted loss, immutable observation IDs/hashes, idempotent retries and conflicting-ID refusal; threshold latch survives equity recovery/restart; concurrent/out-of-order observations cannot rewind effective state or double count. Actual SQL interruption/uncertain-commit checks preserve history. | New isolated safety session tables/module/tests/guide; explicit account/currency/policy/session inputs and reviewed same-cursor reader. No robot import, automatic rollover/reset, shadow/PIP-17 storage changes or activation. |
+| [PIP-46](https://nitro.atlassian.net/browse/PIP-46): atomic open-proposal risk reservations | Within one lease-fenced SQL transaction, bind exact proposal/policy/session/reconciliation checkpoint and retain refusal or reservation. Concurrent proposals cannot jointly exceed gross risk/count/margin limits. Retries/collisions, lease expiry after staged writes, interruption and uncertain commits preserve exact state and pending obligations. | Depends on PIP-35/PIP-36/PIP-44 and PIP-45's stable same-cursor interface; new isolated admission tables/module/tests/guide. No nested independent session transaction, broker/network callback, automatic reservation expiry/release, order transport or dispatch permit. |
+
+Synthetic explicit policies suffice for these code deliveries. Activation still
+requires owner-approved limits/session boundaries, trustworthy fresh account and
+cash-flow/reconciliation facts, applicable M4 gates and separate execution
+authority. PIP-29 retains operational recovery/handover, PIP-30 retains demo order
+transport and PIP-31 retains autonomous review. External authority renewal and
+broker reconciliation after database restore remain separate requirements.
+
 PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
 PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
 groundwork. These statuses do not imply M4, deployed health, order safety or a
