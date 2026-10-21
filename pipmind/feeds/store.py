@@ -11,6 +11,34 @@ from pipmind.contracts import Contracts, event_facts, loads, stamp, validate_eve
 from pipmind.feeds.common import FeedError, identity
 
 KINDS = {"macro": "ReleaseEvent", "news": "NewsEvent", "social": "PostEvent"}
+COVERAGE_STATE_BYTES = 65536
+COVERAGE_TOTAL_BYTES = 1048576
+
+
+def coverage_keys(keys):
+    if (
+        type(keys) is not list
+        or len(keys) > 512
+        or any(type(key) is not str or not 1 <= len(key) <= 512 for key in keys)
+    ):
+        raise FeedError("invalid_coverage_keys")
+    return sorted(set(keys))
+
+
+def coverage_states(rows):
+    """Bound admitted UTF-8 JSON for decoding; unavailable is never healthy."""
+    states, unavailable, size = {}, [], 0
+    for key, raw in rows:
+        length = len(raw.encode()) if isinstance(raw, str) else COVERAGE_STATE_BYTES + 1
+        if length > COVERAGE_STATE_BYTES or size + length > COVERAGE_TOTAL_BYTES:
+            unavailable.append(key)
+            continue
+        size += length
+        try:
+            states[key] = loads(raw)
+        except (ValueError, RecursionError):
+            unavailable.append(key)
+    return {"states": states, "unavailable_keys": unavailable}
 
 
 @cache
@@ -272,3 +300,27 @@ class FeedStore:
                     "SELECT COUNT(*) FROM inbox WHERE status='quarantined'"
                 ).fetchone()[0],
             }
+
+    def coverage_snapshot(self, keys):
+        """One bounded read frame, without raw captures, event bodies or writes."""
+        keys = coverage_keys(keys)
+        with self.transaction() as db:
+            rows = db.execute(
+                "SELECT key,CASE WHEN length(CAST(value AS BLOB))<=? THEN value END "
+                "FROM state WHERE key IN (" + ",".join("?" for _ in keys) + ") ORDER BY key",
+                [COVERAGE_STATE_BYTES, *keys],
+            )
+            result = coverage_states(rows)
+            result["quarantined_by_producer"] = dict(
+                db.execute(
+                    "SELECT producer,COUNT(*) FROM inbox WHERE status='quarantined' "
+                    "GROUP BY producer"
+                )
+            )
+            result["alerts"] = list(
+                db.execute(
+                    "SELECT substr(producer,1,16),substr(ts,1,40) FROM alerts "
+                    "ORDER BY sequence DESC LIMIT 1000"
+                )
+            )
+            return result

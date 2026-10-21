@@ -5,7 +5,15 @@ from uuid import uuid4
 
 from pipmind.contracts import event_facts, loads, stamp, validate_event
 from pipmind.feeds.common import FeedError, identity
-from pipmind.feeds.store import KINDS, contracts, encoded, merge_state
+from pipmind.feeds.store import (
+    COVERAGE_STATE_BYTES,
+    KINDS,
+    contracts,
+    coverage_keys,
+    coverage_states,
+    encoded,
+    merge_state,
+)
 from pipmind.shadow.common import ShadowError
 from pipmind.shadow.sql import connector, transaction
 
@@ -305,6 +313,32 @@ class SqlFeedStore:
             alerts = [{"producer": p, "code": c, "ts": ts} for p, c, ts in db.fetchall()]
             db.execute("SELECT COUNT(*) FROM pf_inbox WHERE status='quarantined'")
             return {"events": counts, "alerts": alerts, "quarantined": db.fetchone()[0]}
+
+    def coverage_snapshot(self, keys):
+        """Same bounded, profile-checked coverage frame as the development store."""
+        keys = coverage_keys(keys)
+        with self.transaction() as db:
+            if keys:
+                db.execute(
+                    "SELECT k,CASE WHEN DATALENGTH(v)<=%s THEN v END FROM pf_state WHERE k IN ("
+                    + ",".join("%s" for _ in keys)
+                    + ") ORDER BY k",
+                    # nvarchar DATALENGTH is UTF-16: allow its worst-case 2x
+                    # expansion of an admissible UTF-8 value, then apply the
+                    # shared exact UTF-8 guard while consuming rows incrementally.
+                    (2 * COVERAGE_STATE_BYTES, *keys),
+                )
+                result = coverage_states(iter(db.fetchone, None))
+            else:
+                result = coverage_states([])
+            db.execute(
+                "SELECT producer,COUNT(*) FROM pf_inbox WHERE status='quarantined' "
+                "GROUP BY producer"
+            )
+            result["quarantined_by_producer"] = dict(db.fetchall())
+            db.execute("SELECT TOP(1000) producer,ts FROM pf_alerts ORDER BY seq DESC")
+            result["alerts"] = db.fetchall()
+            return result
 
 
 def configured_store(path, *, mode="local-read", profile="synthetic"):
