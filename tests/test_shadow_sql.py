@@ -1155,7 +1155,104 @@ def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primar
     assert report["human_review"].startswith("pending")
 
 
+def test_evaluation_provenance_freezes_cases_manifest_and_links_isolated_sql_episodes(mind):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.evaluations import evaluate
+
+    baseline = mind.status(), mind.head(), mind.retained()
+    caller_cases = [
+        loads(line)
+        for line in (ROOT / "evals/fixtures/starter-v1.jsonl").read_bytes().splitlines()[:2]
+    ]
+    frozen_cases = deepcopy(caller_cases)
+    caller_manifest = {
+        "prompt_version": "unverified-caller-claim",
+        "runtime_provenance": {"kind": "caller-must-not-override-local-facts"},
+        "notes": {"original": True},
+    }
+    frozen_manifest = deepcopy(caller_manifest)
+    responses = {
+        key: deepcopy(value)
+        for case in caller_cases
+        for key, value in case["model_responses"].items()
+    }
+    checkpoints = []
+
+    def progress(snapshot):
+        checkpoints.append(deepcopy(snapshot))
+        if len(checkpoints) == 1:
+            # Mutating caller-owned inputs after the first await cannot alter
+            # later repetitions/cases, their digests or descriptive metadata.
+            caller_cases.reverse()
+            caller_cases[0]["case_id"] = "S10"
+            caller_cases[0]["initial_mind"]["identity"] = "Caller changed identity"
+            caller_cases[0]["events"].clear()
+            caller_manifest["notes"]["original"] = False
+            caller_manifest["runtime_provenance"]["kind"] = "changed-caller-claim"
+        snapshot["runtime_provenance"]["kind"] = "callback-copy-only"
+        snapshot["model_manifest"]["notes"]["original"] = "callback-copy-only"
+
+    report = asyncio.run(
+        evaluate(
+            mind.connect,
+            caller_cases,
+            FixtureModel(responses),
+            repetitions=2,
+            manifest=caller_manifest,
+            progress=progress,
+        )
+    )
+    facts = report["runtime_provenance"]
+    provenance_sha256 = digest(encoded(facts))
+    assert facts["kind"] == "local-evidence-only"
+    assert facts["runner_mode"] == "fixture-working-state"
+    assert (
+        facts["selected_cases_sha256"] == report["dataset_sha256"] == digest(encoded(frozen_cases))
+    )
+    assert facts["cases"] == [
+        {"case_id": case["case_id"], "sha256": digest(encoded([case]))} for case in frozen_cases
+    ]
+    assert report["runtime_provenance_sha256"] == provenance_sha256
+    assert report["model_manifest"] == frozen_manifest
+    assert report["model_manifest_status"] == "descriptive_unverified"
+    assert report["summary"]["episodes"] == len(checkpoints) == 4
+    assert report["summary"]["hard_check_failures"] == 0
+    assert [row["case_id"] for row in report["results"]] == [
+        case["case_id"] for case in frozen_cases for _ in range(2)
+    ]
+    absent_policy = {
+        "observation": "isolated_runtime_before_processing",
+        "present": False,
+        "version": None,
+        "sha256": None,
+    }
+    for snapshot in checkpoints:
+        assert snapshot["runtime_provenance"] == facts
+        assert snapshot["runtime_provenance_sha256"] == provenance_sha256
+        assert snapshot["model_manifest"] == frozen_manifest
+    for episode in report["results"]:
+        store = SqlMind(mind.connect, episode["trader"])
+        case = next(case for case in frozen_cases if case["case_id"] == episode["case_id"])
+        assert store.head()["paused"] and store.runtime("memory_policy") is None
+        metadata = store.runtime("evaluation")
+        assert metadata == {
+            "run_id": report["run_id"],
+            "case_id": case["case_id"],
+            "case_sha256": digest(encoded([case])),
+            "repetition": episode["repetition"],
+            "runtime_provenance_sha256": provenance_sha256,
+            "observed_memory_policy": absent_policy,
+        }
+        assert episode["runtime_provenance_sha256"] == provenance_sha256
+        assert episode["case_sha256"] == metadata["case_sha256"]
+        assert episode["observed_memory_policy"] == absent_policy
+        for outcome in episode["outcomes"]:
+            assert store.outcome(outcome["event_id"])["usage"] == outcome["usage"]
+    assert (mind.status(), mind.head(), mind.retained()) == baseline
+
+
 def test_evaluation_commit_failure_retains_known_attempt_and_fails_completion(mind, monkeypatch):
+    from pipmind.shadow.common import encoded
     from pipmind.shadow.evaluations import evaluate
 
     original = SqlMind.commit
@@ -1187,11 +1284,76 @@ def test_evaluation_commit_failure_retains_known_attempt_and_fails_completion(mi
     assert first["outcomes"][0]["status"] == "not_completed"
     assert first["model_refusals"] == 0 and second["hard_checks"]["complete_episode"]
     assert report["summary"]["operational_failures"] == 1 and len(partial) == 2
+    provenance_sha256 = digest(encoded(report["runtime_provenance"]))
+    assert report["runtime_provenance_sha256"] == provenance_sha256
+    for snapshot in partial:
+        assert snapshot["runtime_provenance"] == report["runtime_provenance"]
+        assert snapshot["runtime_provenance_sha256"] == provenance_sha256
+    for episode in report["results"]:
+        linked = SqlMind(mind.connect, episode["trader"]).runtime("evaluation")
+        assert linked["runtime_provenance_sha256"] == provenance_sha256
+        assert linked["case_id"] == case["case_id"]
+        assert linked["case_sha256"] == digest(encoded([case]))
+        assert linked["observed_memory_policy"]["present"] is False
     assert all(SqlMind(mind.connect, r["trader"]).head()["paused"] for r in report["results"])
     assert any(
         '"evaluation-operational-failure"' in body
         for meta, body in SqlMind(mind.connect, first["trader"]).retained()[1]
     )
+
+
+def test_evaluation_unconfirmed_pause_checkpoint_keeps_provenance_and_sql_link(mind, monkeypatch):
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.evaluations import evaluate
+
+    baseline = mind.status(), mind.retained()
+    original_pause = SqlMind.set_paused
+    checkpoints = []
+    case = deepcopy(CASE)
+
+    def pause(store, value):
+        if value:
+            raise ShadowError("synthetic_pause_acknowledgement_unconfirmed")
+        return original_pause(store, value)
+
+    monkeypatch.setattr(SqlMind, "set_paused", pause)
+    try:
+        with pytest.raises(ShadowError, match="synthetic_pause_acknowledgement_unconfirmed"):
+            asyncio.run(
+                evaluate(
+                    mind.connect,
+                    [case],
+                    FixtureModel(case["model_responses"]),
+                    repetitions=2,
+                    progress=checkpoints.append,
+                )
+            )
+        assert len(checkpoints) == 1
+        report = checkpoints[0]
+        facts = report["runtime_provenance"]
+        provenance_sha256 = digest(encoded(facts))
+        assert report["runtime_provenance_sha256"] == provenance_sha256
+        assert facts["selected_cases_sha256"] == digest(encoded([case]))
+        episode = report["incomplete_episode"]
+        assert episode["pause_verified"] is False
+        assert episode["runtime_provenance_sha256"] == provenance_sha256
+        assert episode["case_sha256"] == digest(encoded([case]))
+        assert episode["observed_memory_policy"]["present"] is False
+        store = SqlMind(mind.connect, episode["trader"])
+        linked = store.runtime("evaluation")
+        assert linked["runtime_provenance_sha256"] == provenance_sha256
+        assert linked["case_id"] == case["case_id"] and linked["repetition"] == 1
+        assert store.runtime("memory_policy") is None
+        event_id = case["events"][0]["message_id"]
+        assert store.outcome(event_id)["usage"] == episode["attempt"]["result"]["usage"]
+    finally:
+        # The intentionally unconfirmed pause must not leave this SQL fixture
+        # running after the assertion, even if another assertion fails.
+        for report in checkpoints:
+            store = SqlMind(mind.connect, report["incomplete_episode"]["trader"])
+            original_pause(store, True)
+            assert store.head()["paused"]
+    assert (mind.status(), mind.retained()) == baseline
 
 
 @pytest.mark.parametrize("commit_before_error", [False, True])

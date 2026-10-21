@@ -356,3 +356,14 @@ execution or an invoice. Offline counterexamples and isolated SQL evaluator
 regressions must cover these distinctions. Provenance preparation must distinguish
 observed active memory policy from source-version constants; this correction does
 not activate a new evaluation policy or change budgets or live-call authority.
+
+PIP-23 adds schema-validated local provenance receipts to new evaluation reports.
+Freeze the selected cases and descriptive manifest before awaiting work; bind
+ordered canonical case hashes, repetitions, available source artifact receipts,
+actual imported version constants and allowlisted configured model facts. Keep
+declared build and external provider/version/rate claims unverified. Link the
+receipt digest in isolated evaluation metadata and report observed policy presence
+without activating it. Preserve old report semantics, traces and source isolation.
+Offline and real SQL controls cover progress/failure linkage and caller mutation.
+This is local evidence, not provider attestation, a new qualification pass flag,
+an expected-manifest CLI, policy activation or authorization for hosted calls.
