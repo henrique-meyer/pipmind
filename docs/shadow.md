@@ -130,6 +130,27 @@ that bounded-state transitions, the working-reference codec or memory repair
 were active. Qualify those through separately identified policy-enabled growth
 and repair cases; do not relabel ordinary starter episodes as that evidence.
 
+New reports include a schema-validated [`runtime_provenance`](../contracts/v1/evaluation-provenance.schema.json)
+record and its SHA-256 digest. Cases and descriptive metadata are frozen before
+the first await. The record binds the ordered selected-case list and repetitions;
+each per-case digest hashes a canonical **single-case list**. It records imported
+capability versions, allowlisted configured model facts and bounded fingerprints
+of named local artifacts. Raw artifact hashes and CRLF-to-LF normalized hashes
+remain separate. Missing, unavailable or oversized artifacts are explicit; the
+raw dataset-file hash is not inferred from the selected-case digest.
+
+Configured Foundry role bindings are hashed without credentials or managed
+identity identifiers. Injected factories, scripted fixtures and unobserved custom
+adapters remain distinct. The environment build value, provider model versions
+and reference rates are unverified; on-disk source receipts do not attest loaded
+bytecode, deployed image identity or provider execution. Source budget/codec
+versions describe available capabilities. Each isolated episode separately
+records its observed memory-policy presence/version and links the same receipt
+digest in SQL evaluation metadata and progress/final/failure reports. That mutable
+metadata is a correlation link, not an immutable or signed attestation. No policy
+is installed and no new qualification pass flag is introduced. Older reports and
+their supplied manifests remain unchanged.
+
 Integrity checks cover original input retention, unchanged mandate, paused isolation and zero dispatches. Wake/action/citation and literal-view alignment against fixture expectations are reported separately; literal wording differences are not an automatic reasoning-quality score. Invalid or refused responses remain visible. Human calibration against the versioned quality rubric remains required, and no uncalibrated model judge is invoked. Known token counts and reference rates do not establish a provider invoice or monthly cost.
 
 ## PIP-14 qualification checkpoint

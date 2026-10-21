@@ -7,9 +7,10 @@ No judge, operational trader, broker client or dispatch method is registered.
 from copy import deepcopy
 from uuid import uuid4
 
-from pipmind.contracts import Contracts, event_id, utc
+from pipmind.contracts import Contracts, event_id, loads, utc
 from pipmind.shadow.common import ShadowError, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
+from pipmind.shadow.evaluation_provenance import capture_provenance, freeze_json
 from pipmind.shadow.evaluation_usage import summarize_usage
 from pipmind.shadow.model import PROMPT_VERSION
 from pipmind.shadow.store import SqlMind, metadata
@@ -19,12 +20,19 @@ GRADER_VERSION = "shadow-live-v2"
 
 
 async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progress=None):
+    # Validate built-in JSON types before copying; custom containers/copy hooks
+    # cannot run while freezing caller-owned data for later repetitions.
+    cases, manifest = freeze_json(cases), freeze_json(manifest)
     if not 2 <= repetitions <= 5 or not cases or len(cases) > 12:
         raise ShadowError("evaluation_bounds")
     if len({c["case_id"] for c in cases}) != len(cases) or any(
         c["case_id"] not in CASES for c in cases
     ):
         raise ShadowError("unsupported_shadow_evaluation_case")
+    provenance = capture_provenance(
+        cases, model, repetitions=repetitions, grader_version=GRADER_VERSION
+    )
+    provenance_sha256 = digest(encoded(provenance))
     report = {
         "version": GRADER_VERSION,
         "prompt_version": PROMPT_VERSION,
@@ -32,11 +40,17 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
         "run_id": uuid4().hex,
         "dataset_sha256": digest(encoded(cases)),
         "model_manifest": manifest,
+        "model_manifest_status": "descriptive_unverified"
+        if manifest is not None
+        else "not_supplied",
+        "runtime_provenance": provenance,
+        "runtime_provenance_sha256": provenance_sha256,
         "human_review": "pending; no model judge or profitability claim",
         "results": [],
     }
     contracts = Contracts()
     for case in cases:
+        case_sha256 = digest(encoded([case]))
         for repetition in range(repetitions):
             trader = "evaluation-" + uuid4().hex
             store = SqlMind(connect, trader)
@@ -76,6 +90,17 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
                     "UPDATE pm_records SET body=%s WHERE trader=%s AND part='working_memory'",
                     (working, trader),
                 )
+                cur.execute(
+                    "SELECT v FROM pm_runtime WHERE trader=%s AND k='memory_policy'", (trader,)
+                )
+                policy_row = cur.fetchone()
+                policy = loads(policy_row[0]) if policy_row else None
+                observed_policy = {
+                    "observation": "isolated_runtime_before_processing",
+                    "present": policy_row is not None,
+                    "version": policy.get("version") if isinstance(policy, dict) else None,
+                    "sha256": digest(encoded(policy)) if policy_row is not None else None,
+                }
                 for key, value in (
                     (
                         "broker_snapshots",
@@ -90,7 +115,10 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
                         {
                             "run_id": report["run_id"],
                             "case_id": case["case_id"],
+                            "case_sha256": case_sha256,
                             "repetition": repetition + 1,
+                            "runtime_provenance_sha256": provenance_sha256,
+                            "observed_memory_policy": observed_policy,
                         },
                     ),
                 ):
@@ -147,7 +175,10 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
                     report["incomplete_episode"] = {
                         "trader": trader,
                         "case_id": case["case_id"],
+                        "case_sha256": case_sha256,
                         "repetition": repetition + 1,
+                        "runtime_provenance_sha256": provenance_sha256,
+                        "observed_memory_policy": observed_policy,
                         "operational_error": operational_error,
                         "pause_error": str(error),
                         "attempt": deepcopy(active),
@@ -184,8 +215,6 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
             with store.transaction() as cur:
                 cur.execute("SELECT id,envelope FROM pm_inputs WHERE trader=%s", (trader,))
                 stored_inputs = dict(cur.fetchall())
-            from pipmind.contracts import loads
-
             hard = {
                 "complete_episode": operational_error is None
                 and not any(r.get("missing_outcome") for r in outcomes),
@@ -220,7 +249,10 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
             report["results"].append(
                 {
                     "case_id": case["case_id"],
+                    "case_sha256": case_sha256,
                     "repetition": repetition + 1,
+                    "runtime_provenance_sha256": provenance_sha256,
+                    "observed_memory_policy": observed_policy,
                     "trader": trader,
                     "split": case["split"],
                     "hard_checks": hard,
