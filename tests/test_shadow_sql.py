@@ -1194,6 +1194,176 @@ def test_evaluation_commit_failure_retains_known_attempt_and_fails_completion(mi
     )
 
 
+@pytest.mark.parametrize("commit_before_error", [False, True])
+def test_evaluation_usage_accounts_for_retained_and_uncommitted_traces_exactly_once(
+    mind, monkeypatch, commit_before_error
+):
+    from pipmind.shadow.evaluations import evaluate
+
+    baseline = mind.status()
+    original_commit = SqlMind.commit
+    original_traces = {}
+    checkpoints = []
+    commits = 0
+
+    def commit(store, envelope, revision, result, moment):
+        nonlocal commits
+        commits += 1
+        # These are test-only accounting records, not actual RPCs or activation
+        # of the starter runner's absent memory_policy/repair behavior.
+        assert result["usage"] == [
+            {"phase": "triage", "synthetic": True},
+            {"phase": "decision", "synthetic": True},
+        ]
+        result["usage"].extend(
+            [
+                {
+                    "phase": "triage",
+                    "attempted": True,
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "fixture_trace": "known-triage",
+                },
+                {
+                    "phase": "decision",
+                    "attempted": True,
+                    "input_tokens": 20,
+                    "output_tokens": 3,
+                    "usage_unknown": True,
+                    "fixture_trace": "explicitly-unknown-with-known-sides",
+                },
+                {
+                    "phase": "memory_repair",
+                    "attempted": True,
+                    "input_tokens": 30,
+                    "output_tokens": 4,
+                    "fixture_trace": "attempted-repair-shaped-record",
+                },
+                {
+                    "phase": "decision",
+                    "attempted": True,
+                    "input_tokens": 40,
+                    "output_tokens": None,
+                    "fixture_trace": "one-known-side",
+                },
+                {
+                    "phase": "triage",
+                    "attempted": False,
+                    "input_tokens": 999,
+                    "output_tokens": 999,
+                    "failure_code": "shadow_context_projection",
+                    "fixture_trace": "pre-rpc-must-not-contribute",
+                },
+                {
+                    "phase": "memory_repair",
+                    "attempted": False,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "method": "punctuation_spacing",
+                    "fixture_trace": "zero-rpc-repair-must-not-contribute",
+                },
+                {
+                    "phase": "decision",
+                    "synthetic": True,
+                    "attempted": True,
+                    "input_tokens": 9999,
+                    "output_tokens": 9999,
+                    "fixture_trace": "synthetic-must-not-contribute",
+                },
+                {
+                    "phase": "legacy_phase",
+                    "input_tokens": 5,
+                    "output_tokens": 1,
+                    "fixture_trace": "unconfirmed-attempt-marker",
+                },
+            ]
+        )
+        original_traces[store.trader] = deepcopy(result["usage"])
+        if commits == 1 and not commit_before_error:
+            raise ShadowError("shadow_store_transaction_failed")
+        original_commit(store, envelope, revision, result, moment)
+        if commits == 1:
+            # Acknowledgement failure after a real SQL commit leaves an outcome.
+            # Its still-live attempt copy must not be counted a second time.
+            raise ShadowError("shadow_store_transaction_failed")
+
+    monkeypatch.setattr(SqlMind, "commit", commit)
+    case = deepcopy(CASE)
+    assert len(case["events"]) == 1
+    report = asyncio.run(
+        evaluate(
+            mind.connect,
+            [case],
+            FixtureModel(case["model_responses"]),
+            repetitions=2,
+            progress=checkpoints.append,
+        )
+    )
+    first, second = report["results"]
+    assert commits == 2 and len(checkpoints) == 2
+    assert first["operational_error"] == "shadow_store_transaction_failed"
+    assert first["failure_audit"] == "sql-and-report"
+    assert not first["hard_checks"]["complete_episode"]
+    assert second["hard_checks"]["complete_episode"]
+    if commit_before_error:
+        assert first["uncommitted_attempt"] is None
+        assert first["outcomes"][0]["usage"] == original_traces[first["trader"]]
+    else:
+        assert first["outcomes"][0]["status"] == "not_completed"
+        assert first["outcomes"][0]["usage"] == []
+        assert first["uncommitted_attempt"]["result"]["usage"] == original_traces[first["trader"]]
+    assert second["outcomes"][0]["usage"] == original_traces[second["trader"]]
+
+    summary = report["summary"]
+    expected = {
+        "episodes": 2,
+        "operational_failures": 1,
+        "trace_records": 20,
+        "model_calls": 10,
+        "input_tokens": 210,
+        "output_tokens": 20,
+        "unknown_usage_calls": 4,
+        "non_rpc_traces": 4,
+        "synthetic_traces": 6,
+        "zero_rpc_repairs": 2,
+        "unconfirmed_attempt_calls": 2,
+        "missing_usage_calls": 2,
+        "partially_missing_usage_calls": 2,
+    }
+    assert {key: summary[key] for key in expected} == expected
+    assert summary["usage_accounting_version"] == "shadow-usage-v1"
+    phases = summary["usage_by_phase"]
+    assert set(phases) == {"triage", "decision", "memory_repair", "other"}
+    assert phases["memory_repair"]["calls"] == 2
+    assert phases["memory_repair"]["input_tokens"] == 60
+    assert phases["memory_repair"]["output_tokens"] == 8
+    assert phases["memory_repair"]["zero_rpc_repairs"] == 2
+    assert phases["decision"]["unknown_usage_calls"] == 4
+    assert phases["other"]["calls"] == phases["other"]["unconfirmed_attempt_calls"] == 2
+    assert sum(row["calls"] for row in phases.values()) == summary["model_calls"]
+    assert sum(row["input_tokens"] for row in phases.values()) == summary["input_tokens"]
+    assert sum(row["output_tokens"] for row in phases.values()) == summary["output_tokens"]
+
+    # Aggregation never rewrites the evidence it classifies. Reopen SQL stores
+    # and compare committed and failed-attempt journal copies to original lists.
+    for episode in report["results"]:
+        store = SqlMind(mind.connect, episode["trader"])
+        assert store.head()["paused"] and store.runtime("memory_policy") is None
+        outcome = store.outcome(case["events"][0]["message_id"])
+        if outcome is not None:
+            assert outcome["usage"] == original_traces[episode["trader"]]
+        if episode is first:
+            failures = [
+                loads(body)
+                for meta, body in store.retained()[1]
+                if meta["part"] == "journal" and '"evaluation-operational-failure"' in body
+            ]
+            assert len(failures) == 1
+            assert failures[0]["attempt"]["result"]["usage"] == original_traces[episode["trader"]]
+    assert checkpoints[0]["results"][0] == first
+    assert mind.status() == baseline
+
+
 def test_broker_headline_page_commits_events_and_coverage_atomically_in_sql(mind):
     from pipmind.feeds.common import FeedError
     from pipmind.feeds.news import relay_page

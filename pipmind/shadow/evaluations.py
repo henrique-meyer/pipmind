@@ -10,6 +10,7 @@ from uuid import uuid4
 from pipmind.contracts import Contracts, event_id, utc
 from pipmind.shadow.common import ShadowError, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
+from pipmind.shadow.evaluation_usage import summarize_usage
 from pipmind.shadow.model import PROMPT_VERSION
 from pipmind.shadow.store import SqlMind, metadata
 
@@ -248,7 +249,7 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
     )
     report["summary"] = {
         "episodes": len(report["results"]),
-        "model_calls": len(usage),
+        **summarize_usage(usage),
         "hard_check_failures": sum(
             not v for r in report["results"] for v in r["hard_checks"].values()
         ),
@@ -257,23 +258,6 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
         "fixture_alignment_failures": sum(
             not v for r in report["results"] for v in r["fixture_alignment"].values()
         ),
-        "input_tokens": sum(u.get("input_tokens") or 0 for u in usage),
-        "output_tokens": sum(u.get("output_tokens") or 0 for u in usage),
-        "unknown_usage_calls": sum(
-            u.get("input_tokens") is None or u.get("output_tokens") is None for u in usage
-        ),
-        "usage_by_phase": {
-            phase: {
-                "calls": sum(u.get("phase") == phase for u in usage),
-                "input_tokens": sum(
-                    u.get("input_tokens") or 0 for u in usage if u.get("phase") == phase
-                ),
-                "output_tokens": sum(
-                    u.get("output_tokens") or 0 for u in usage if u.get("phase") == phase
-                ),
-            }
-            for phase in ("triage", "decision")
-        },
     }
     report["completed_at"] = now().isoformat()
     return report

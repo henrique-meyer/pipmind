@@ -112,7 +112,23 @@ The opt-in owner command runs the twelve applicable M4 starter cases in fresh SQ
 python -m pipmind.shadow evaluate --dataset evals/fixtures/starter-v1.jsonl --repetitions 3 --manifest .data/config/model-manifest.json --output evals/reports/live-shadow.json
 ```
 
-Real calls require the existing SQL/Foundry configuration and explicit `PIPMIND_MODEL_CALLS=true`. The private manifest records verified deployments, versions/settings and reference rates. Reports identify the dataset digest, prompt and grader version, fresh lineage IDs, per-phase token usage, unknown usage and refusals. Full outputs stay private in SQL and the requested ignored report; CI exercises the runner with scripted responses and actual SQL, without cloud credentials.
+Real calls require the existing SQL/Foundry configuration and explicit `PIPMIND_MODEL_CALLS=true`. The optional private manifest is supplied descriptive metadata; the runner does not verify its deployment, version, settings or reference-rate claims. Verify those separately before qualification. Reports identify the ordered selected-case JSON digest (not the raw full dataset-file hash), prompt and grader version, fresh lineage IDs, per-phase token usage, unknown usage and refusals. Full outputs stay private in SQL and the requested ignored report; CI exercises the runner with scripted responses and actual SQL, without cloud credentials.
+
+Usage accounting `shadow-usage-v1` counts attempted model-call trace groups,
+including explicitly labeled legacy/unconfirmed attempt flags. It separates
+synthetic and explicitly call-free traces, including punctuation-only repairs;
+neither contributes to attempted-call or token totals. Known nonnegative integer
+token sides are lower bounds. Explicit unknown flags or missing/invalid token
+sides remain unknown even when the other side is known. Phase totals include
+triage, decision, memory repair and other traces; original committed and
+uncommitted attempts remain intact. An attempted call does not prove provider
+execution, a successful decision or a billable charge.
+
+The starter runner restores fixture working state but does not install the
+bounded-memory maintenance policy. A current prompt version alone does not prove
+that bounded-state transitions, the working-reference codec or memory repair
+were active. Qualify those through separately identified policy-enabled growth
+and repair cases; do not relabel ordinary starter episodes as that evidence.
 
 Integrity checks cover original input retention, unchanged mandate, paused isolation and zero dispatches. Wake/action/citation and literal-view alignment against fixture expectations are reported separately; literal wording differences are not an automatic reasoning-quality score. Invalid or refused responses remain visible. Human calibration against the versioned quality rubric remains required, and no uncalibrated model judge is invoked. Known token counts and reference rates do not establish a provider invoice or monthly cost.
 
