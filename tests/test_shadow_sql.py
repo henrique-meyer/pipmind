@@ -2982,6 +2982,18 @@ def test_checked_resume_commits_one_audited_revision_and_is_idempotent(mind):
     assert checked_resume_state(mind) == after
 
 
+def test_checked_resume_rejects_moment_before_owner_control_without_mutation(mind):
+    kwargs = checked_resume_request(mind)
+    kwargs["moment"] = MOMENT - timedelta(seconds=1)
+    # The pending event is available; only the later owner-control dependency
+    # makes this timestamp invalid for an audited resume.
+    assert utc(kwargs["expected_pending"]["available_at"]) <= kwargs["moment"]
+    before = checked_resume_state(mind)
+    with pytest.raises(ShadowError, match="checked_resume_owner_control_future"):
+        mind.resume_checked(**kwargs)
+    assert checked_resume_state(mind) == before
+
+
 @pytest.mark.parametrize("field,value", [("revision", -1), ("working", {}), ("lineage", "other")])
 def test_checked_resume_rejects_stale_or_changed_head_without_mutation(mind, field, value):
     kwargs = checked_resume_request(mind)

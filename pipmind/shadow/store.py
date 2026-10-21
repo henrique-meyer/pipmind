@@ -226,12 +226,14 @@ class SqlMind:
             if self._runtime(cur, "reasoning_hold") is not None:
                 raise ShadowError("checked_resume_reasoning_hold")
             cur.execute(
-                "SELECT part,body FROM pm_records WHERE trader=%s AND id=%s",
+                "SELECT part,body,ts FROM pm_records WHERE trader=%s AND id=%s",
                 (self.trader, owner_control_id),
             )
             control = cur.fetchone()
             if not control or control[0] != "journal" or digest(control[1]) != owner_control_sha256:
                 raise ShadowError("checked_resume_owner_control")
+            if control[2].replace(tzinfo=UTC) > moment:
+                raise ShadowError("checked_resume_owner_control_future")
             try:
                 body = loads(control[1])
                 if (
