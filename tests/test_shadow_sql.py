@@ -3179,3 +3179,234 @@ def test_checked_resume_observes_hold_created_by_a_writer_holding_source_lock(mi
     assert not worker.is_alive() and results == ["checked_resume_reasoning_hold"]
     assert mind.head()["paused"] and mind.pending() == kwargs["expected_pending"]
     assert not any(meta["record_id"].startswith("owner-resume:") for meta, _ in mind.retained()[1])
+
+
+def stream_size_source_state(store):
+    """Small synthetic inventories, including authority/queue state excluded from bundles."""
+    result = {}
+    with store.transaction() as cursor:
+        for table, order in (
+            ("pm_minds", "trader"),
+            ("pm_records", "pk"),
+            ("pm_inputs", "pk"),
+            ("pm_outcomes", "pk"),
+            ("pm_cursors", "source"),
+            ("pm_runtime", "k"),
+        ):
+            cursor.execute(
+                f"SELECT * FROM {table} WHERE trader=%s ORDER BY {order}", (store.trader,)
+            )
+            result[table] = cursor.fetchall()
+        cursor.execute(
+            "SELECT t.term,t.record_pk FROM pm_terms t JOIN pm_records r ON t.record_pk=r.pk "
+            "WHERE r.trader=%s ORDER BY t.term,t.record_pk",
+            (store.trader,),
+        )
+        result["pm_terms"] = cursor.fetchall()
+    return result
+
+
+def test_stream_size_inspection_matches_unicode_export_and_preserves_complete_source(
+    mind, tmp_path
+):
+    import zipfile
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.stream_bundle import export_experience_file, inspect_experience_size
+
+    events, model = episode(mind)
+    assert len(events) == 1
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    mind.set_paused(True)
+    pending = deepcopy(events[0])
+    pending["message_id"] = pending["payload"]["event_id"] = "size:pending"
+    mind.accept("size-pending-source", [{"sequence": 1, "event": pending}], MOMENT)
+    mind.set_runtime("feed_status", {"coverage": "unverified", "detail": "日銀 / naïve / 😀"})
+    with mind.transaction() as cursor:
+        mind._insert(
+            cursor,
+            metadata("size:東京:😀", "memory", MOMENT.isoformat(), mind.trader, ["mind:identity"]),
+            "Exact full text: café ≠ café? 東京とUSD; 😀\n" * 17,
+        )
+    frozen = MOMENT + timedelta(seconds=1)
+    before = stream_size_source_state(mind)
+    inspection = inspect_experience_size(mind, frozen)
+    assert stream_size_source_state(mind) == before
+    assert not list(tmp_path.iterdir())  # Inspection has not produced an archive.
+    assert inspection["inspection"] == "size_only" and inspection["complete_scan"] is True
+    assert inspection["size_limits_met"] is True and inspection["violations"] == []
+    assert inspection["validity_verified"] is inspection["export_created"] is False
+    assert inspection["clone_verified"] is False
+
+    path = tmp_path / "unicode-checkpoint.pipmind"
+    exported = export_experience_file(mind, path, frozen)
+    with zipfile.ZipFile(path) as archive:
+        manifest_raw = archive.read("manifest.json")
+        manifest = loads(manifest_raw)
+        records = [item for item in archive.infolist() if item.filename != "manifest.json"]
+        assert inspection["records"] == exported["records"] == len(records)
+        assert inspection["record_counts"] == manifest["coverage"]["record_counts"]
+        assert inspection["archive_bytes"] == exported["bytes"] == path.stat().st_size
+        assert inspection["manifest_bytes"] == len(manifest_raw)
+        assert inspection["inventory_bytes"] == len(encoded(manifest["files"]).encode())
+        assert inspection["record_content_bytes"] == sum(item.file_size for item in records)
+        assert inspection["expanded_bytes"] == sum(item.file_size for item in archive.infolist())
+        assert inspection["maximum_record_bytes"] == max(item.file_size for item in records)
+        assert inspection["entries"] == len(archive.infolist()) == inspection["records"] + 1
+        assert inspection["checkpoint"] == manifest["checkpoint"]
+    assert stream_size_source_state(mind) == before
+    assert (
+        mind.pending() == pending and mind.outcome(events[0]["message_id"])["status"] == "observed"
+    )
+
+
+@pytest.mark.parametrize("failure", ["interruption", "future_clock"])
+def test_stream_size_failed_inspection_closes_sql_and_keeps_all_source_rows(
+    mind, monkeypatch, failure
+):
+    from pipmind.shadow.stream_bundle import inspect_experience_size
+
+    with mind.transaction() as cursor:
+        mind._insert(
+            cursor,
+            metadata("size:late", "journal", MOMENT.isoformat(), mind.trader),
+            "Retained at the checkpoint, not before it.",
+        )
+    before = stream_size_source_state(mind)
+    connect = mind.connect
+    counts = {"opened": 0, "active": 0}
+
+    class Connection:
+        def __init__(self, database):
+            self.database, self.closed = database, False
+
+        def __getattr__(self, key):
+            return getattr(self.database, key)
+
+        def close(self):
+            try:
+                self.database.close()
+            finally:
+                if not self.closed:
+                    self.closed = True
+                    counts["active"] -= 1
+
+    def tracked(**kwargs):
+        database = connect(**kwargs)
+        counts["opened"] += 1
+        counts["active"] += 1
+        return Connection(database)
+
+    monkeypatch.setattr(mind, "connect", tracked)
+    calls = 0
+
+    def interrupt():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("synthetic size scan interruption")
+
+    if failure == "interruption":
+        with pytest.raises(ShadowError, match="^shadow_(?:store|snapshot)_transaction_failed$"):
+            inspect_experience_size(mind, MOMENT, interrupt=interrupt)
+        assert calls == 2
+    else:
+        with pytest.raises(ShadowError, match="^shadow_(?:store|snapshot)_transaction_failed$"):
+            inspect_experience_size(mind, MOMENT - timedelta(seconds=1))
+    assert counts["opened"] > 0 and counts["active"] == 0
+    assert stream_size_source_state(mind) == before
+    assert counts["active"] == 0
+    # The released transaction/lock permits a fresh owner read after either failure.
+    assert mind.head()["paused"]
+
+
+@pytest.mark.skipif(
+    os.environ.get("PIPMIND_SQL_LOCAL") != "true",
+    reason="database option setup is restricted to disposable local SQL",
+)
+def test_stream_size_snapshot_does_not_mix_a_concurrent_committed_writer(mind, monkeypatch):
+    import threading
+
+    from pipmind.shadow.stream_bundle import inspect_experience_size
+
+    name = "size_snapshot_" + uuid4().hex
+    admin = mind.connect()
+    admin.autocommit = True
+    control = admin.cursor()
+    control.execute(f"CREATE DATABASE [{name}]")
+    worker = None
+    try:
+        control.execute(f"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON")
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        migrate(connect)
+        source = SqlMind(connect, "size-snapshot-source")
+        source.initialize(
+            "Exact Unicode identity: 東京 😀",
+            {"version": "v1", "text": "Exact playbook"},
+            MOMENT.isoformat(),
+            binding=digest("size-source"),
+        )
+        expected = inspect_experience_size(source, MOMENT)
+        finished, errors = threading.Event(), []
+
+        def writer():
+            try:
+                with source.transaction() as cursor:
+                    source._insert(
+                        cursor,
+                        metadata("size:new", "journal", MOMENT.isoformat(), source.trader),
+                        "Committed after the reader's checkpoint, with a different record count.",
+                    )
+                    source._write_working(
+                        cursor,
+                        {"views": ["New longer state"], "waiting_for": [], "position_theses": []},
+                        MOMENT,
+                    )
+                    cursor.execute(
+                        "UPDATE pm_minds SET revision=revision+1 WHERE trader=%s",
+                        (source.trader,),
+                    )
+            except Exception as error:
+                errors.append(type(error).__name__)
+            finally:
+                finished.set()
+
+        read_head = source._head
+        worker = threading.Thread(target=writer)
+
+        def head_then_commit(cursor):
+            head = read_head(cursor)
+            worker.start()  # Commit between the head SELECT and retained-record SELECT.
+            assert finished.wait(4), "size snapshot reader blocked the source writer"
+            return head
+
+        with monkeypatch.context() as patch:
+            patch.setattr(source, "_head", head_then_commit)
+            inspection = inspect_experience_size(source, MOMENT)
+        worker.join(5)
+        assert not worker.is_alive() and not errors
+        assert inspection["checkpoint_isolation"] == "snapshot"
+        assert inspection["checkpoint_lock_seconds"] == 0
+        for key in (
+            "checkpoint",
+            "records",
+            "record_counts",
+            "record_content_bytes",
+            "inventory_bytes",
+            "expanded_bytes",
+            "manifest_bytes",
+            "archive_bytes",
+            "maximum_record_bytes",
+            "entries",
+        ):
+            assert inspection[key] == expected[key]
+        assert inspection["records"] == 3 and source.head()["revision"] == 1
+        assert len(source.retained()[1]) == 4
+        assert source.head()["working"]["views"] == ["New longer state"]
+        after = inspect_experience_size(source, MOMENT)
+        assert after["records"] == 4 and after["checkpoint"]["checkpoint_id"] == "1"
+    finally:
+        if worker is not None and worker.ident is not None:
+            worker.join(10)
+        control.execute(f"DROP DATABASE [{name}]")
+        admin.close()

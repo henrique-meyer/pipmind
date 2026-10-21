@@ -310,7 +310,7 @@ PIP-14 remains the M4 umbrella. Its scoped subtasks and the later milestone stor
 | P1 | [PIP-24](https://nitro.atlassian.net/browse/PIP-24) | Calibrate reasoning and memory fidelity with owner-scored samples | M4 | To Do |
 | P1 | [PIP-25](https://nitro.atlassian.net/browse/PIP-25) | Capture one complete timely open-FX shadow day with independent zero-order evidence | M4 | To Do |
 | P1 | [PIP-26](https://nitro.atlassian.net/browse/PIP-26) | Reconcile full-day model/provider charges and existing-capacity measurements | M4 | To Do |
-| P1 | [PIP-27](https://nitro.atlassian.net/browse/PIP-27) | Export and clone the complete retained mind after the qualified day | M4 | To Do |
+| P1 | [PIP-27](https://nitro.atlassian.net/browse/PIP-27) | Export and clone the complete retained mind after the qualified day | M4 | In Progress |
 | P1 | [PIP-28](https://nitro.atlassian.net/browse/PIP-28) | Implement the M5 hard risk boundary, ownership fencing and reconciliation | M5 | To Do |
 | P1 | [PIP-29](https://nitro.atlassian.net/browse/PIP-29) | Implement original-trader recovery and account-assignment handover | M5 | To Do |
 | P1 | [PIP-30](https://nitro.atlassian.net/browse/PIP-30) | Implement demo-only order transport and prove a reconciled flat round trip | M6 | To Do |
@@ -322,3 +322,5 @@ PIP-32 adds an audited atomic compare-and-resume operation under the source lock
 PIP-27 must first resolve the retained-history export capacity risk: the inventory manifest can reach its bound before the archive byte or entry limits. Review a compatible bounded-memory format extension and test complete inventory, dependency preservation, rejection/cleanup and paused clone fidelity. Current limits remain enforced until that extension is approved; failed or oversized exports cannot qualify a partial history.
 
 Execution order: atomic release control → throughput/current model qualification → source/role and owner-quality disposition → complete timely shadow day → measured cost/capacity and full retained-mind clone. M5 safety and recovery precede M6 demo orders; M7 reuses PIP-17 controls. Human calibration remains unassigned to await owner scoring. PIP-33 records smaller findings for later discussion and does not block unrelated work. Numeric risk limits and demo-order authority remain explicit owner decisions.
+
+PIP-27 preparation adds a read-only size preflight for the current complete retained checkpoint. It reports exact stream-v3 byte, entry, inventory and ZIP-directory requirements against unchanged bounds without creating an archive or changing source state. Consistent SQL streaming, bounded per-record memory, exact UTF-8 sizing, failure visibility and archive-size equivalence are required. This offline implementation does not authorize a larger format, hosted execution or completion of the retained-day clone gate.
