@@ -4336,6 +4336,83 @@ def test_sql_local_handoff_recovers_a_committed_input_page_after_lost_acknowledg
     assert feeds.events(baseline, 2) == expected and feeds.state(provider_cursor) == "next-page"
 
 
+def test_sql_private_feed_coverage_is_one_readonly_frame_with_utf8_parity(monkeypatch):
+    from contextlib import contextmanager
+    from uuid import uuid4
+
+    from pipmind.contracts import stamp, utc
+    from pipmind.feeds.coverage import project
+    from pipmind.feeds.fixtures import configuration
+    from pipmind.feeds.sql_store import SqlFeedStore
+    from pipmind.feeds.store import COVERAGE_STATE_BYTES, encoded
+    from pipmind.shadow.sql import connector
+
+    store = SqlFeedStore(connector())
+    moment = utc("2026-10-21T12:00:00Z")
+    sid = "coverage-" + uuid4().hex
+    config = configuration()
+    config["news"] = [{"id": sid, "url": "https://rss.invalid/private", "kind": "breaking"}]
+    http_key, last_key = "rss:http:" + sid, "rss:last:" + sid
+    private_state = {"etag": "A" * 40000, "failures": 0}
+    assert 32768 < len(encoded(private_state).encode()) <= COVERAGE_STATE_BYTES
+    store.save(http_key, private_state)
+    store.save(last_key, stamp(moment))
+    unrelated = "coverage-cursor:" + uuid4().hex
+    store.save(unrelated, {"next": "preserved"})
+    source_id = store.source_id()
+    with store.transaction() as db:
+        db.execute("SELECT k,v FROM pf_meta")
+        binding = dict(db.fetchall())
+        db.execute("SELECT COUNT(*) FROM pf_events")
+        event_count = db.fetchone()[0]
+        db.execute("SELECT COUNT(*) FROM pf_inbox")
+        inbox_count = db.fetchone()[0]
+
+    original, calls, statements = store.transaction, [], []
+
+    class Cursor:
+        def __init__(self, cursor):
+            self.cursor = cursor
+
+        def execute(self, query, *args, **kwargs):
+            statements.append(query)
+            return self.cursor.execute(query, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.cursor, name)
+
+    @contextmanager
+    def observed():
+        calls.append(True)
+        with original() as db:
+            yield Cursor(db)
+
+    monkeypatch.setattr(store, "transaction", observed)
+    report = project(store, config, moment)
+    assert len(calls) == 1
+    assert statements and all(query.lstrip().startswith("SELECT") for query in statements)
+    row = next(row for row in report["sources"] if row["channel"] == "news")
+    assert row["state_availability"] == "available"
+    assert row["read"]["state"] == "successful_read"
+    assert row["validators_retained"]["etag"] is True
+    assert "A" * 100 not in encoded(report)
+    monkeypatch.setattr(store, "transaction", original)
+
+    reopened = SqlFeedStore(store.connect)
+    assert project(reopened, config, moment) == report
+    assert reopened.state(http_key) == private_state
+    assert reopened.state(last_key) == stamp(moment)
+    assert reopened.state(unrelated) == {"next": "preserved"}
+    assert reopened.source_id() == source_id
+    with reopened.transaction() as db:
+        db.execute("SELECT k,v FROM pf_meta")
+        assert dict(db.fetchall()) == binding
+        db.execute("SELECT COUNT(*) FROM pf_events")
+        assert db.fetchone()[0] == event_count
+        db.execute("SELECT COUNT(*) FROM pf_inbox")
+        assert db.fetchone()[0] == inbox_count
+
+
 def test_sql_news_page_and_validators_rollback_then_restart_revalidates_without_duplicates(
     monkeypatch,
 ):

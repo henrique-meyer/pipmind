@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import os
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,6 +13,7 @@ from fastapi.responses import JSONResponse
 from pipmind.contracts import ContractError, loads
 from pipmind.feeds import config as recipes
 from pipmind.feeds.common import FeedError, identity
+from pipmind.feeds.coverage import project
 from pipmind.feeds.macro import webhook
 from pipmind.feeds.news import relay
 from pipmind.feeds.runtime import Supervisor
@@ -19,10 +21,11 @@ from pipmind.feeds.sql_store import configured_store
 from pipmind.feeds.store import encoded
 
 
-def create_app(store, token, *, secret="", supervisor=None, now=None):
+def create_app(store, token, *, secret="", supervisor=None, now=None, configuration=None):
     if not isinstance(token, str) or len(token) < 32:
         raise FeedError("feed_token_minimum_32_characters")
     now = now or (lambda: datetime.now(UTC))
+    configuration = deepcopy(recipes.validate(configuration)) if configuration is not None else None
 
     @asynccontextmanager
     async def lifespan(app):
@@ -48,7 +51,11 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
             if not hmac.compare_digest(
                 request.headers.get("authorization", "").encode(), ("Bearer " + token).encode()
             ):
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"Cache-Control": "no-store"},
+                )
         result = await call_next(request)
         result.headers["Cache-Control"] = "no-store"
         return result
@@ -56,7 +63,16 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
     @app.exception_handler(ContractError)
     async def invalid(request, error):
         code = str(error)
-        status = 503 if code == "feed_store_unavailable" else 422
+        status = (
+            503
+            if code
+            in {
+                "feed_store_unavailable",
+                "feed_coverage_configuration_unavailable",
+                "feed_coverage_response_bound",
+            }
+            else 422
+        )
         if code in {"invalid_webhook_signature", "stale_webhook"}:
             status = 403
         if code == "conflicting_feed_delivery":
@@ -114,6 +130,10 @@ def create_app(store, token, *, secret="", supervisor=None, now=None):
             },
         }
 
+    @app.get("/coverage")
+    def coverage(offset: int = 0, limit: int = 100):
+        return project(store, configuration, now(), offset=offset, limit=limit)
+
     app.state.private_status = status
     return app
 
@@ -140,4 +160,5 @@ def from_env():
         os.environ.get("PIPMIND_FEED_TOKEN", ""),
         secret=os.environ.get("PIPMIND_FXMD_SIGNING_SECRET", ""),
         supervisor=supervisor,
+        configuration=config,
     )
