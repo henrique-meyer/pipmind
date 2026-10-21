@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pipmind.contracts import stamp, utc
-from pipmind.feeds.common import FeedError
+from pipmind.feeds.common import FeedError, identity
 from pipmind.feeds.coverage import MAX_RESPONSE_BYTES, project
 from pipmind.feeds.fixtures import configuration
 from pipmind.feeds.service import create_app
@@ -152,6 +152,30 @@ def test_macro_canonical_success_proves_only_its_retained_window(store):
     assert row["backfill"]["window_status"] == "partial"
     assert row["live_delivery_status"] == row["history_completeness"] == "unknown"
     assert row["publication_time_precision"] == "unknown"
+
+
+@pytest.mark.parametrize("checkpoint", ["quality", "bootstrap"])
+def test_malformed_macro_status_remains_unknown_without_failing_coverage(store, checkpoint):
+    if checkpoint == "quality":
+        store.save(
+            "canonical:quality",
+            {"USD:synthetic_cpi": {"status": [], "checked_at": stamp(NOW)}},
+        )
+        status_field = "window_status"
+    else:
+        store.save(
+            "canonical:bootstrap:" + identity("USD", "synthetic_cpi"),
+            {"status": {}, "captured_at": stamp(NOW)},
+        )
+        status_field = "latest_bootstrap_status"
+    with client(store) as session:
+        response = session.get("/coverage", headers=AUTH)
+    assert response.status_code == 200
+    report = response.json()
+    assert report["pagination"]["total_configured"] == 3
+    row = rows(report)["macro"]
+    assert row["backfill"][status_field] == "unknown"
+    assert row["read"]["state"] == "unknown" and row["read"]["last_success_at"] is None
 
 
 def test_snapshot_is_one_read_transaction_and_restart_preserves_all_tables(store, monkeypatch):

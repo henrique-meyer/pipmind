@@ -70,10 +70,13 @@ def macro_row(recipe, state):
         state.get("canonical:bootstrap:" + identity(recipe["currency"], recipe["indicator"]))
     )
     status = quality.get("status")
-    if status not in {"partial", "retained_window_captured"}:
+    if type(status) is not str or status not in {"partial", "retained_window_captured"}:
         status = "unknown"
     bootstrap_status = bootstrap.get("status")
-    if bootstrap_status not in {"latest_retained_row_only", "latest_unavailable"}:
+    if type(bootstrap_status) is not str or bootstrap_status not in {
+        "latest_retained_row_only",
+        "latest_unavailable",
+    }:
         bootstrap_status = "unknown"
     successes = [
         instant(quality.get("checked_at")) if status != "unknown" else None,
