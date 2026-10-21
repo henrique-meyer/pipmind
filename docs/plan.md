@@ -330,3 +330,19 @@ PIP-21 offline preparation reviews revision/collision handling, duplicate delive
 The collision correction compares complete announcement facts against retained raw inbox records under the existing transaction, preserving legacy fingerprints and history. SQL keeps an immutable-delivery refusal distinct from a database outage. Regression coverage includes same-ID semantic changes, unchanged restart replays, failed callback-write recovery, canonical page rollback after staged writes and recovery after a committed handoff loses its acknowledgement. PIP-21 remains open for actual source and callback qualification.
 
 The final service restart smoke uses a separate disposable database on the same local CI SQL container, so prior integration-test inbox/outbox rows cannot race its checkpoint. With provider reads and scheduled wakes disabled, it requires the exact injected news and clock outcomes and compares a consistent source/history/input/outcome/cursor fingerprint after warming and both application and SQL restart. Existing allocation, timeout and strict preservation checks remain; this does not change hosted database layout.
+
+PIP-23 offline release-control checks must reject a six-trial qualification report
+with unknown, missing or invalid token usage or any failure marker, even when its
+pass flags and retained journals agree. Preserve those attempts as failures with
+their known/unknown usage. Bind the audit helper to the selected expected build
+before SQL access. Negative controls exercise these refusals without model calls;
+actual current-prompt repeated quality evaluation and human calibration remain
+open gates. These private helper corrections do not change runtime model limits
+or authorize a hosted operation.
+
+The repeated-evaluation CLI must exclusively reserve a new private report and
+atomically checkpoint only that owned output as episodes complete, then save the
+final report. Refuse preexisting paths before database/model access; preserve the
+latest completed attempt report on interruption or failure. Exercise multiple
+progress callbacks, final persistence and failure/reuse cases offline so the
+required repetitions cannot fail by colliding with their own first checkpoint.

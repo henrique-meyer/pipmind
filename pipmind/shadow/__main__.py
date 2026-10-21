@@ -2,15 +2,88 @@
 
 import argparse
 import asyncio
+import hashlib
 import os
+import stat
+import tempfile
+from pathlib import Path
 
-from pipmind.contracts import ContractError
+from pipmind.contracts import ContractError, private_output_allowed
 from pipmind.shadow.bundle import export_experience, import_experience, write_private
 from pipmind.shadow.common import ShadowError, bounded_json, digest, encoded, now, read_private
 from pipmind.shadow.engine import ShadowEngine
 from pipmind.shadow.model import FoundryModel
 from pipmind.shadow.sql import connector, fulltext, migrate
 from pipmind.shadow.store import SqlMind
+
+
+class EvaluationReport:
+    """Reserve one new private report and atomically checkpoint only our file."""
+
+    def __init__(self, path):
+        supplied = Path(path).absolute()
+        if supplied.is_symlink():
+            raise ShadowError("evaluation_output_exists")
+        self.path = supplied.parent.resolve() / supplied.name
+        if not private_output_allowed(self.path):
+            raise ShadowError("output_must_be_private")
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        content = encoded({"partial": True, "status": "reserved", "results": []}).encode()
+        fd, temporary = tempfile.mkstemp(prefix="." + self.path.name + ".", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+                identity = self._identity(os.fstat(stream.fileno()))
+            # Link publishes complete bytes atomically and refuses every existing
+            # directory entry, including a dangling symlink. Same-directory
+            # staging keeps both names on one filesystem; failure precedes SQL.
+            os.link(temporary, self.path)
+            self.identity = identity
+            self.checksum = hashlib.sha256(content).digest()
+        finally:
+            os.unlink(temporary)
+
+    @staticmethod
+    def _identity(info):
+        return info.st_dev, info.st_ino
+
+    def _owned(self):
+        try:
+            info = self.path.lstat()
+            if not stat.S_ISREG(info.st_mode) or self._identity(info) != self.identity:
+                return False
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as stream:
+                return (
+                    self._identity(os.fstat(stream.fileno())) == self.identity
+                    and hashlib.file_digest(stream, "sha256").digest() == self.checksum
+                    and self._identity(self.path.lstat()) == self.identity
+                )
+        except OSError:
+            return False
+
+    def write(self, report):
+        if not self._owned():
+            raise ShadowError("evaluation_output_changed")
+        content = encoded(report).encode()
+        fd, temporary = tempfile.mkstemp(prefix="." + self.path.name + ".", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+                identity = self._identity(os.fstat(stream.fileno()))
+            if not self._owned():
+                raise ShadowError("evaluation_output_changed")
+            os.replace(temporary, self.path)
+            temporary = None
+            self.identity = identity
+            self.checksum = hashlib.sha256(content).digest()
+        finally:
+            if temporary is not None:
+                os.unlink(temporary)
 
 
 def main():
@@ -59,7 +132,6 @@ def main():
             output = private_path(args.output)
             if output.exists():
                 raise ShadowError("output_already_exists")
-        connect = connector()
         if args.command == "evaluate":
             from pipmind.dataset import load_cases
             from pipmind.shadow.evaluations import CASES, evaluate
@@ -70,23 +142,23 @@ def main():
                 raise ShadowError("unsupported_shadow_evaluation_case")
             if selected - {c["case_id"] for c in cases}:
                 raise ShadowError("missing_shadow_evaluation_case")
+            manifest = bounded_json(read_private(args.manifest, 65536)) if args.manifest else None
+            output = EvaluationReport(args.output)
+            connect = connector()
             report = asyncio.run(
                 evaluate(
                     connect,
                     [c for c in cases if c["case_id"] in selected],
                     FoundryModel.environment(),
                     repetitions=args.repetitions,
-                    manifest=bounded_json(read_private(args.manifest, 65536))
-                    if args.manifest
-                    else None,
-                    progress=lambda report: write_private(
-                        args.output, encoded({**report, "partial": True}).encode()
-                    ),
+                    manifest=manifest,
+                    progress=lambda report: output.write({**report, "partial": True}),
                 )
             )
-            write_private(args.output, encoded(report).encode())
+            output.write(report)
             print(encoded(report["summary"]))
             return
+        connect = connector()
         if args.command == "replay":
             from pipmind.shadow.fixtures import replay
 
