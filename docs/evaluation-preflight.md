@@ -41,7 +41,8 @@ cases = [case for case in load_cases("<dataset.jsonl>") if case["case_id"] in {"
 model = FoundryModel.environment()  # Configuration only, no inference.
 observed = capture_provenance(cases, model, repetitions=3, grader_version=GRADER_VERSION)
 expected = expected_local_provenance(
-    observed, model,
+    observed,
+    model,
     observed_memory_policy={"present": False, "version": None, "sha256": None},
 )
 write_private("<new-private-expected.json>", encoded(expected).encode())
