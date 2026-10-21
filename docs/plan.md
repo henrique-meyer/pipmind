@@ -514,3 +514,8 @@ The new admission-only typed request bound is 1 MiB so explicit fresh marks for
 there is no prefix acceptance or history truncation. This changes no existing
 runtime/model/feed/prompt/body/export bound or hosted configuration. Full policy
 books use a final digest-keyed lock after admission, never an inverse lock order.
+Full original protective size also requires explicit zero filled quantity in its
+working broker update; missing or partial fill coverage is unsupported/refused.
+Matching wanted/observed records alone cannot prove remaining full protection.
+Protective supplements use modify/close actions. An open order with its own stop
+remains an unsupported pending open even when labelled as position protection.
