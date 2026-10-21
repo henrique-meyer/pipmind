@@ -4713,3 +4713,240 @@ def test_sql_news_page_and_validators_rollback_then_restart_revalidates_without_
     with reopened.transaction() as db:
         db.execute("SELECT k,v FROM pf_meta")
         assert dict(db.fetchall()) == binding
+
+
+def _safety_lease_store_for_ci(mind):
+    from uuid import uuid4
+
+    from pipmind.safety.lease_sql import LeaseBinding, SqlLeaseStore, bootstrap
+
+    bootstrap(mind.connect)
+    binding = LeaseBinding("synthetic-" + uuid4().hex, "demo", "execution")
+    store = SqlLeaseStore(mind.connect, binding, "synthetic-trusted-epoch")
+    store.initialize()
+    return store
+
+
+def _safety_lease_effect_for_ci(mind):
+    from uuid import uuid4
+
+    key = "lease-proof-" + uuid4().hex
+    with mind.transaction() as cur:
+        cur.execute(
+            "INSERT INTO pm_runtime(trader,k,v) VALUES(%s,%s,%s)",
+            (mind.trader, key, '{"value":"before"}'),
+        )
+    return key
+
+
+def test_safety_lease_sql_serializes_competing_owners_and_preserves_restart(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    import pytest
+
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore, bootstrap
+
+    store = _safety_lease_store_for_ci(mind)
+    barrier = Barrier(2)
+
+    def acquire(owner):
+        barrier.wait(timeout=10)
+        try:
+            return store.acquire(owner, ttl_seconds=30)
+        except LeaseRefused as exc:
+            assert str(exc) == "lease_held"
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(acquire, "owner-A")
+        second = pool.submit(acquire, "owner-B")
+        grants = [first.result(timeout=20), second.result(timeout=20)]
+    assert sum(grant is not None for grant in grants) == 1
+    grant = next(grant for grant in grants if grant is not None)
+    assert grant.generation == 1
+    assert grant.expires_at.utcoffset().total_seconds() == 0
+
+    fresh = SqlLeaseStore(mind.connect, store.binding, store.authority_epoch)
+    bootstrap(mind.connect)
+    fresh.initialize()
+    with pytest.raises(LeaseRefused, match="^lease_held$"):
+        fresh.acquire(grant.owner_id, ttl_seconds=30)
+
+    def locked_observation(cur):
+        cur.execute(
+            """SELECT SYSUTCDATETIME(),expires_at,SQL_VARIANT_PROPERTY(expires_at,'Scale'),
+            APPLOCK_MODE('public',%s,'Transaction') FROM dbo.pm_safety_leases_v1
+            WHERE binding_key=%s""",
+            ("pipmind-safety-lease-v1:" + store._key, store._key),
+        )
+        return cur.fetchone()
+
+    server_now, stored_expiry, scale, lock_mode = fresh.compare_and_act(grant, locked_observation)
+    assert server_now.tzinfo is None
+    assert grant.expires_at.replace(tzinfo=None) == stored_expiry > server_now
+    assert scale == 6
+    assert lock_mode == "Exclusive"
+    fresh.release(grant)
+    next_grant = store.acquire("owner-C", ttl_seconds=30)
+    assert next_grant.generation == 2 and next_grant.token != grant.token
+    with pytest.raises(LeaseRefused, match="^lease_stale_owner$"):
+        fresh.compare_and_act(grant, lambda cur: pytest.fail("stale callback executed"))
+
+
+def test_safety_lease_sql_callback_error_and_expiry_rollback_exact_effects(mind):
+    import pytest
+
+    from pipmind.safety.lease_sql import LeaseRefused, LeaseUnavailable, SqlLeaseStore
+
+    store = _safety_lease_store_for_ci(mind)
+    key = _safety_lease_effect_for_ci(mind)
+    grant = store.acquire("owner-A", ttl_seconds=30)
+    callbacks = []
+
+    def failed(cur):
+        callbacks.append("failure")
+        cur.execute(
+            "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k=%s",
+            ('{"value":"must rollback"}', mind.trader, key),
+        )
+        raise RuntimeError("synthetic callback failure, never surfaced")
+
+    with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$"):
+        store.compare_and_act(grant, failed)
+    assert callbacks == ["failure"]
+    assert mind.runtime(key) == {"value": "before"}
+
+    # Drop the actual SQL connection after a staged write, before the final
+    # ownership read. An unavailable store must return no callback result and
+    # disconnect must abort the uncommitted effect. No server-wide outage or
+    # shared service state is changed by this disposable-session fault.
+    connections = []
+
+    def disconnectable():
+        db = mind.connect()
+        connections.append(db)
+        return db
+
+    interrupted = SqlLeaseStore(disconnectable, store.binding, store.authority_epoch)
+
+    def disconnected(cur):
+        callbacks.append("connection_loss")
+        cur.execute(
+            "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k=%s",
+            ('{"value":"lost connection must rollback"}', mind.trader, key),
+        )
+        connections[-1].close()
+        return "must not escape unavailable SQL"
+
+    with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$"):
+        interrupted.compare_and_act(grant, disconnected)
+    assert len(connections) == 1 and callbacks == ["failure", "connection_loss"]
+    assert mind.runtime(key) == {"value": "before"}
+    store.release(grant)
+    short = store.acquire("owner-B", ttl_seconds=2)
+
+    def expired(cur):
+        callbacks.append("expiry")
+        cur.execute(
+            "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k=%s",
+            ('{"value":"also must rollback"}', mind.trader, key),
+        )
+        cur.execute("WAITFOR DELAY '00:00:02.100'")
+        return "must not escape expired transaction"
+
+    with pytest.raises(LeaseRefused, match="^lease_expired$"):
+        store.compare_and_act(short, expired)
+    assert callbacks == ["failure", "connection_loss", "expiry"]
+    assert mind.runtime(key) == {"value": "before"}
+    with pytest.raises(LeaseRefused, match="^lease_expired$"):
+        store.renew(short, ttl_seconds=300)
+    takeover = store.acquire("owner-C", ttl_seconds=30)
+    assert takeover.generation == short.generation + 1
+    with pytest.raises(LeaseRefused, match="^lease_stale_owner$"):
+        store.release(short)
+    assert mind.runtime(key) == {"value": "before"}
+
+
+def test_safety_lease_sql_exact_bindings_epoch_and_token_refusals(mind):
+    from dataclasses import replace
+
+    import pytest
+
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+
+    store = _safety_lease_store_for_ci(mind)
+    grant = store.acquire("owner-A", ttl_seconds=30)
+    wrong_epoch = SqlLeaseStore(mind.connect, store.binding, "different-epoch")
+    with pytest.raises(LeaseRefused, match="^lease_authority_mismatch$"):
+        wrong_epoch.initialize()
+    for changed in (
+        replace(grant, generation=grant.generation + 1),
+        replace(grant, owner_id="different-owner"),
+        replace(grant, token="0" * 64),
+    ):
+        with pytest.raises(LeaseRefused, match="^lease_stale_owner$"):
+            store.compare_and_act(changed, lambda cur: pytest.fail("wrong holder executed"))
+    for binding in (
+        replace(store.binding, account_id=store.binding.account_id.upper()),
+        replace(store.binding, environment="live"),
+        replace(store.binding, resource="other-execution-resource"),
+    ):
+        other = SqlLeaseStore(mind.connect, binding, store.authority_epoch)
+        other.initialize()
+        with pytest.raises(LeaseRefused, match="^lease_binding_mismatch$"):
+            other.release(grant)
+        independent = other.acquire("different-owner", ttl_seconds=30)
+        assert independent.generation == 1
+    assert store.renew(grant, ttl_seconds=30).generation == grant.generation
+
+
+def test_safety_lease_sql_lost_ack_retains_committed_effect_without_replay(mind):
+    import pytest
+
+    from pipmind.safety.lease_sql import LeaseCommitUnknown, SqlLeaseStore
+
+    store = _safety_lease_store_for_ci(mind)
+    key = _safety_lease_effect_for_ci(mind)
+    grant = store.acquire("owner-A", ttl_seconds=30)
+    commits = []
+    closes = []
+    callbacks = []
+
+    class LostAck:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return self.db.cursor()
+
+        def commit(self):
+            self.db.commit()
+            commits.append(True)
+            raise OSError("synthetic lost acknowledgement")
+
+        def close(self):
+            closes.append(True)
+            self.db.close()
+
+    uncertain = SqlLeaseStore(LostAck, store.binding, store.authority_epoch)
+
+    def callback(cur):
+        callbacks.append(True)
+        cur.execute(
+            "UPDATE pm_runtime SET v=%s WHERE trader=%s AND k=%s",
+            ('{"value":"committed"}', mind.trader, key),
+        )
+        return "must not return as success"
+
+    with pytest.raises(LeaseCommitUnknown, match="^lease_commit_unknown$"):
+        uncertain.compare_and_act(grant, callback)
+    assert callbacks == commits == closes == [True]
+    assert mind.runtime(key) == {"value": "committed"}
+    # A separately checked known grant can still be renewed; callback was NOT replayed.
+    assert store.renew(grant, ttl_seconds=30).generation == grant.generation
+    assert callbacks == [True]
