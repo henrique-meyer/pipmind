@@ -68,7 +68,7 @@ an unexpected policy/race retains the initialized paused mind and failure, and
 must not be reported as a zero-write preflight refusal. Exact-class effective
 local settings may be bound without certifying custom models/provider facts.
 
-The following code deliveries are prepared in To Do beneath PIP-28. They do not
+The following code deliveries are tracked beneath PIP-28. They do not
 start hosted execution or require owner risk numbers to implement synthetic tests:
 
 | Next deliverable | Concrete acceptance | Dependencies and ownership |
@@ -82,6 +82,19 @@ cash-flow/reconciliation facts, applicable M4 gates and separate execution
 authority. PIP-29 retains operational recovery/handover, PIP-30 retains demo order
 transport and PIP-31 retains autonomous review. External authority renewal and
 broker reconciliation after database restore remain separate requirements.
+
+PIP-45 implementation began on2026-10-21: pure session/accounting types and exact
+math are separate from the isolated SQL adapter. Independent implementers own
+disjoint files; root serializes Git/Jira and mandatory real-SQL test integration.
+PIP-46 follows the reviewed stable session API and same-cursor lock ordering;
+its implementation waits for that prerequisite. No hosted or PIP-17 change.
+Session observations bind cumulative external cash flow to the equity checkpoint's
+coverage period and evidence, preserving original facts and avoiding repeated-flow
+addition. Newer incomplete observations cannot expose older facts as current.
+Historical complete loss breaches latch without rewinding the latest checkpoint.
+The same-cursor session reader acquires the account lock after the lease lock;
+session writers never acquire lease/admission locks. Pending reservations remain
+account-wide across sessions and are never cleared by initializing another day.
 
 PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
 PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
