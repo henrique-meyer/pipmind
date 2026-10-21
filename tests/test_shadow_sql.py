@@ -1133,6 +1133,196 @@ def test_feed_configuration_cutover_preserves_history_and_fences_stale_workers(m
             db.execute(f"DROP USER [{user}]")
 
 
+def test_sql_expected_evaluation_mismatch_has_no_connector_access_or_durable_writes(mind):
+    import asyncio
+    from copy import deepcopy
+
+    import pytest
+
+    from pipmind.dataset import load_cases
+    from pipmind.shadow.common import ShadowError
+    from pipmind.shadow.evaluation_preflight import expected_local_provenance
+    from pipmind.shadow.evaluation_provenance import capture_provenance
+    from pipmind.shadow.evaluations import GRADER_VERSION, evaluate
+    from pipmind.shadow.model import FixtureModel
+
+    cases = [case for case in load_cases() if case["case_id"] == "T01"]
+    model = FixtureModel(deepcopy(cases[0]["model_responses"]))
+    facts = capture_provenance(cases, model, repetitions=2, grader_version=GRADER_VERSION)
+    expected = expected_local_provenance(
+        facts, model, observed_memory_policy={"present": False, "version": None, "sha256": None}
+    )
+
+    def counts():
+        with mind.transaction() as cur:
+            result = []
+            for table in (
+                "pm_minds",
+                "pm_records",
+                "pm_terms",
+                "pm_inputs",
+                "pm_outcomes",
+                "pm_cursors",
+                "pm_runtime",
+            ):
+                cur.execute("SELECT COUNT_BIG(*) FROM " + table)
+                result.append(cur.fetchone()[0])
+            return tuple(result)
+
+    before = counts(), mind.head(), mind.retained()
+    expected["effective_local_settings"]["capabilities"]["working_budget"]["max_bytes"] = 3200
+    connections = []
+
+    def forbidden_connect():
+        connections.append(True)
+        raise AssertionError("Mismatch reached SQL connector")
+
+    with pytest.raises(ShadowError, match="evaluation_preflight_mismatch"):
+        asyncio.run(
+            evaluate(
+                forbidden_connect, cases, model, repetitions=2, expected_local_provenance=expected
+            )
+        )
+    assert connections == []
+    assert (counts(), mind.head(), mind.retained()) == before
+
+
+def test_sql_expected_evaluation_match_freezes_cohort_and_links_precreation_proof(mind):
+    import asyncio
+    from copy import deepcopy
+
+    from pipmind.dataset import load_cases
+    from pipmind.shadow.common import digest, encoded
+    from pipmind.shadow.evaluation_preflight import expected_local_provenance
+    from pipmind.shadow.evaluation_provenance import capture_provenance
+    from pipmind.shadow.evaluations import GRADER_VERSION, evaluate
+    from pipmind.shadow.model import FixtureModel
+    from pipmind.shadow.store import SqlMind
+
+    cases = [case for case in load_cases() if case["case_id"] == "T01"]
+    original_cases = deepcopy(cases)
+    model = FixtureModel(deepcopy(cases[0]["model_responses"]))
+    facts = capture_provenance(cases, model, repetitions=2, grader_version=GRADER_VERSION)
+    expected = expected_local_provenance(
+        facts, model, observed_memory_policy={"present": False, "version": None, "sha256": None}
+    )
+    expected_hash = digest(encoded(expected))
+    source_before = mind.head(), mind.retained()
+
+    def progress(partial):
+        cases.clear()
+        expected.clear()
+        partial["runtime_provenance"]["cases"].clear()
+
+    report = asyncio.run(
+        evaluate(
+            mind.connect,
+            cases,
+            model,
+            repetitions=2,
+            expected_local_provenance=expected,
+            progress=progress,
+        )
+    )
+    assert report["summary"]["episodes"] == 2
+    assert report["summary"]["hard_check_failures"] == 0
+    assert report["dataset_sha256"] == digest(encoded(original_cases))
+    assert report["local_preflight"]["expected_sha256"] == expected_hash
+    assert report["local_preflight"]["policy_observation"] == "absent_namespace_before_creation"
+    assert report["local_preflight"]["namespaces_checked"] == 2
+    assert not report["local_preflight"]["provider_attested"]
+    assert not report["local_preflight"]["loaded_code_attested"]
+    for episode in report["results"]:
+        store = SqlMind(mind.connect, episode["trader"])
+        assert store.head()["paused"] and store.runtime("memory_policy") is None
+        linked = store.runtime("evaluation")
+        assert linked["local_preflight"] == report["local_preflight"]
+        assert linked["runtime_provenance_sha256"] == report["runtime_provenance_sha256"]
+        assert linked["observed_memory_policy"] == {
+            "observation": "isolated_runtime_before_processing",
+            "present": False,
+            "version": None,
+            "sha256": None,
+        }
+    assert (mind.head(), mind.retained()) == source_before
+
+
+def test_sql_expected_evaluation_postinit_policy_refusal_retains_paused_initialized_mind(
+    mind, monkeypatch
+):
+    import asyncio
+    from copy import deepcopy
+
+    import pytest
+
+    from pipmind.dataset import load_cases
+    from pipmind.shadow.common import ShadowError, encoded
+    from pipmind.shadow.evaluation_preflight import expected_local_provenance
+    from pipmind.shadow.evaluation_provenance import capture_provenance
+    from pipmind.shadow.evaluations import GRADER_VERSION, evaluate
+    from pipmind.shadow.model import FixtureModel
+    from pipmind.shadow.store import SqlMind
+
+    cases = [case for case in load_cases() if case["case_id"] == "T01"]
+    model = FixtureModel(deepcopy(cases[0]["model_responses"]))
+    facts = capture_provenance(cases, model, repetitions=2, grader_version=GRADER_VERSION)
+    expected = expected_local_provenance(
+        facts, model, observed_memory_policy={"present": False, "version": None, "sha256": None}
+    )
+    original_initialize = SqlMind.initialize
+    initialized = []
+    calls = []
+
+    def unexpected_policy(store, *args, **kwargs):
+        original_initialize(store, *args, **kwargs)
+        initialized.append(store.trader)
+        with store.transaction() as cur:
+            cur.execute(
+                "INSERT pm_runtime VALUES(%s,%s,%s)",
+                (
+                    store.trader,
+                    "memory_policy",
+                    encoded({"version": "unexpected-synthetic-policy"}),
+                ),
+            )
+
+    async def forbidden_model(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("Post-init policy refusal called model")
+
+    monkeypatch.setattr(SqlMind, "initialize", unexpected_policy)
+    monkeypatch.setattr(FixtureModel, "triage", forbidden_model)
+    source_before = mind.head(), mind.retained()
+    partials = []
+    with pytest.raises(ShadowError, match="evaluation_preflight_policy_mismatch"):
+        asyncio.run(
+            evaluate(
+                mind.connect,
+                cases,
+                model,
+                repetitions=2,
+                expected_local_provenance=expected,
+                progress=partials.append,
+            )
+        )
+    assert len(initialized) == 1 and calls == []
+    retained = SqlMind(mind.connect, initialized[0])
+    assert retained.head()["paused"] and retained.head()["revision"] == 0
+    assert retained.runtime("evaluation") is None
+    assert retained.runtime("memory_policy") == {"version": "unexpected-synthetic-policy"}
+    with retained.transaction() as cur:
+        for table in ("pm_inputs", "pm_outcomes", "pm_cursors"):
+            cur.execute(
+                "SELECT COUNT_BIG(*) FROM " + table + " WHERE trader=%s", (retained.trader,)
+            )
+            assert cur.fetchone()[0] == 0
+    refusal = partials[-1]["preflight_refusal"]
+    assert refusal["phase"] == "post_initialization"
+    assert refusal["trader"] == retained.trader and refusal["initialized_mind_retained"]
+    assert refusal["failure_audit"] == "report-only" and refusal["unpause_attempted"] is False
+    assert (mind.head(), mind.retained()) == source_before
+
+
 def test_repeated_evaluations_use_fresh_paused_sql_minds_without_changing_primary(mind):
     from pipmind.shadow.evaluations import evaluate
 

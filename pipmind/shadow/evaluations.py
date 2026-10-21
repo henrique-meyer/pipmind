@@ -10,6 +10,11 @@ from uuid import uuid4
 from pipmind.contracts import Contracts, event_id, loads, utc
 from pipmind.shadow.common import ShadowError, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
+from pipmind.shadow.evaluation_preflight import (
+    EvaluationPreflightRefusal,
+    compare_expected_local_provenance,
+    compare_observed_policy,
+)
 from pipmind.shadow.evaluation_provenance import capture_provenance, freeze_json
 from pipmind.shadow.evaluation_usage import summarize_usage
 from pipmind.shadow.model import PROMPT_VERSION
@@ -19,10 +24,20 @@ CASES = frozenset([*(f"T{i:02}" for i in range(1, 7)), *(f"D{i:02}" for i in ran
 GRADER_VERSION = "shadow-live-v2"
 
 
-async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progress=None):
+async def evaluate(
+    connect,
+    cases,
+    model,
+    *,
+    repetitions=3,
+    manifest=None,
+    progress=None,
+    expected_local_provenance=None,
+):
     # Validate built-in JSON types before copying; custom containers/copy hooks
     # cannot run while freezing caller-owned data for later repetitions.
     cases, manifest = freeze_json(cases), freeze_json(manifest)
+    expected_local_provenance = freeze_json(expected_local_provenance)
     if not 2 <= repetitions <= 5 or not cases or len(cases) > 12:
         raise ShadowError("evaluation_bounds")
     if len({c["case_id"] for c in cases}) != len(cases) or any(
@@ -33,6 +48,34 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
         cases, model, repetitions=repetitions, grader_version=GRADER_VERSION
     )
     provenance_sha256 = digest(encoded(provenance))
+    preflight = None
+    episodes = None
+    if expected_local_provenance is not None:
+        preflight = compare_expected_local_provenance(expected_local_provenance, provenance, model)
+        # Observe every proposed namespace before the first evaluation write.
+        # A new random name is not itself evidence that durable state is absent.
+        episodes = []
+        for _ in range(len(cases) * repetitions):
+            trader = "evaluation-" + uuid4().hex
+            store = SqlMind(connect, trader)
+            with store.transaction() as cur:
+                cur.execute("SELECT 1 FROM pm_minds WHERE trader=%s", (trader,))
+                if cur.fetchone() is not None:
+                    raise ShadowError("evaluation_preflight_namespace_exists")
+                cur.execute(
+                    "SELECT v FROM pm_runtime WHERE trader=%s AND k='memory_policy'", (trader,)
+                )
+                row = cur.fetchone()
+                # Presence alone is enough to refuse this absent-only contract;
+                # do not parse an unexpected/corrupt policy as trusted state.
+                observed = _policy_facts(row, absent_only=True)
+                compare_observed_policy(expected_local_provenance, observed)
+            episodes.append(trader)
+        preflight.update(
+            policy_observed=True,
+            policy_observation="absent_namespace_before_creation",
+            namespaces_checked=len(episodes),
+        )
     report = {
         "version": GRADER_VERSION,
         "prompt_version": PROMPT_VERSION,
@@ -48,11 +91,17 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
         "human_review": "pending; no model judge or profitability claim",
         "results": [],
     }
+    if preflight is not None:
+        report["local_preflight"] = preflight
     contracts = Contracts()
     for case in cases:
         case_sha256 = digest(encoded([case]))
         for repetition in range(repetitions):
-            trader = "evaluation-" + uuid4().hex
+            if preflight is not None:
+                # Progress hooks cannot mutate caller selection/intent; detect
+                # changed supported model settings before another episode writes.
+                compare_expected_local_provenance(expected_local_provenance, provenance, model)
+            trader = episodes.pop(0) if episodes is not None else "evaluation-" + uuid4().hex
             store = SqlMind(connect, trader)
             initial = deepcopy(case["initial_mind"])
             records = [
@@ -84,23 +133,55 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
             # evaluation mind. It never becomes a hosted account binding.
             contracts.validate("working-memory", initial["working_memory"])
             with store.transaction() as cur:
+                cur.execute(
+                    "SELECT v FROM pm_runtime WHERE trader=%s AND k='memory_policy'", (trader,)
+                )
+                policy_row = cur.fetchone()
+                observed_policy = {
+                    "observation": "isolated_runtime_before_processing",
+                    **_policy_facts(policy_row, absent_only=preflight is not None),
+                }
+                if preflight is not None:
+                    try:
+                        compare_observed_policy(
+                            expected_local_provenance,
+                            _policy_facts(policy_row, absent_only=True),
+                        )
+                    except ShadowError:
+                        # initialize() has already committed a paused mind. This
+                        # path is deliberately distinct from zero-write preflight.
+                        report["preflight_refusal"] = {
+                            "phase": "post_initialization",
+                            "code": "evaluation_preflight_policy_mismatch",
+                            "trader": trader,
+                            "case_id": case["case_id"],
+                            "repetition": repetition + 1,
+                            "observed_memory_policy": observed_policy,
+                            "initialized_mind_retained": True,
+                            "unpause_attempted": False,
+                            "failure_audit": "report-only",
+                            "checkpoint_persistence": "unconfirmed",
+                        }
+                        if progress:
+                            try:
+                                progress(deepcopy(report))
+                            except Exception:
+                                # Private callback errors cannot replace the
+                                # refusal or hide access to retained evidence.
+                                pass
+                            else:
+                                report["preflight_refusal"]["checkpoint_persistence"] = (
+                                    "callback_returned"
+                                )
+                        else:
+                            report["preflight_refusal"]["checkpoint_persistence"] = "not_requested"
+                        raise EvaluationPreflightRefusal(report) from None
                 working = encoded(initial["working_memory"])
                 cur.execute("UPDATE pm_minds SET working=%s WHERE trader=%s", (working, trader))
                 cur.execute(
                     "UPDATE pm_records SET body=%s WHERE trader=%s AND part='working_memory'",
                     (working, trader),
                 )
-                cur.execute(
-                    "SELECT v FROM pm_runtime WHERE trader=%s AND k='memory_policy'", (trader,)
-                )
-                policy_row = cur.fetchone()
-                policy = loads(policy_row[0]) if policy_row else None
-                observed_policy = {
-                    "observation": "isolated_runtime_before_processing",
-                    "present": policy_row is not None,
-                    "version": policy.get("version") if isinstance(policy, dict) else None,
-                    "sha256": digest(encoded(policy)) if policy_row is not None else None,
-                }
                 for key, value in (
                     (
                         "broker_snapshots",
@@ -119,6 +200,7 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
                             "repetition": repetition + 1,
                             "runtime_provenance_sha256": provenance_sha256,
                             "observed_memory_policy": observed_policy,
+                            **({"local_preflight": deepcopy(preflight)} if preflight else {}),
                         },
                     ),
                 ):
@@ -293,3 +375,15 @@ async def evaluate(connect, cases, model, *, repetitions=3, manifest=None, progr
     }
     report["completed_at"] = now().isoformat()
     return report
+
+
+def _policy_facts(row, *, absent_only=False):
+    if absent_only and row is not None:
+        # This rejected raw receipt is not presented as a normalized policy hash.
+        return {"present": True, "version": None, "sha256": None}
+    policy = loads(row[0]) if row is not None else None
+    return {
+        "present": row is not None,
+        "version": policy.get("version") if isinstance(policy, dict) else None,
+        "sha256": digest(encoded(policy)) if row is not None else None,
+    }
