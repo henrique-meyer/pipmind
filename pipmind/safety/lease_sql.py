@@ -99,7 +99,7 @@ def _close(db):
     if db is not None:
         try:
             db.close()  # Non-pooled disconnect aborts any uncommitted SQL work.
-        except Exception:
+        except BaseException:
             pass  # Acknowledged commits remain acknowledged even on cleanup failure.
 
 
@@ -128,9 +128,11 @@ def _run(connect, resource, operation):
         committing = True
         db.commit()
         return result
-    except Exception as exc:
+    except BaseException as exc:
         if committing:
             raise LeaseCommitUnknown("lease_commit_unknown") from None
+        if not isinstance(exc, Exception):
+            raise  # Pre-commit interruption propagates after session disposal.
         if isinstance(exc, (LeaseRefused, LeaseUnavailable)):
             raise
         raise LeaseUnavailable("lease_store_unavailable") from None

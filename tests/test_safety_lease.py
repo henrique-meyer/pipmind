@@ -31,6 +31,8 @@ class Database:
         self.statements = []
         self.autocommit = False
         self.close_failure = False
+        self.commit_interrupt = None
+        self.close_interrupt = None
 
     def connect(self):
         if self.outage:
@@ -55,16 +57,22 @@ class Connection:
     def commit(self):
         if self.database.commit_failure == "before":
             raise OSError("private commit failure")
+        if self.database.commit_interrupt and self.database.commit_interrupt[0] == "before":
+            raise self.database.commit_interrupt[1]("synthetic commit interruption")
         self.database.rows = deepcopy(self.rows)
         self.database.effects = list(self.effects)
         self.committed = True
         if self.database.commit_failure == "after":
             raise OSError("private acknowledgement lost")
+        if self.database.commit_interrupt:
+            raise self.database.commit_interrupt[1]("synthetic commit interruption")
 
     def close(self):
         self.closed = True
         if self.database.close_failure:
             raise OSError("synthetic cleanup failure")
+        if self.database.close_interrupt:
+            raise self.database.close_interrupt("synthetic cleanup interruption")
 
 
 class Cursor:
@@ -307,6 +315,49 @@ def test_sql_outage_never_calls_callback_or_yields_detached_authority(owned):
     db.outage = True
     with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$"):
         store.compare_and_act(grant, lambda cur: pytest.fail("callback on unavailable SQL"))
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("phase", ["before", "after"])
+def test_commit_interruption_is_unknown_without_result_or_replay(owned, interrupt, phase):
+    db, store, grant = owned
+    db.commit_interrupt = (phase, interrupt)
+    # Cleanup must not replace the unknown-commit classification with an interrupt.
+    db.close_interrupt = interrupt
+    callbacks = []
+
+    def callback(cur):
+        callbacks.append(True)
+        cur.execute("SYNTHETIC EFFECT", ("possibly committed",))
+        return "must not escape"
+
+    with pytest.raises(LeaseCommitUnknown, match="^lease_commit_unknown$"):
+        store.compare_and_act(grant, callback)
+    assert callbacks == [True]
+    assert db.effects == (["possibly committed"] if phase == "after" else [])
+    assert db.connections[-1].closed
+    assert db.connections[-1].committed is (phase == "after")
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit])
+def test_precommit_callback_interruption_propagates_and_discards_effects(owned, interrupt):
+    db, store, grant = owned
+    before = deepcopy(db.rows)
+    interruption = interrupt("synthetic callback interruption")
+    db.close_interrupt = interrupt
+    callbacks = []
+
+    def callback(cur):
+        callbacks.append(True)
+        cur.execute("SYNTHETIC EFFECT", ("uncommitted",))
+        raise interruption
+
+    with pytest.raises(interrupt) as raised:
+        store.compare_and_act(grant, callback)
+    assert raised.value is interruption
+    assert callbacks == [True]
+    assert db.effects == [] and db.rows == before
+    assert db.connections[-1].closed and not db.connections[-1].committed
 
 
 @pytest.mark.parametrize("failure", ["before", "after"])
