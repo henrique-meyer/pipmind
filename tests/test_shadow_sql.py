@@ -6150,6 +6150,55 @@ def test_safety_gateway_sql_post_admission_proof_failure_aborts_entire_intake(mi
     assert _safety_gateway_journal_ci(mind, gateway) == before
 
 
+@pytest.mark.parametrize("failure", ["error", "interrupt", "disconnect"])
+def test_safety_gateway_sql_staged_failure_reopens_without_partial_intake(
+    mind, monkeypatch, failure
+):
+    from pipmind.safety.lease_sql import LeaseUnavailable
+
+    gateway, admission, _, _, _, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    before_history = _safety_gateway_journal_ci(mind, gateway)
+    before_admission = _admission_sql_counts_ci(mind, admission)
+    before_controls = gateway.controls.read()
+    original = gateway._record
+    staged = []
+
+    def fail(cur, *args, **kwargs):
+        receipt = original(cur, *args, **kwargs)
+        if args[0] == "accept":
+            assert receipt["outcome"] == "dry_accepted"
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_admission_reservations_v1 WHERE account_key=%s",
+                (gateway._key,),
+            )
+            assert cur.fetchone()[0] == 1
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_integration_journal_v1 "
+                "WHERE account_key=%s AND channel='accept'",
+                (gateway._key,),
+            )
+            assert cur.fetchone()[0] == 1
+            staged.append(True)
+            if failure == "disconnect":
+                cur.connection.close()
+            if failure == "interrupt":
+                raise KeyboardInterrupt("synthetic precommit integration interruption")
+            raise OSError("synthetic post-stage integration failure")
+        return receipt
+
+    monkeypatch.setattr(gateway, "_record", fail)
+    with pytest.raises(KeyboardInterrupt if failure == "interrupt" else LeaseUnavailable):
+        gateway.accept(grant, request)
+    assert staged == [True]
+    assert _safety_gateway_journal_ci(mind, gateway) == before_history
+    assert _admission_sql_counts_ci(mind, admission) == before_admission
+    assert gateway.controls.read() == before_controls
+    assert admission.lookup(request.order["client_order_id"]) is None
+    monkeypatch.setattr(gateway, "_record", original)
+    assert gateway.accept(grant, request)["outcome"] == "dry_accepted"
+    assert len(admission.snapshot()[0]) == 1
+
+
 def _safety_controls_case_ci(mind):
     from uuid import uuid4
 
