@@ -1,5 +1,36 @@
 # Implementation plan
 
+## PIP-52 — Explicit Azure SQL physical identity candidate
+
+[PIP-52](https://nitro.atlassian.net/browse/PIP-52) adds a separate opt-in,
+explicitly pinned Azure SQL physical identity reader and hash domain. Preserve
+the existing SQL Server/MI GUID/fork profile and default unsupported-platform
+refusal. Missing, changed, wrong-scope or unsupported metadata fails closed;
+never automatically repin after restore, name reuse or benign capacity changes.
+Scripted Azure-specific positives and actual disposable SQL Server negatives are
+precisely separate evidence. No actual S0, restore, endpoint or permission proof
+is inferred from fixtures. No connector, credentials, runtime/lease/recovery
+wiring, DDL, deployment, hosted changes or PIP-17 overlap. PIP-47 still owns actual
+S0 qualification, independent authority, source/target barriers and managed
+restore provenance. Require exact final-head CI, merge and private raw backup.
+
+## PIP-53 — Restricted-caller command catalog boundary
+
+[PIP-53](https://nitro.atlassian.net/browse/PIP-53) adds a fixed, read-only,
+owner-executed command metadata module and isolated same-cursor reader. Verify
+exact procedure definition, owner/context, selected database and complete result
+scope; no caller visibility boolean, arbitrary SQL/object parameter or row cap.
+Actual disposable SQL must prove hidden/denied metadata is visible inside the
+fixed owner module while caller permissions remain narrow, and altered/missing
+module provenance refuses. No runtime gets dbo, ALTER or impersonation powers.
+Explicit trusted bootstrap text is not a default migration or authorization to
+install it. Preserve PIP-50's default strict guard and all legacy/history/lock
+semantics. No hosted permission/resource/configuration/state/deployment, PIP-17,
+transport or recovery-activation change. Actual S0 and integrated least-privilege
+qualification remain PIP-47. Code work can proceed independently of PIP-52;
+root serializes shared SQL tests, plans, Git and Jira. Earlier PIP-51 delivery has
+publication priority.
+
 ## PIP-50 — Complete command-obligation recovery checkpoints
 
 [PIP-50](https://nitro.atlassian.net/browse/PIP-50) extends the isolated PIP-29
