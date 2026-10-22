@@ -221,6 +221,13 @@ Any new resources, capacity or recurring commitments require concrete scope and
 cost approval. Operational recovery, actual orders and M4 qualification remain
 separately gated; a partial hosted proof does not activate recovery.
 
+Initial hosted evidence: actual S0 managed-identity exact pin and three mismatch
+refusals pass. The exact trusted owner catalog and two object permissions are
+installed; actual MI positives, runtime ALTER/IMPERSONATE denials and four
+transactional restricted-context negatives pass. No hosted safety history was
+fabricated. A separately approved disposable restore target will test physical
+identity and retained-history provenance without changing the source app.
+
 
 ## PIP-28 — Remaining safety integration (2026-10-21)
 
