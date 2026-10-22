@@ -9530,3 +9530,273 @@ def test_sql_safety_profile_actual_stores_reopen_and_counterexamples(mind):
         "SQL_SAFETY_PROFILE "
         + canonical_json({"elapsed_seconds": round(elapsed, 3), "report": report})
     )
+
+
+"""Root appends this one case to the mandatory disposable SQL suite."""
+
+
+def test_command_catalog_sql_restricted_owner_module_exact_schema_and_rollback(mind):
+    import os
+    import re
+    from dataclasses import astuple
+    from uuid import uuid4
+
+    import pytds
+    import pytest
+
+    from pipmind.safety.command_catalog_sql import (
+        MODULE_DEFINITION_SHA256,
+        MODULE_NAME,
+        CommandCatalogUnavailable,
+        bootstrap_sql,
+        read_command_catalog_in_transaction,
+    )
+    from pipmind.safety.command_journal_sql import _DDL
+    from pipmind.shadow.sql import connector
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    name = "command_catalog_" + uuid4().hex
+    assert re.fullmatch(r"command_catalog_[0-9a-f]{32}", name)
+    admin = mind.connect()
+    admin.autocommit = True
+    master = admin.cursor()
+    master.execute(f"CREATE DATABASE [{name}]")
+    setup = None
+    try:
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        setup = connect()
+        setup.autocommit = True
+        c = setup.cursor()
+        c.execute("SET ANSI_NULLS ON")
+        c.execute("SET QUOTED_IDENTIFIER ON")
+        c.execute(bootstrap_sql())
+        c.execute("CREATE USER p53_catalog_app WITHOUT LOGIN")
+        c.execute("CREATE USER p53_other_owner WITHOUT LOGIN")
+        c.execute("CREATE TABLE dbo.p53_rollback_probe (value int NOT NULL)")
+        c.execute("GRANT SELECT,INSERT ON dbo.p53_rollback_probe TO p53_catalog_app")
+
+        def grant_module():
+            c.execute(f"GRANT EXECUTE,VIEW DEFINITION ON OBJECT::{MODULE_NAME} TO p53_catalog_app")
+
+        grant_module()
+        lock_name = "pipmind-catalog-native-proof:" + uuid4().hex
+
+        def observe(*, refused=False, probe=False, denied_operations=False):
+            db = connect()
+            impersonated = False
+            try:
+                assert db.autocommit is False
+                cur = db.cursor()
+                cur.execute("SELECT COUNT(*) FROM dbo.p53_rollback_probe WITH(HOLDLOCK)")
+                assert cur.fetchone()[0] == 0
+                cur.execute("EXECUTE AS USER='p53_catalog_app'")
+                impersonated = True
+                cur.execute("SELECT USER_ID(),DB_ID(),@@TRANCOUNT,XACT_STATE()")
+                boundary = tuple(cur.fetchone())
+                assert type(boundary[0]) is int and boundary[0] != 1
+                assert boundary[2] >= 1 and boundary[3] == 1
+                cur.execute(
+                    "DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource=%s,"
+                    "@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=0; SELECT @r",
+                    (lock_name,),
+                )
+                assert cur.fetchone()[0] >= 0
+                cur.execute(
+                    "SELECT name FROM sys.objects WHERE name LIKE 'pm[_]safety[_]command[_]%' "
+                    "AND type IN ('U','V','SN','ET')"
+                )
+                assert cur.fetchall() == []
+                cur.execute(
+                    "SELECT HAS_PERMS_BY_NAME(%s,'OBJECT','ALTER'),"
+                    "HAS_PERMS_BY_NAME('dbo','USER','IMPERSONATE'),IS_MEMBER('db_owner')",
+                    (MODULE_NAME,),
+                )
+                permissions = tuple(cur.fetchone())
+                assert permissions[1:] == (0, 0)
+                if not refused:
+                    assert permissions[0] == 0
+                if probe:
+                    cur.execute("INSERT dbo.p53_rollback_probe(value) VALUES(17)")
+                if refused:
+                    with pytest.raises(
+                        CommandCatalogUnavailable, match="^command_catalog_unavailable$"
+                    ):
+                        read_command_catalog_in_transaction(cur, expected_database=name)
+                    result = None
+                else:
+                    result = read_command_catalog_in_transaction(cur, expected_database=name)
+                    assert result.database_name == name
+                    assert result.database_id == boundary[1]
+                    assert result.caller_principal_id == boundary[0]
+                    assert result.module_definition_sha256 == MODULE_DEFINITION_SHA256
+                    assert result.dispatch_authorized is False
+                cur.execute("SELECT USER_ID(),DB_ID(),@@TRANCOUNT,XACT_STATE()")
+                assert tuple(cur.fetchone()) == boundary
+                cur.execute("SELECT APPLOCK_MODE('public',%s,'Transaction')", (lock_name,))
+                assert cur.fetchone()[0] == "Exclusive"
+                if denied_operations:
+                    # These are actual well-formed denied SQL operations, not
+                    # booleans supplied to the reader as permission evidence.
+                    with pytest.raises(pytds.OperationalError) as denied:
+                        cur.execute(
+                            bootstrap_sql().replace("CREATE PROCEDURE", "ALTER PROCEDURE", 1)
+                        )
+                    assert denied.value.number in (229, 15151, 15247, 15517)
+                    with pytest.raises(pytds.OperationalError) as denied:
+                        cur.execute(
+                            "ALTER TABLE dbo.pm_safety_command_accounts_v1 ADD bad int NULL"
+                        )
+                    assert denied.value.number in (229, 15151, 15247, 15517)
+                    with pytest.raises(pytds.OperationalError) as denied:
+                        cur.execute("EXECUTE AS USER='dbo'")
+                    assert denied.value.number in (229, 15151, 15247, 15517)
+                    cur.execute("SELECT USER_ID(),@@TRANCOUNT,XACT_STATE()")
+                    assert tuple(cur.fetchone()) == (boundary[0], boundary[2], 1)
+                return result
+            finally:
+                if impersonated:
+                    db.cursor().execute("REVERT")
+                db.rollback()
+                db.close()
+
+        absent = observe()
+        assert absent.classification == "absent"
+        assert absent.objects == absent.columns == ()
+
+        for statement in _DDL:
+            c.execute(statement)
+        tables = (
+            "pm_safety_command_accounts_v1",
+            "pm_safety_command_intents_v1",
+            "pm_safety_command_attempts_v1",
+            "pm_safety_command_unknown_v1",
+        )
+        for table in tables:
+            c.execute(f"DENY VIEW DEFINITION ON OBJECT::dbo.{table} TO p53_catalog_app")
+        c.execute(
+            "SELECT s.name,o.name,RTRIM(o.type),o.object_id FROM sys.objects o "
+            "JOIN sys.schemas s ON s.schema_id=o.schema_id "
+            "WHERE s.name='dbo' AND o.name IN (%s,%s,%s,%s) ORDER BY s.name,o.name,o.type",
+            tables,
+        )
+        expected_objects = tuple(tuple(row) for row in c.fetchall())
+        c.execute(
+            "SELECT s.name,o.name,col.column_id,col.name,t.name,col.max_length,"
+            "col.precision,col.scale,col.is_nullable,COALESCE(pk.key_ordinal,0),"
+            "col.collation_name FROM sys.objects o "
+            "JOIN sys.schemas s ON s.schema_id=o.schema_id "
+            "JOIN sys.columns col ON col.object_id=o.object_id "
+            "JOIN sys.types t ON t.user_type_id=col.user_type_id "
+            "OUTER APPLY (SELECT ic.key_ordinal FROM sys.indexes i "
+            "JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id "
+            "WHERE i.object_id=o.object_id AND i.is_primary_key=1 "
+            "AND ic.column_id=col.column_id) pk "
+            "WHERE s.name='dbo' AND o.name IN (%s,%s,%s,%s) "
+            "ORDER BY s.name,o.name,col.column_id",
+            tables,
+        )
+        expected_columns = tuple(tuple(row) for row in c.fetchall())
+        supported = observe(probe=True, denied_operations=True)
+        assert supported.classification == "supported"
+        assert len(supported.objects) == 4 and len(supported.columns) == 16
+        assert tuple(astuple(item) for item in supported.objects) == expected_objects
+        assert tuple(astuple(item) for item in supported.columns) == expected_columns
+        c.execute("SELECT COUNT(*) FROM dbo.p53_rollback_probe")
+        assert c.fetchone()[0] == 0  # caller transaction and its staged write rolled back
+
+        # Commit each administrative mutation before opening a fresh caller
+        # transaction; never deadlock the test against its own schema locks.
+        c.execute(f"REVOKE EXECUTE ON OBJECT::{MODULE_NAME} FROM p53_catalog_app")
+        observe(refused=True)
+        grant_module()
+        assert observe().classification == "supported"
+
+        c.execute(f"REVOKE VIEW DEFINITION ON OBJECT::{MODULE_NAME} FROM p53_catalog_app")
+        observe(refused=True)
+        grant_module()
+        assert observe().classification == "supported"
+
+        c.execute(f"GRANT ALTER ON OBJECT::{MODULE_NAME} TO p53_catalog_app")
+        observe(refused=True)
+        c.execute(f"REVOKE ALTER ON OBJECT::{MODULE_NAME} FROM p53_catalog_app")
+        assert observe().classification == "supported"
+
+        c.execute(f"ALTER AUTHORIZATION ON OBJECT::{MODULE_NAME} TO p53_other_owner")
+        grant_module()
+        observe(refused=True)
+        c.execute(f"ALTER AUTHORIZATION ON OBJECT::{MODULE_NAME} TO SCHEMA OWNER")
+        grant_module()
+        assert observe().classification == "supported"
+
+        c.execute(
+            bootstrap_sql().replace("CREATE PROCEDURE", "ALTER PROCEDURE", 1)
+            + "\n-- unapproved changed definition\n"
+        )
+        observe(refused=True)
+        c.execute(f"DROP PROCEDURE {MODULE_NAME}")
+        c.execute(bootstrap_sql())
+        grant_module()
+        assert observe().classification == "supported"
+
+        # Identical procedure text is insufficient when its captured creation
+        # SET option differs. Modern SQL may force ANSI_NULLS ON, so exercise
+        # the independently mutable QUOTED_IDENTIFIER bit instead.
+        c.execute(f"DROP PROCEDURE {MODULE_NAME}")
+        c.execute("SET QUOTED_IDENTIFIER OFF")
+        c.execute(bootstrap_sql())
+        grant_module()
+        c.execute(
+            "SELECT definition,uses_quoted_identifier FROM sys.sql_modules "
+            "WHERE object_id=OBJECT_ID(%s)",
+            (MODULE_NAME,),
+        )
+        assert tuple(c.fetchone()) == (bootstrap_sql(), False)
+        observe(refused=True)
+        c.execute(f"DROP PROCEDURE {MODULE_NAME}")
+        c.execute("SET QUOTED_IDENTIFIER ON")
+        c.execute(bootstrap_sql())
+        grant_module()
+        assert observe().classification == "supported"
+
+        c.execute("DROP TABLE dbo.pm_safety_command_unknown_v1")
+        observe(refused=True)
+        c.execute(_DDL[-1])
+        c.execute(
+            "DENY VIEW DEFINITION ON OBJECT::dbo.pm_safety_command_unknown_v1 TO p53_catalog_app"
+        )
+        assert observe().classification == "supported"
+
+        c.execute("ALTER TABLE dbo.pm_safety_command_accounts_v1 ADD unexpected int NULL")
+        observe(refused=True)
+        c.execute("ALTER TABLE dbo.pm_safety_command_accounts_v1 DROP COLUMN unexpected")
+        assert observe().classification == "supported"
+
+        c.execute("CREATE TABLE dbo.pm_safety_command_future_v9 (unexpected int NOT NULL)")
+        observe(refused=True)
+        c.execute("DROP TABLE dbo.pm_safety_command_future_v9")
+        assert observe().classification == "supported"
+
+        # Fresh connection independently confirms the caller's staged work did
+        # not commit and no successful runtime DDL escaped the permission tests.
+        reopened = connect()
+        try:
+            cur = reopened.cursor()
+            cur.execute("SELECT COUNT(*) FROM dbo.p53_rollback_probe")
+            assert cur.fetchone()[0] == 0
+            cur.execute(
+                "SELECT COUNT(*) FROM sys.columns WHERE "
+                "object_id=OBJECT_ID('dbo.pm_safety_command_accounts_v1') AND name='bad'"
+            )
+            assert cur.fetchone()[0] == 0
+        finally:
+            reopened.rollback()
+            reopened.close()
+    finally:
+        if setup is not None:
+            setup.close()
+        master.execute(
+            f"IF DB_ID(N'{name}') IS NOT NULL BEGIN "
+            f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+            f"DROP DATABASE [{name}]; END"
+        )
+        admin.close()
