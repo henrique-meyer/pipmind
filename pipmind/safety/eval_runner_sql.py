@@ -272,7 +272,7 @@ def _stored(stores, request, receipt_kind):
     with _transaction(stores.connect) as cur:
         if receipt_kind == "admission":
             _lock(cur, stores.admission._resource)
-            table, body, key = "dbo.pm_safety_admission_journal_v1", "request", "request_id"
+            table, body, id_column = "dbo.pm_safety_admission_journal_v1", "request", "request_id"
             params = (
                 2 * MAX_REQUEST_BYTES,
                 2 * ADMISSION_RECEIPT_BYTES,
@@ -282,7 +282,7 @@ def _stored(stores, request, receipt_kind):
             suffix = ""
         else:
             _lock(cur, stores.gateway._resource)
-            table, body, key = "dbo.pm_safety_integration_journal_v1", "body", "record_id"
+            table, body, id_column = "dbo.pm_safety_integration_journal_v1", "body", "record_id"
             params = (
                 2 * MAX_ENVELOPE_BYTES,
                 2 * integration_sql.MAX_RECEIPT_BYTES,
@@ -293,7 +293,7 @@ def _stored(stores, request, receipt_kind):
         cur.execute(
             f"SELECT CASE WHEN DATALENGTH({body})<=%s THEN {body} END,"
             f"{body}_sha256,CASE WHEN DATALENGTH(receipt)<=%s THEN receipt END,receipt_sha256 "
-            f"FROM {table} WHERE account_key=%s AND {key}=%s" + suffix,
+            f"FROM {table} WHERE account_key=%s AND {id_column}=%s" + suffix,
             params,
         )
         row = cur.fetchone()
