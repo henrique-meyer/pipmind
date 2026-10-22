@@ -178,7 +178,12 @@ session writers never acquire lease/admission locks. Pending reservations remain
 account-wide across sessions and are never cleared by initializing another day.
 
 PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
-PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
+PIP-33 is a deferred parking lot. Its next isolated private-tool correction creates
+missing parent directories for a fresh alternate private data root, with
+temporary-directory tests for initialization, idempotency and conflicting paths.
+The default layout, historical artifact bytes and hosted state remain unchanged;
+historical helper reuse and missing original evidence remain explicit limitations.
+PIP-28 tracks active offline M5 integration
 groundwork. These statuses do not imply M4, deployed health, order safety or a
 completed FX day. Historical sections below retain their dated delivery notes.
 
@@ -482,19 +487,23 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 
 PIP-14 remains the M4 umbrella. Its scoped subtasks and the later milestone stories below have separate acceptance criteria and explicit dependencies in Jira. Planning priorities are labels (P0/P1/P2), not deployment or trading authorization. Hosted changes remain deferred; offline preparation can proceed in parallel.
 
+Status snapshot reconciled with native Jira on 2026-10-22 UTC. Completed code
+does not close its separate hosted qualification or operational activation gates.
+
 | Priority | Work item | Scope | Milestone | Status |
 | --- | --- | --- | --- | --- |
 | P0 | [PIP-32](https://nitro.atlassian.net/browse/PIP-32) | Make shadow release resume atomic against source revision and holds | M4 | Done |
 | P0 | [PIP-20](https://nitro.atlassian.net/browse/PIP-20) | Qualify the processing-throughput correction on the selected release | M4 | To Do |
-| P1 | [PIP-23](https://nitro.atlassian.net/browse/PIP-23) | Repeat current-prompt model evals and bounded-state growth checks | M4 | In Progress |
-| P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | In Progress |
+| P1 | [PIP-23](https://nitro.atlassian.net/browse/PIP-23) | Repeat current-prompt model evals and bounded-state growth checks | M4 | To Do |
+| P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | To Do |
 | P1 | [PIP-22](https://nitro.atlassian.net/browse/PIP-22) | Verify broader read-only social roles before activating recipes | M4 | To Do |
 | P1 | [PIP-24](https://nitro.atlassian.net/browse/PIP-24) | Calibrate reasoning and memory fidelity with owner-scored samples | M4 | To Do |
 | P1 | [PIP-25](https://nitro.atlassian.net/browse/PIP-25) | Capture one complete timely open-FX shadow day with independent zero-order evidence | M4 | To Do |
 | P1 | [PIP-26](https://nitro.atlassian.net/browse/PIP-26) | Reconcile full-day model/provider charges and existing-capacity measurements | M4 | To Do |
-| P1 | [PIP-27](https://nitro.atlassian.net/browse/PIP-27) | Export and clone the complete retained mind after the qualified day | M4 | In Progress |
-| P1 | [PIP-28](https://nitro.atlassian.net/browse/PIP-28) | Implement the M5 hard risk boundary, ownership fencing and reconciliation | M5 | To Do |
-| P1 | [PIP-29](https://nitro.atlassian.net/browse/PIP-29) | Implement original-trader recovery and account-assignment handover | M5 | To Do |
+| P1 | [PIP-27](https://nitro.atlassian.net/browse/PIP-27) | Export and clone the complete retained mind after the qualified day | M4 | To Do |
+| P1 | [PIP-28](https://nitro.atlassian.net/browse/PIP-28) | Implement the M5 hard risk boundary, ownership fencing and reconciliation | M5 | Done (isolated code, PR #89) |
+| P1 | [PIP-29](https://nitro.atlassian.net/browse/PIP-29) | Implement original-trader recovery and account-assignment handover | M5 | Done (reference code, PR #90) |
+| P1 | [PIP-47](https://nitro.atlassian.net/browse/PIP-47) | Qualify hosted SQL S0 recovery identity, source quiescence and independent authority | M5 activation | To Do |
 | P1 | [PIP-30](https://nitro.atlassian.net/browse/PIP-30) | Implement demo-only order transport and prove a reconciled flat round trip | M6 | To Do |
 | P2 | [PIP-31](https://nitro.atlassian.net/browse/PIP-31) | Implement evidence-grounded autonomous review behind trusted Auto Learn controls | M7 | To Do |
 | P2 | [PIP-33](https://nitro.atlassian.net/browse/PIP-33) | Review deferred M4 source and local tooling issues with the owner | M4 | In Progress |
@@ -504,6 +513,14 @@ PIP-32 adds an audited atomic compare-and-resume operation under the source lock
 PIP-27 must first resolve the retained-history export capacity risk: the inventory manifest can reach its bound before the archive byte or entry limits. Review a compatible bounded-memory format extension and test complete inventory, dependency preservation, rejection/cleanup and paused clone fidelity. Current limits remain enforced until that extension is approved; failed or oversized exports cannot qualify a partial history.
 
 Execution order: atomic release control → throughput/current model qualification → source/role and owner-quality disposition → complete timely shadow day → measured cost/capacity and full retained-mind clone. M5 safety and recovery precede M6 demo orders; M7 reuses PIP-17 controls. Human calibration remains unassigned to await owner scoring. PIP-33 records smaller findings for later discussion and does not block unrelated work. Numeric risk limits and demo-order authority remain explicit owner decisions.
+
+PIP-47 follows PIP-29's reference code for hosted activation; it does not prevent
+isolated offline PIP-30 design or tests. PIP-17 loading and actual demo-order
+permission remain separate. Historical calibration can be reviewed now, while
+PIP-23 supplies the current-build cohort needed to finish PIP-24. Early PIP-27
+sizing can proceed before PIP-25; its final complete-day clone and PIP-26 cost
+reconciliation require the retained day. These distinctions preserve parallel
+preparation without claiming a completed hosted qualification.
 
 PIP-27 preparation adds a read-only size preflight for the current complete retained checkpoint. It reports exact stream-v3 byte, entry, inventory and ZIP-directory requirements against unchanged bounds without creating an archive or changing source state. Consistent SQL streaming, bounded per-record memory, exact UTF-8 sizing, failure visibility and archive-size equivalence are required. This offline implementation does not authorize a larger format, hosted execution or completion of the retained-day clone gate.
 
