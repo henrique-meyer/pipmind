@@ -206,3 +206,85 @@ def capture_command_tables_in_transaction(cur, binding, lease_binding):
         raise
     except Exception:
         raise checkpoint.CheckpointUnavailable("safety_inventory_unavailable") from None
+
+
+def capture_complete_restricted_in_transaction(cur, binding, lease_binding, *, expected_database):
+    """Explicit restricted-principal capture with the real fixed owner module.
+
+    The non-dbo caller holds all seven existing exclusive transaction application
+    locks and has SELECT on covered tables plus narrowly scoped module access.
+    Dbo callers keep using the unchanged default complete-capture API; PIP-53's
+    restricted-principal guard is not relaxed by this opt-in composition.
+    No supplied catalog DTO/callback can substitute for actual same-cursor proof.
+    Legacy capture, typed history hashing and command integrity remain unchanged.
+
+    This opt-in function does not replace default dbo capture or wire recovery
+    activation. Trusted stable module administration/DDL remains required; pre/
+    post observations do not exclude a privileged transient ABA substitution.
+    No connections, grants, DDL, transaction control or application-lock
+    acquisition occurs.
+    """
+    try:
+        # The catalog module imports _SCHEMA from this module; resolve only
+        # after initialization, with no new injection/callback surface.
+        from pipmind.safety.command_catalog_sql import read_command_catalog_in_transaction
+
+        if getattr(getattr(cur, "connection", None), "autocommit", None) is not False:
+            checkpoint._unavailable()
+        resources = checkpoint.complete_required_locks(binding, lease_binding)
+        checkpoint._locks(cur, resources)
+        before = read_command_catalog_in_transaction(cur, expected_database=expected_database)
+        # Verify current database/module/caller before any account history read.
+        legacy = checkpoint.capture_in_transaction(cur, binding, lease_binding)
+        if before.classification == "absent":
+            result = legacy
+        elif before.classification == "supported":
+            key, lease_key = account_key(binding), _binding(lease_binding)
+            # PIP-53 already validates all supported command schema facts.
+            # Body reads still run under the actual caller's SELECT permissions.
+            tables = tuple(
+                checkpoint._capture_table(
+                    cur, table, columns, key, lease_key, binding, lease_binding
+                )
+                for table, columns in _SCHEMA
+            )
+            counts = _projections(cur, key, binding)
+            physical = tuple(row.count for row in tables)
+            if not (
+                physical[0] in (0, 1)
+                and physical[1:] == (counts.commands, counts.attempted, counts.unknown)
+                and (physical[0] == 1 or not any(physical[1:]))
+            ):
+                checkpoint._unavailable()
+            for (table, _), value in zip(_SCHEMA, tables, strict=True):
+                if checkpoint._count(cur, table, "t.account_key=%s", (key,)) != value.count:
+                    checkpoint._unavailable()
+            combined = legacy.tables + tables
+            result = checkpoint.Inventory(
+                binding,
+                lease_binding.resource,
+                checkpoint.TABLE_VERSION_COMMANDS,
+                combined,
+                checkpoint._inventory_hash(
+                    binding,
+                    lease_binding.resource,
+                    combined,
+                    table_version=checkpoint.TABLE_VERSION_COMMANDS,
+                    command_counts=counts,
+                ),
+                counts,
+            )
+        else:
+            checkpoint._unavailable()
+        # Compare the whole actual proof, including object IDs and schema, after
+        # every history/projection/count read, not merely the profile label.
+        after = read_command_catalog_in_transaction(cur, expected_database=expected_database)
+        if before != after:
+            checkpoint._unavailable()
+        checkpoint._locks(cur, resources)
+        checkpoint.encode_inventory(result)
+        return result
+    except checkpoint.CheckpointUnavailable:
+        raise
+    except Exception:
+        raise checkpoint.CheckpointUnavailable("safety_inventory_unavailable") from None

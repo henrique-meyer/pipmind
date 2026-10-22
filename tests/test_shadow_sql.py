@@ -9817,3 +9817,346 @@ def test_sql_azure_identity_candidate_refuses_reference_platform(mind):
         # querying an Azure-only column, not manufacture a supported S0 result.
         with pytest.raises(AzureIdentityRefused, match="^azure_identity_unsupported$"):
             read_expected_identity(cur, pin)
+
+
+"""Root appends this one actual-SQL case to the mandatory disposable suite."""
+
+
+def test_restricted_command_checkpoint_sql_exact_profiles_and_rollback(mind):
+    import os
+    import re
+    from copy import deepcopy
+    from uuid import uuid4
+
+    import pytest
+
+    from pipmind.safety.admission_sql import _lock
+    from pipmind.safety.checkpoint_sql import (
+        COMMAND_TABLES,
+        COVERED_TABLES,
+        TABLE_VERSION,
+        TABLE_VERSION_COMMANDS,
+        CheckpointUnavailable,
+        CommandCounts,
+        capture_complete_in_transaction,
+        complete_required_locks,
+        encode_inventory,
+    )
+    from pipmind.safety.command_catalog_sql import MODULE_NAME, bootstrap_sql
+    from pipmind.safety.command_checkpoint_sql import capture_complete_restricted_in_transaction
+    from pipmind.safety.command_journal import encode_attempt, encode_command, encode_unknown
+    from pipmind.safety.command_journal_sql import bootstrap as command_bootstrap
+    from pipmind.safety.recovery_flow import RecoveryAwareDryGateway
+    from pipmind.safety.session import account_key
+    from pipmind.shadow.sql import connector, migrate
+    from pipmind.shadow.store import SqlMind
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    name = "restricted_checkpoint_" + uuid4().hex
+    assert re.fullmatch(r"restricted_checkpoint_[0-9a-f]{32}", name)
+    admin = mind.connect()
+    admin.autocommit = True
+    master = admin.cursor()
+    master.execute(f"CREATE DATABASE [{name}]")
+    setup = None
+    try:
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        migrate(connect)
+        source = SqlMind(connect, "restricted-checkpoint-source")
+        source.initialize(
+            "Exact retained restricted-checkpoint identity",
+            {"version": "v1", "text": "Exact retained guide"},
+            "2026-10-21T00:00:00Z",
+            binding="a" * 64,
+        )
+        # Reuse the real journal/recovery fixture once, rather than fabricate
+        # command bodies/scopes or allocate databases for individual subcases.
+        with _command_journal_case_ci(source) as (  # noqa: F821
+            flow,
+            active,
+            journal,
+            grant,
+            assignment,
+            request,
+            gateway,
+        ):
+            from pipmind.safety.attribution_sql import SqlAttributionStore
+
+            dry = RecoveryAwareDryGateway(
+                flow.authority,
+                active,
+                gateway,
+                flow.recovery,
+                SqlAttributionStore(connect, journal.binding),
+                assignment,
+            )
+            assert dry.accept(grant, request)["gateway_receipt"]["outcome"] == "dry_accepted"
+            binding, lease_binding = journal.binding, journal.leases.binding
+            resources = complete_required_locks(binding, lease_binding)
+            assert len(resources) == 7
+            setup = connect()
+            setup.autocommit = True
+            c = setup.cursor()
+            c.execute("SET ANSI_NULLS ON")
+            c.execute("SET QUOTED_IDENTIFIER ON")
+            c.execute(bootstrap_sql())
+            c.execute("CREATE USER p54_checkpoint_app WITHOUT LOGIN")
+            c.execute("CREATE TABLE dbo.p54_checkpoint_probe(value int NOT NULL)")
+            c.execute("GRANT SELECT,INSERT ON dbo.p54_checkpoint_probe TO p54_checkpoint_app")
+            c.execute(
+                f"GRANT EXECUTE,VIEW DEFINITION ON OBJECT::{MODULE_NAME} TO p54_checkpoint_app"
+            )
+
+            def grant_reads():
+                for table in COVERED_TABLES + COMMAND_TABLES:
+                    c.execute(f"GRANT SELECT ON OBJECT::{table} TO p54_checkpoint_app")
+                for table in COMMAND_TABLES:
+                    c.execute(f"DENY VIEW DEFINITION ON OBJECT::{table} TO p54_checkpoint_app")
+
+            def history():
+                return tuple(
+                    (
+                        encode_command(row.command),
+                        None if row.attempt is None else encode_attempt(row.attempt),
+                        None if row.unknown is None else encode_unknown(row.unknown),
+                    )
+                    for row in journal.iter_history()
+                )
+
+            def capture_pair(
+                *, mutation=None, refused=False, probe=False, legacy_gate=False, hidden_object=None
+            ):
+                db = connect()
+                impersonated = False
+                try:
+                    assert db.autocommit is False
+                    cur = db.cursor()
+                    cur.execute(
+                        "SET NOCOUNT ON; SET XACT_ABORT OFF; "
+                        "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+                    )
+                    # Existing helper drains pytds non-row lock result frames;
+                    # the later APPLOCK_MODE queries prove the locks are real.
+                    for resource in resources:
+                        _lock(cur, resource)
+                    baseline = capture_complete_in_transaction(cur, binding, lease_binding)
+                    if mutation is not None:
+                        mutation(cur)
+                    cur.execute("EXECUTE AS USER='p54_checkpoint_app'")
+                    impersonated = True
+                    cur.execute("SELECT USER_ID(),DB_ID(),@@TRANCOUNT,XACT_STATE()")
+                    boundary = tuple(cur.fetchone())
+                    assert type(boundary[0]) is int and boundary[0] != 1
+                    assert boundary[2] >= 1 and boundary[3] == 1
+                    cur.execute(
+                        "SELECT IS_MEMBER('db_owner'),"
+                        "HAS_PERMS_BY_NAME('dbo','SCHEMA','ALTER'),"
+                        "HAS_PERMS_BY_NAME('dbo','USER','IMPERSONATE')"
+                    )
+                    assert tuple(cur.fetchone()) == (0, 0, 0)
+                    cur.execute(
+                        "SELECT name FROM sys.objects WHERE name LIKE 'pm[_]safety[_]command[_]%' "
+                        "AND type IN ('U','V','SN','ET')"
+                    )
+                    # SELECT can make known table existence visible despite
+                    # denied VIEW DEFINITION. Do not invent an all-hidden
+                    # catalog claim; only these granted known names may appear.
+                    visible = {row[0] for row in cur.fetchall()}
+                    assert visible <= {table.split(".")[1] for table in COMMAND_TABLES}
+                    if hidden_object is not None:
+                        cur.execute("SELECT OBJECT_ID(%s,'U')", (hidden_object,))
+                        assert cur.fetchone() == (None,)
+                        cur.execute(
+                            "SELECT HAS_PERMS_BY_NAME(%s,'OBJECT','SELECT')", (hidden_object,)
+                        )
+                        assert cur.fetchone()[0] in (0, None)
+                    if baseline.table_version == TABLE_VERSION_COMMANDS:
+                        cur.execute(
+                            "SELECT HAS_PERMS_BY_NAME(%s,'OBJECT','VIEW DEFINITION')",
+                            (COMMAND_TABLES[0],),
+                        )
+                        assert cur.fetchone()[0] == 0
+                    if probe:
+                        cur.execute("INSERT dbo.p54_checkpoint_probe(value) VALUES(41)")
+                    if legacy_gate:
+                        with pytest.raises(
+                            CheckpointUnavailable, match="^safety_inventory_unavailable$"
+                        ):
+                            capture_complete_in_transaction(cur, binding, lease_binding)
+                    if refused:
+                        with pytest.raises(
+                            CheckpointUnavailable, match="^safety_inventory_unavailable$"
+                        ):
+                            capture_complete_restricted_in_transaction(
+                                cur, binding, lease_binding, expected_database=name
+                            )
+                        result = None
+                    else:
+                        result = capture_complete_restricted_in_transaction(
+                            cur, binding, lease_binding, expected_database=name
+                        )
+                        assert result == baseline
+                        assert encode_inventory(result) == encode_inventory(baseline)
+                        assert result.tables == baseline.tables
+                        assert result.sha256 == baseline.sha256
+                        assert result.command_counts == baseline.command_counts
+                    cur.execute("SELECT USER_ID(),DB_ID(),@@TRANCOUNT,XACT_STATE()")
+                    assert tuple(cur.fetchone()) == boundary
+                    for resource in resources:
+                        cur.execute("SELECT APPLOCK_MODE('public',%s,'Transaction')", (resource,))
+                        assert cur.fetchone() == ("Exclusive",)
+                    cur.execute("REVERT")
+                    impersonated = False
+                    cur.execute("SELECT USER_ID()")
+                    assert cur.fetchone() == (1,)
+                    return baseline, result
+                finally:
+                    if impersonated:
+                        db.cursor().execute("REVERT")
+                    db.rollback()
+                    db.close()
+
+            def fresh_inventory():
+                db = connect()
+                try:
+                    cur = db.cursor()
+                    for resource in resources:
+                        _lock(cur, resource)
+                    return capture_complete_in_transaction(cur, binding, lease_binding)
+                finally:
+                    db.rollback()
+                    db.close()
+
+            # Only the initial empty command schema is dropped/committed.
+            # All destructive mutations after history is populated roll back.
+            assert history() == ()
+            for table in COMMAND_TABLES:
+                c.execute(f"SELECT COUNT_BIG(*) FROM {table}")
+                assert c.fetchone() == (0,)
+            for table in reversed(COMMAND_TABLES):
+                c.execute(f"DROP TABLE {table}")
+            for table in COVERED_TABLES:
+                c.execute(f"GRANT SELECT ON OBJECT::{table} TO p54_checkpoint_app")
+            old, restricted = capture_pair(legacy_gate=True)
+            assert old.table_version == restricted.table_version == TABLE_VERSION
+            assert len(old.tables) == 15 and old.command_counts is None
+
+            command_bootstrap(connect)
+            grant_reads()
+            old, restricted = capture_pair(probe=True)
+            assert old.table_version == restricted.table_version == TABLE_VERSION_COMMANDS
+            assert len(old.tables) == 19 and old.command_counts == CommandCounts(0, 0, 0, 0, 0)
+            c.execute("SELECT COUNT(*) FROM dbo.p54_checkpoint_probe")
+            assert c.fetchone() == (0,)
+
+            def record(command_id, *, refused=False, attempted=False, unknown=False):
+                order = deepcopy(request.order)
+                order["client_order_id"] = command_id
+
+                def operation(cur):
+                    retained = journal.record_in_transaction(
+                        cur,
+                        grant,
+                        assignment,
+                        order,
+                        causation_id="exact-p54-input-" + command_id,
+                        local_outcome="refused" if refused else "recorded",
+                        code="locally_refused" if refused else "locally_recorded",
+                    )
+                    if attempted:
+                        journal.attempt_in_transaction(
+                            cur, grant, assignment, command_id, "attempt-" + command_id
+                        )
+                    if unknown:
+                        journal.unknown_in_transaction(
+                            cur, grant, assignment, command_id, code="outcome_unresolved"
+                        )
+                    return retained
+
+                return _command_journal_call_ci(  # noqa: F821
+                    flow, active, journal, grant, assignment, operation
+                )
+
+            record("p54-refused", refused=True)
+            old, _ = capture_pair()
+            assert old.command_counts == CommandCounts(1, 1, 0, 0, 0)
+            record("p54-unattempted")
+            record("p54-attempted", attempted=True)
+            record("p54-unknown", attempted=True, unknown=True)
+            original_history = history()
+            baseline, _ = capture_pair(probe=True)
+            assert baseline.command_counts == CommandCounts(4, 1, 1, 2, 1)
+            assert sum(row.count for row in baseline.tables if "reservations" in row.name) == 1
+            original_mind = source.head(), source.retained()
+
+            def sql(text, params=None):
+                def mutate(cur):
+                    cur.execute(text, params)
+
+                return mutate
+
+            def hidden_future(cur):
+                cur.execute("CREATE TABLE dbo.pm_safety_command_future_v9(unexpected int NOT NULL)")
+                cur.execute("SELECT OBJECT_ID('dbo.pm_safety_command_future_v9','U')")
+                assert type(cur.fetchone()[0]) is int
+                # No SELECT grant is inherited from the object-scoped grants
+                # on the existing nineteen tables. Add an explicit DENY too.
+                cur.execute(
+                    "DENY VIEW DEFINITION ON OBJECT::dbo.pm_safety_command_future_v9 "
+                    "TO p54_checkpoint_app"
+                )
+
+            # All mutations below use the caller-owned test transaction, then
+            # roll back. Missing permissions cannot become an empty inventory;
+            # a hidden partial schema cannot erase a real unknown obligation.
+            mutations = (
+                sql(
+                    "REVOKE SELECT ON OBJECT::dbo.pm_safety_command_intents_v1 "
+                    "FROM p54_checkpoint_app"
+                ),
+                sql(
+                    "DENY SELECT ON OBJECT::dbo.pm_safety_command_unknown_v1 TO p54_checkpoint_app"
+                ),
+                sql(
+                    "REVOKE SELECT ON OBJECT::dbo.pm_safety_session_observations_v1 "
+                    "FROM p54_checkpoint_app"
+                ),
+                sql(f"REVOKE EXECUTE ON OBJECT::{MODULE_NAME} FROM p54_checkpoint_app"),
+                sql(f"REVOKE VIEW DEFINITION ON OBJECT::{MODULE_NAME} FROM p54_checkpoint_app"),
+                sql(
+                    bootstrap_sql().replace("CREATE PROCEDURE", "ALTER PROCEDURE", 1)
+                    + "\n-- unapproved transaction-local module change\n"
+                ),
+                sql("DROP TABLE dbo.pm_safety_command_unknown_v1"),
+                hidden_future,
+                sql(
+                    "UPDATE dbo.pm_safety_command_unknown_v1 SET sha256=%s WHERE account_key=%s",
+                    ("0" * 64, account_key(binding)),
+                ),
+            )
+            for mutation in mutations:
+                observed_before, refused = capture_pair(
+                    mutation=mutation,
+                    refused=True,
+                    hidden_object=(
+                        "dbo.pm_safety_command_future_v9" if mutation is hidden_future else None
+                    ),
+                )
+                assert observed_before == baseline and refused is None
+                assert fresh_inventory() == baseline
+                assert history() == original_history
+                assert (source.head(), source.retained()) == original_mind
+                c.execute("SELECT COUNT(*) FROM dbo.p54_checkpoint_probe")
+                assert c.fetchone() == (0,)
+
+            assert capture_pair()[0] == baseline
+            assert history() == original_history
+    finally:
+        if setup is not None:
+            setup.close()
+        master.execute(
+            f"IF DB_ID(N'{name}') IS NOT NULL BEGIN "
+            f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+            f"DROP DATABASE [{name}]; END"
+        )
+        admin.close()

@@ -1,3 +1,21 @@
+## PIP-54 — Explicit restricted complete-checkpoint capture
+
+[PIP-54](https://nitro.atlassian.net/browse/PIP-54) composes the verified PIP-53
+owner-executed command catalog with PIP-50 complete recovery capture through an
+explicit opt-in path. Preserve the default actual-dbo guard, the same seven-lock
+order, complete history/schema/reference/count validation and unresolved-command
+holds. Catalog facts must come from the real fixed module on the current cursor;
+caller-supplied evidence or metadata-filtered absence cannot authorize capture.
+
+Disposable native SQL must compare restricted and dbo captures of identical
+state, exercise hidden future/partial schemas, missing table read permissions,
+untrusted module/context and rollback, and retain exact legacy/v2 digests and
+command counts. No automatic grants/bootstrap, runtime/lease/recovery-authority
+wiring, transport, history truncation, existing-limit changes, hosted calls or
+PIP-17 overlap. Actual S0 managed-identity permissions, trusted module deployment
+and independent restore authority remain PIP-47 gates. Implement only after
+qualified PIP-53 merge, native In Progress and plan bookkeeping.
+
 # Implementation plan
 
 ## PIP-52 — Explicit Azure SQL physical identity candidate
