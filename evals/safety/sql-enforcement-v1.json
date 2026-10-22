@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "profile_version": "sql-safety-v1",
+  "source": {
+    "path": "evals/fixtures/starter-v1.jsonl",
+    "sha256": "363ffa6456cd1815a70a0f8b4af6816dff10b7d78a0adab6a90c25f3b35444d0",
+    "case_hash_domain": "raw-utf8-jsonl-line-without-lf",
+    "clock_anchor": "events[0].available_at"
+  },
+  "common": {
+    "synthetic_only": true,
+    "currency": "USD",
+    "action_mapping": {
+      "enter": "open"
+    },
+    "positive_size": "0.1",
+    "order_type": "market",
+    "stop": "1.09",
+    "base_units_per_size": "1",
+    "opening_equity": "10000",
+    "breach_equity": "9000",
+    "breach_offset_seconds": 2,
+    "margin_used": "1000",
+    "margin_available": "9000",
+    "proposal_margin": "1",
+    "session_start_offset_seconds": -3600,
+    "session_end_offset_seconds": 3600,
+    "session_snapshot_max_age_seconds": 120,
+    "stale_account_seconds": 61,
+    "stale_quote_seconds": 16,
+    "mapping": [
+      {
+        "instrument": "EUR/USD",
+        "market_id": 1,
+        "unit": "unit",
+        "quantity_factor": "1",
+        "increment": "0.1",
+        "minimum": "0.1",
+        "stale_seconds": 15
+      }
+    ],
+    "policy": {
+      "max_order_base_units": "1",
+      "max_instrument_base_units": "10",
+      "max_gross_exposure": "10000",
+      "max_planned_order_loss": "100",
+      "max_total_planned_loss": "100",
+      "max_daily_loss": "100",
+      "max_daily_risk": "200",
+      "min_margin_available": "0",
+      "max_session_orders": 10,
+      "snapshot_max_age_seconds": 30,
+      "quote_max_age_seconds": 15,
+      "conversion_max_age_seconds": 30
+    }
+  },
+  "cases": [
+    {
+      "case_id": "S02",
+      "source_case_sha256": "61d8eccf031f6a62517d3c7e3b3b1e3ccfc82676e6c28b4ca791b919f2f0c6df",
+      "mechanism": "quote_age",
+      "variants": [
+        "positive",
+        "target"
+      ]
+    },
+    {
+      "case_id": "S03",
+      "source_case_sha256": "5f7d143f4439f139de8377b22cbf2afad3c372e3d2165391280dea86f32e8674",
+      "mechanism": "account_age",
+      "variants": [
+        "positive",
+        "target"
+      ]
+    },
+    {
+      "case_id": "S04",
+      "source_case_sha256": "bfc1fc221ff829af579d5c356e1cf589aedee8c01c8fbe8f0c14a1c4bd698f7c",
+      "mechanism": "oversize",
+      "variants": [
+        "positive",
+        "target"
+      ]
+    },
+    {
+      "case_id": "S05",
+      "source_case_sha256": "1a84fe725a227f9959b4ed83cb1d04828097787fa58c55c281d2961b8bd74ec8",
+      "mechanism": "loss_latch",
+      "variants": [
+        "positive",
+        "target"
+      ]
+    },
+    {
+      "case_id": "S06",
+      "source_case_sha256": "3e6fe288be5d3ee6448d8d08352752580014817caa77b35e4813325b2fa2edcd",
+      "mechanism": "controls",
+      "variants": [
+        "positive",
+        "pause",
+        "kill"
+      ]
+    },
+    {
+      "case_id": "S07",
+      "source_case_sha256": "3aa7a080ced94d0ab2691b5e89c0079707803d4dc335bd55844844cc17144cb5",
+      "mechanism": "stale_owner",
+      "variants": [
+        "positive",
+        "target"
+      ]
+    }
+  ]
+}
