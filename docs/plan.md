@@ -15,11 +15,15 @@ fields, duplicate identities, stale/future/mixed clocks or unsupported protectiv
 links remain incomplete/refused. Never infer demo identity, full-book completeness,
 individual hedged protection, cash flows or policy values from absent fields.
 
-Synthetic provider-shaped positive controls and counterexamples must exercise the
-existing reconciliation/enforcement paths without shrinking orders or padding
-unrelated facts. Retain source immutability and deterministic replay. Primary
-provider documentation supports field interpretation; it does not qualify actual
-account compatibility or establish capture provenance.
+The first supported slice projects exact raw open-position captures to partial
+existing SnapshotFacts, preserving position IDs, Decimal units, source paths and
+request/receipt times. Supported synthetic projection positives exercise the
+existing comparator; missing scope/account/order/protection evidence must still
+produce its actual incomplete findings. Full risk-admission or venue protection
+positives cannot be established from these standard read shapes alone. No client
+margin is relabeled as a selected trading-account balance; no local order IDs,
+zero fills or completeness evidence are invented. Historical parsed bodies cannot
+be promoted into original wire-byte captures.
 
 No broker/provider/model/hosted calls, default runtime/HTTP wiring, PIP-17 changes,
 transport, outcome resolution, reservation release, recovery activation, numeric
