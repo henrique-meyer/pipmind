@@ -1,3 +1,17 @@
+## PIP-56 — Explicit Azure identities in isolated safety composition
+
+In Progress: [PIP-56](https://nitro.atlassian.net/browse/PIP-56) extends the
+existing PIP-52 Azure physical-pin profile through explicit safety lease guards,
+authority own/application/source/barrier records and immutable command scopes.
+Preserve exact native bytes, defaults, history and unknown-commit semantics;
+accept only the two fixed supported identity types, with actual same-cursor
+checks, no supplied-success callback, automatic discovery or repinning. A profile
+difference cannot establish administrative independence. Test native compatibility,
+Azure substitutions and required disposable SQL regression. This code delivery
+adds no hosted/default/runtime wiring, managed-restore reference, restricted
+inventory selection, resource or PIP-17 change. PIP-47 retains those hosted
+qualification and independent-authority/barrier/provenance gates.
+
 ## PIP-55 — Infrastructure and workflow diagrams
 
 [PIP-55](https://nitro.atlassian.net/browse/PIP-55) documents the infrastructure

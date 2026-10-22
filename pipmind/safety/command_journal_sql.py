@@ -1,7 +1,7 @@
 """Immutable audit-only command obligations, never a sender or dispatch permit.
 
 Same-cursor mutation requires preheld lease/control/recovery locks and verifies
-their current native/lease/assignment/control facts. The independent ACTIVE
+their current pinned identity/lease/assignment/control facts. The independent ACTIVE
 authority guard and final outer callback/commit are trusted caller obligations.
 Source completeness, risk admission and venue/final-dispatch checks are NOT
 established here. Historical reads require no current ownership or activation.
@@ -10,6 +10,7 @@ established here. Historical reads require no current ownership or activation.
 from datetime import UTC, datetime
 
 from pipmind.contracts import stamp
+from pipmind.safety.azure_identity_sql import AzureDatabaseIdentity
 from pipmind.safety.command_journal import (
     MAX_RECORD_BYTES,
     AttemptIntent,
@@ -32,6 +33,11 @@ from pipmind.safety.command_journal import (
     validate_unknown,
 )
 from pipmind.safety.controls_sql import SqlControlStore
+from pipmind.safety.identity_profiles import (
+    IdentityProfileRefused,
+    IdentityProfileUnavailable,
+    read_expected_identity,
+)
 from pipmind.safety.incarnation import (
     IncarnationRefused,
     IncarnationUnavailable,
@@ -247,8 +253,16 @@ class SqlCommandJournal:
             cur.execute("SELECT APPLOCK_MODE('public',%s,'Transaction')", (resource,))
             _need(cur.fetchone() == ("Exclusive",), "command_journal_lock_required")
         try:
-            native = read_incarnation(cur)
-        except (IncarnationRefused, IncarnationUnavailable):
+            # Keep the native reader alias and its original failure behavior.
+            # Azure is opt-in only through the lease's explicit physical pin.
+            native = (
+                read_expected_identity(cur, self.leases.incarnation)
+                if type(self.leases.incarnation) is AzureDatabaseIdentity
+                else read_incarnation(cur)
+            )
+        except IdentityProfileRefused:
+            raise CommandJournalRefused("command_journal_incarnation_mismatch") from None
+        except (IncarnationRefused, IncarnationUnavailable, IdentityProfileUnavailable):
             raise CommandJournalUnavailable("command_journal_incarnation_unavailable") from None
         _need(native == self.leases.incarnation, "command_journal_incarnation_mismatch")
         row = self.leases._checked(cur, grant)

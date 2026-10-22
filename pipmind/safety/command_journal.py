@@ -8,10 +8,10 @@ from decimal import Decimal, localcontext
 from functools import lru_cache
 
 from pipmind.contracts import Contracts, utc
-from pipmind.safety.incarnation import (
-    DatabaseIncarnation,
-    decode_incarnation,
-    encode_incarnation,
+from pipmind.safety.identity_profiles import (
+    DatabaseIdentity,
+    decode_identity,
+    encode_identity,
 )
 from pipmind.safety.recovery_sql import (
     Assignment,
@@ -285,7 +285,7 @@ class JournalScope:
     lease_generation: int
     lease_resource: str
     lease_expires_at: str
-    application_incarnation: DatabaseIncarnation
+    application_incarnation: DatabaseIdentity
     control_revision: int
     dispatch_authorized: bool = False
 
@@ -347,7 +347,7 @@ def _scope_payload(scope):
     _counter(scope.control_revision)
     _time(scope.lease_expires_at)
     try:
-        pin = json.loads(encode_incarnation(scope.application_incarnation))
+        pin = json.loads(encode_identity(scope.application_incarnation))
     except Exception:
         raise JournalRefused("journal_invalid_incarnation") from None
     return {
@@ -360,6 +360,17 @@ def _scope_payload(scope):
         "control_revision": scope.control_revision,
         "dispatch_authorized": False,
     }
+
+
+def _parse_identity(value):
+    # The containing audit codec sorts nested object keys. Recreate only the
+    # closed Azure envelope's standalone key order; decode_identity validates
+    # the exact shape/profile/values and the enclosing decoder checks all bytes.
+    if type(value) is dict:
+        keys = ("profile", "logical_server", "database", "physical_database_name")
+        _need(set(value) == set(keys), "journal_invalid_incarnation")
+        value = {key: value[key] for key in keys}
+    return decode_identity(json.dumps(value, ensure_ascii=True, separators=(",", ":")))
 
 
 def _parse_scope(data):
@@ -385,7 +396,7 @@ def _parse_scope(data):
             data["lease_generation"],
             data["lease_resource"],
             data["lease_expires_at"],
-            decode_incarnation(json.dumps(data["application_incarnation"], separators=(",", ":"))),
+            _parse_identity(data["application_incarnation"]),
             data["control_revision"],
             data["dispatch_authorized"],
         )
