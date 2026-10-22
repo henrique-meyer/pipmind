@@ -17,7 +17,7 @@ FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3
 ARG BUILD_SHA=development
 ENV PATH="/app/.venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 BUILD_SHA=$BUILD_SHA
 LABEL org.opencontainers.image.source="https://github.com/henrique-meyer/pipmind" \
-      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
       org.opencontainers.image.revision=$BUILD_SHA
 WORKDIR /app
 RUN groupadd --gid 10001 pipmind && useradd --uid 10001 --gid pipmind --no-create-home pipmind

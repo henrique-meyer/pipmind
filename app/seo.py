@@ -8,7 +8,7 @@ from html import escape
 
 TITLE = "PipMind — An AI Forex Trader with a Persistent Mind"
 DESCRIPTION = (
-    "An open-source AI forex experiment with a persistent mind. Explore portable "
+    "A source-available noncommercial AI forex experiment with a persistent mind. Explore portable "
     "robot saves, owner guidance and Auto Learn. In development; no trading yet."
 )
 
