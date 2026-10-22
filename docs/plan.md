@@ -1,5 +1,31 @@
 # Implementation plan
 
+## PIP-49 — SQL enforcement evaluation subprofile
+
+Code deliverable: [PIP-49](https://nitro.atlassian.net/browse/PIP-49) connects
+development starter cases S02–S07 to actual isolated PIP-28 SQL enforcement.
+Use versioned test-only policy/source/session/mapping supplements, exact source
+case and supplement hashes, and an explicit mapping from original event times to
+the observed disposable SQL clock. Preserve original fixture bytes and splits;
+synthetic numerical values are never owner risk defaults or real market evidence.
+
+Every targeted refusal needs an otherwise-equivalent passing positive control,
+the specific actual returned/stored result, unchanged order and appropriate
+reservation/control/session/lease evidence across reopen. Mutation controls must
+reject wrong reasons, missing durable proof, order shrinkage, unintended risk
+or stale-owner effects. Exercise the adapter and grader in mandatory disposable
+SQL CI, with only an allowlisted synthetic summary exposed.
+
+Keep this subprofile separate from the existing M1 capability registry and
+14-pass/16-deferred baseline. No flag toggles or expected-label-only traces count
+as enforcement proof. Full S08 dispatch, S09 venue ambiguity, D06 thesis updates,
+hosted recovery, model quality and operational M4/M5/M6 gates remain deferred.
+Separate scenario/runner, evidence grading and native-test/guide work may run in
+parallel after agreeing one API; root owns Git/Jira and shared SQL integration.
+PIP-17 files, normative contracts, default runtime, history/dependencies, budgets
+and stale flags remain unchanged. No hosted call, order, deployment, resource,
+capacity, landing or runtime-state change is part of this code task.
+
 ## PIP-48 — Durable command and unresolved-attempt journal
 
 Code deliverable: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an
