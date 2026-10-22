@@ -34,6 +34,19 @@ is authorized. A complete native backup preserves all application tables; the
 streamed inventory explicitly covers fifteen legacy safety tables and is not a
 replacement for mind/feed/assignment/attribution backup verification.
 
+### PIP-47 — Hosted recovery activation gate
+
+To Do: [qualify recovery identity and independent authority on SQL S0](https://nitro.atlassian.net/browse/PIP-47)
+after PIP-29's reference code. Select a documented S0-compatible restore identity
+mechanism and independently protected monotonic authority; prove new-database
+and in-place/PITR rewind refusal, authority outage/recovery, full native history
+and trusted backup/sidecar provenance on the actual supported path. Missing
+product support stays an explicit refusal. Coordinate PIP-17's stable owner/load
+interface; actual PIP-30 orders and M4 qualification stay separately gated.
+Research/offline tests do not authorize hosted calls, deployment, resource
+creation, capacity changes or recurring cost. Present concrete supported options
+and any cost for owner approval before changing the existing demo environment.
+
 
 ## PIP-28 — Remaining safety integration (2026-10-21)
 
