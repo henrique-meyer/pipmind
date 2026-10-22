@@ -1,5 +1,32 @@
 # Implementation plan
 
+## PIP-28 — Remaining safety integration (2026-10-21)
+
+Code deliverable: the [SQL-backed dry safety gateway](safety-integration.md)
+composes preflight, reconciliation, lease, session and reservation APIs in an
+isolated boundary. Activation and operational qualification remain separate.
+Durable account-bound kill/pause and reconciliation holds serialize with new
+acceptance; exact request IDs, policy/checkpoint and owner generation retain
+immutable acceptance/refusal receipts. Every new dry-consumption check must
+validate current ownership, controls, session and fresh complete source facts;
+historical receipts never become execution permits. Explicit trusted base-unit
+factors bind proposals and held positions to the private mapping; no risk unit
+is inferred from a venue quantity unit. Full positive fresh revalidation is
+required, including quotes and all pending reservations. SQL loss, expired owners,
+invalid facts and commit uncertainty fail closed. Retain all reservations and
+history, including across restart and session changes.
+
+Separate suggestion and override journals preserve origin and exclude override
+outcomes from self-review. Controls take effect without a model call. Unsupported
+flatten/order execution remains explicit and never masquerades as executed.
+No new risk defaults, reservation release/reset, real transport or recovery bypass.
+Mandatory disposable SQL checks exercise concurrent controls/owners, stale facts,
+interruption, uncertainty and the integrated authenticated dry gateway flow.
+PIP-17 robot/owner UI/shared-shadow files are excluded; PIP-29 recovery/handover,
+PIP-30 demo execution and M4 activation gates remain separate. The hosted app,
+capacity, configuration, public landing and all runtime controls stay unchanged.
+
+
 ## Parallel code delivery and separate qualification (2026-10-21)
 
 Offline implementation may proceed concurrently across stable service/core

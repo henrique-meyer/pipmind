@@ -1,6 +1,7 @@
 """Isolated, lease-fenced SQL reservations. No order transport or runtime wiring."""
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from pipmind.contracts import stamp
@@ -38,7 +39,9 @@ _JOURNAL = "dbo.pm_safety_admission_journal_v1"
 _RESERVATIONS = "dbo.pm_safety_admission_reservations_v1"
 _FLOORS = "dbo.pm_safety_admission_floors_v1"
 _BIN = "COLLATE Latin1_General_100_BIN2"
-_CONFLICT = object()
+# A verdict may be normalized only after the OUTER lease operation acknowledges commit.
+ADMISSION_CONFLICT = object()
+_CONFLICT = ADMISSION_CONFLICT  # Preserve the existing internal identity.
 _DDL = (
     f"""IF OBJECT_ID('{_ACCOUNTS}','U') IS NULL CREATE TABLE {_ACCOUNTS} (
     account_key char(64) {_BIN} NOT NULL PRIMARY KEY,
@@ -337,129 +340,234 @@ class SqlAdmissionStore:
             _unavailable()
         return value.replace(tzinfo=UTC)
 
+    @property
+    def leases(self):
+        return self._leases
+
+    @property
+    def sessions(self):
+        return self._sessions
+
+    @property
+    def binding(self):
+        return self._binding
+
+    @property
+    def session_id(self):
+        return self._session_id
+
+    @property
+    def policy_book_sha256(self):
+        return self._book_hash
+
+    @staticmethod
+    def freeze_request(request):
+        """Return independent canonical request facts before entering SQL/awaits."""
+        return decode_request(encode_request(request))
+
+    @staticmethod
+    def is_conflict(result):
+        return result is ADMISSION_CONFLICT
+
+    @staticmethod
+    def server_time_in_transaction(cur):
+        """Observe SQL UTC time using only the caller's existing cursor."""
+        return SqlAdmissionStore._now(cur)
+
+    @staticmethod
+    def finalize_admission(result):
+        """Normalize ONLY after an outer lease check and acknowledged commit.
+
+        This pure helper cannot verify transaction acknowledgement itself.
+        """
+        if result is ADMISSION_CONFLICT:
+            raise AdmissionRefused("conflicting_admission_request")
+        return result
+
     def admit(self, grant, request):
+        # Freeze before the lease lock: caller mutation while waiting cannot alter intent.
+        frozen = self.freeze_request(request)
+        result = self._leases.compare_and_act(
+            grant, lambda cur: self.admit_in_transaction(cur, grant, frozen)
+        )
+        return self.finalize_admission(result)
+
+    def admit_in_transaction(self, cur, grant, request):
+        """Stage/replay admission on a trusted caller's already leased transaction.
+
+        Caller owns lease -> session -> optional controls/integration locks before
+        calling; this method reacquires session, then admission and book. It never
+        opens, commits or closes a connection, or invokes a lease callback. Its
+        returned value is provisional until the OUTER lease checks and commit.
+        ADMISSION_CONFLICT must likewise not escape as a certain refusal before
+        that acknowledgement. Transaction/lease ownership is a trusted contract,
+        not an independent authorization or transport capability.
+        """
         body = encode_request(request)
         frozen = decode_request(body)
         digest = _hash(body)
         request_id = frozen.order["client_order_id"]
-
-        def operation(cur):
+        if (
+            grant.binding.account_id != self._binding.account_id
+            or grant.binding.environment != self._binding.environment
+        ):
+            raise LeaseRefused("admission_binding_mismatch")
+        try:
+            state = self._sessions.read_in_transaction(cur)
+        except (SessionRefused, SessionUnavailable):
+            _unavailable()  # Missing/corrupt state never becomes a synthetic session.
+        if state.spec.binding != self._binding or state.spec.session_id != self._session_id:
+            _unavailable()
+        _lock(cur, self._resource)
+        self._pin(cur, create=True)
+        retained = self._journal(cur, request_id)
+        if retained is not None:
+            row, receipt = retained
             if (
-                grant.binding.account_id != self._binding.account_id
-                or grant.binding.environment != self._binding.environment
+                row[0] != self._session_id
+                or row[1] != self._book_hash
+                or row[2] != body
+                or row[3] != digest
             ):
-                raise LeaseRefused("admission_binding_mismatch")
-            try:
-                state = self._sessions.read_in_transaction(cur)
-            except (SessionRefused, SessionUnavailable):
-                _unavailable()  # Missing/corrupt state never becomes a synthetic session.
-            if state.spec.binding != self._binding or state.spec.session_id != self._session_id:
-                _unavailable()
-            _lock(cur, self._resource)
-            self._pin(cur, create=True)
-            retained = self._journal(cur, request_id)
-            if retained is not None:
-                row, receipt = retained
-                if (
-                    row[0] != self._session_id
-                    or row[1] != self._book_hash
-                    or row[2] != body
-                    or row[3] != digest
-                ):
-                    return (
-                        _CONFLICT  # Return only through final lease checks + acknowledged commit.
-                    )
-                return receipt
-            reservations, floor = self._reservations(cur), self._floor(cur)
-            now = self._now(cur)
-            assessment = assess(frozen, state, self._policies, reservations, floor, now=now)
-            if assessment.within_limits and len(reservations) >= MAX_RESERVATIONS:
-                _unavailable()
-            receipt = {
-                "schema_version": 1,
-                "request_id": request_id,
-                "account_id": self._binding.account_id,
-                "environment": self._binding.environment,
-                "currency": self._binding.currency,
-                "session_id": self._session_id,
-                "request_sha256": digest,
-                "policy_book_sha256": self._book_hash,
-                "assessment": assessment,
-                "lease_authority_epoch": grant.authority_epoch,
-                "lease_owner_id": grant.owner_id,
-                "lease_generation": grant.generation,
-                "lease_resource": grant.binding.resource,
-                "observed_at": stamp(now),
-                "dispatch_authorized": False,
-            }
-            receipt_body = encode_receipt(
-                receipt
-            )  # All bounds checked before any audit/budget write.
-            reservation = assessment.reservation
-            if reservation is not None and (
-                reservation.request_id != request_id or reservation.session_id != self._session_id
-            ):
-                _unavailable()
-            reservation_body = encode_reservation(reservation) if reservation is not None else None
-            count = assessment.validated_external_count
-            if count is not None and (type(count) is not int or not floor <= count <= MAX_COUNT):
-                _unavailable()
-            self._book(cur, self._book_hash, create=self._book_body)
+                return _CONFLICT  # Return only through final lease checks + acknowledged commit.
+            return receipt
+        reservations, floor = self._reservations(cur), self._floor(cur)
+        now = self._now(cur)
+        assessment = assess(frozen, state, self._policies, reservations, floor, now=now)
+        if assessment.within_limits and len(reservations) >= MAX_RESERVATIONS:
+            _unavailable()
+        receipt = {
+            "schema_version": 1,
+            "request_id": request_id,
+            "account_id": self._binding.account_id,
+            "environment": self._binding.environment,
+            "currency": self._binding.currency,
+            "session_id": self._session_id,
+            "request_sha256": digest,
+            "policy_book_sha256": self._book_hash,
+            "assessment": assessment,
+            "lease_authority_epoch": grant.authority_epoch,
+            "lease_owner_id": grant.owner_id,
+            "lease_generation": grant.generation,
+            "lease_resource": grant.binding.resource,
+            "observed_at": stamp(now),
+            "dispatch_authorized": False,
+        }
+        receipt_body = encode_receipt(receipt)  # All bounds checked before any audit/budget write.
+        reservation = assessment.reservation
+        if reservation is not None and (
+            reservation.request_id != request_id or reservation.session_id != self._session_id
+        ):
+            _unavailable()
+        reservation_body = encode_reservation(reservation) if reservation is not None else None
+        count = assessment.validated_external_count
+        if count is not None and (type(count) is not int or not floor <= count <= MAX_COUNT):
+            _unavailable()
+        self._book(cur, self._book_hash, create=self._book_body)
+        cur.execute(
+            f"""INSERT INTO {_JOURNAL}
+            (account_key,request_id,session_id,policy_book_sha256,request,request_sha256,
+             receipt,receipt_sha256,reserved) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (
+                self._key,
+                request_id,
+                self._session_id,
+                self._book_hash,
+                body,
+                digest,
+                receipt_body,
+                _hash(receipt_body),
+                assessment.within_limits,
+            ),
+        )
+        if reservation_body is not None:
             cur.execute(
-                f"""INSERT INTO {_JOURNAL}
-                (account_key,request_id,session_id,policy_book_sha256,request,request_sha256,
-                 receipt,receipt_sha256,reserved) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                f"INSERT INTO {_RESERVATIONS} VALUES(%s,%s,%s,%s,%s)",
                 (
                     self._key,
                     request_id,
                     self._session_id,
-                    self._book_hash,
-                    body,
-                    digest,
-                    receipt_body,
-                    _hash(receipt_body),
-                    assessment.within_limits,
+                    reservation_body,
+                    _hash(reservation_body),
                 ),
             )
-            if reservation_body is not None:
+        if count is not None:
+            cur.execute(
+                f"SELECT 1 FROM {_FLOORS} WHERE account_key=%s AND session_id=%s",
+                (self._key, self._session_id),
+            )
+            if cur.fetchone() is None:
                 cur.execute(
-                    f"INSERT INTO {_RESERVATIONS} VALUES(%s,%s,%s,%s,%s)",
-                    (
-                        self._key,
-                        request_id,
-                        self._session_id,
-                        reservation_body,
-                        _hash(reservation_body),
-                    ),
+                    f"INSERT INTO {_FLOORS} VALUES(%s,%s,%s)",
+                    (self._key, self._session_id, count),
                 )
-            if count is not None:
+            elif count > floor:
                 cur.execute(
-                    f"SELECT 1 FROM {_FLOORS} WHERE account_key=%s AND session_id=%s",
-                    (self._key, self._session_id),
+                    f"UPDATE {_FLOORS} SET external_count=%s "
+                    "WHERE account_key=%s AND session_id=%s",
+                    (count, self._key, self._session_id),
                 )
-                if cur.fetchone() is None:
-                    cur.execute(
-                        f"INSERT INTO {_FLOORS} VALUES(%s,%s,%s)",
-                        (self._key, self._session_id, count),
-                    )
-                elif count > floor:
-                    cur.execute(
-                        f"UPDATE {_FLOORS} SET external_count=%s "
-                        "WHERE account_key=%s AND session_id=%s",
-                        (count, self._key, self._session_id),
-                    )
-            if assessment.within_limits:
-                final = assess(
-                    frozen, state, self._policies, reservations, floor, now=self._now(cur)
-                )
-                if not final.within_limits:
-                    raise LeaseRefused("admission_facts_expired")
-            return decode_receipt(receipt_body)
+        if assessment.within_limits:
+            final = assess(frozen, state, self._policies, reservations, floor, now=self._now(cur))
+            if not final.within_limits:
+                raise LeaseRefused("admission_facts_expired")
+        return decode_receipt(receipt_body)
 
-        result = self._leases.compare_and_act(grant, operation)
-        if result is _CONFLICT:
-            raise AdmissionRefused("conflicting_admission_request")
-        return result
+    def preview_in_transaction(self, cur, request, *, recheck_request_id=None):
+        """Fresh assessment; no reservation, journal or count-floor updates.
+
+        Same trusted outer transaction/lock contract as admit_in_transaction.
+        A returned Assessment is not a persisted receipt or dispatch authority.
+        A recheck excludes only an exactly verified accepted original projection.
+        """
+        frozen = self.freeze_request(request)
+        if recheck_request_id is not None:
+            _id(recheck_request_id)
+        try:
+            state = self._sessions.read_in_transaction(cur)
+        except (SessionRefused, SessionUnavailable):
+            _unavailable()
+        if state.spec.binding != self._binding or state.spec.session_id != self._session_id:
+            _unavailable()
+        _lock(cur, self._resource)
+        self._pin(cur, create=True)
+        reservations, floor = self._reservations(cur), self._floor(cur)
+        if recheck_request_id is not None:
+            retained = self._journal(cur, recheck_request_id)
+            if retained is None:
+                _unavailable()
+            row, receipt = retained
+            original = decode_request(row[2])
+            reserved = receipt["assessment"].reservation
+            if (
+                row[0] != self._session_id
+                or row[1] != self._book_hash
+                or not receipt["assessment"].within_limits
+                or reserved is None
+                or frozen.order["client_order_id"] != recheck_request_id
+                or encode_request(replace(original, order=frozen.order)) != row[2]
+                or frozen.facts.proposal.instrument != original.facts.proposal.instrument
+                or str(frozen.facts.proposal.base_units_per_size)
+                != str(original.facts.proposal.base_units_per_size)
+            ):
+                _unavailable()
+            matches = tuple(r for r in reservations if r.request_id == recheck_request_id)
+            if len(matches) != 1 or encode_reservation(matches[0]) != encode_reservation(reserved):
+                _unavailable()
+            reservations = tuple(r for r in reservations if r.request_id != recheck_request_id)
+        assessment = assess(frozen, state, self._policies, reservations, floor, now=self._now(cur))
+        if recheck_request_id is not None and assessment.within_limits:
+            candidate = assessment.reservation
+            if candidate is None or any(
+                getattr(candidate, field) < getattr(reserved, field)
+                for field in ("gross_budget", "loss_budget", "margin_budget")
+            ):
+                # No replacement/release API: cheaper refreshed evidence cannot
+                # silently discount immutable resources already reserved.
+                return replace(
+                    assessment, within_limits=False, code="recheck_budget_shrink", reservation=None
+                )
+        return assessment
 
     def lookup(self, request_id):
         _id(request_id)

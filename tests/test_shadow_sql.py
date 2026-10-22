@@ -5800,3 +5800,656 @@ def test_admission_sql_new_owner_cannot_erase_pending_budget_or_rewrite_receipt(
     assert denied["lease_owner_id"] == current.owner_id
     assert _admission_sql_counts_ci(mind, store) == (1, 2, 1, 1, 1)
     assert len(store.snapshot()[0]) == 1
+
+
+def _safety_gateway_case_ci(mind, *, ready=True, caps=None):
+    from decimal import Decimal
+
+    from pipmind.gateway.config import SymbolMap
+    from pipmind.safety.controls_sql import SqlControlStore
+    from pipmind.safety.controls_sql import bootstrap as controls_bootstrap
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.integration_sql import bootstrap as integration_bootstrap
+
+    controls_bootstrap(mind.connect)
+    integration_bootstrap(mind.connect)
+    admission, leases, sessions, grant, request, book, now = _admission_sql_case_ci(mind, caps=caps)
+    controls = SqlControlStore(mind.connect, sessions.binding)
+    controls.initialize()
+    controls.apply_override("resume-test", "synthetic-owner", "resume", 0, "Synthetic test only")
+    symbols = SymbolMap(
+        [
+            {
+                "instrument": "EUR/USD",
+                "market_id": 1,
+                "unit": "unit",
+                "quantity_factor": "1",
+                "increment": "1",
+                "minimum": "1",
+            }
+        ]
+    )
+    gateway = SqlSafetyGateway(
+        admission, controls, symbols, base_units_per_size={"EUR/USD": Decimal("1")}
+    )
+    if ready:
+        receipt = gateway.reconcile(grant, request)
+        assert receipt["outcome"] == "dry_ready", receipt
+    return gateway, admission, leases, sessions, controls, grant, request, book, now
+
+
+def _safety_gateway_journal_ci(mind, gateway):
+    import json
+
+    with mind.transaction() as cur:
+        cur.execute(
+            "SELECT channel,record_id,receipt FROM dbo.pm_safety_integration_journal_v1 "
+            "WHERE account_key=%s ORDER BY channel,record_id",
+            (gateway._key,),
+        )
+        return [(row[0], row[1], json.loads(row[2])) for row in cur.fetchall()]
+
+
+def test_safety_gateway_sql_authenticated_flow_retains_exact_receipts_and_never_dispatches(mind):
+    import json
+
+    import httpx
+
+    from pipmind.safety.admission import encode_request
+    from pipmind.safety.service import create_app
+
+    gateway, admission, _, _, controls, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    token = "synthetic-private-token-01234567890123456789"
+    app = create_app(gateway, controls, token, grant_provider=lambda: grant, owner_id="owner")
+
+    async def flow():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            denied = await client.post("/orders", json={"request": encode_request(request)})
+            assert denied.status_code == 401 and admission.snapshot()[0] == ()
+            headers = {"authorization": "Bearer " + token}
+            first = await client.post(
+                "/orders", json={"request": encode_request(request)}, headers=headers
+            )
+            assert first.status_code == 200, first.text
+            receipt = first.json()
+            assert receipt["outcome"] == "dry_accepted", receipt
+            assert receipt["dispatch_authorized"] is receipt["dispatch_enabled"] is False
+            again = await client.post(
+                "/orders", json={"request": encode_request(request)}, headers=headers
+            )
+            assert again.json() == receipt
+            check = await client.post(
+                "/checks",
+                json={"check_id": "check-A", "request": encode_request(request)},
+                headers=headers,
+            )
+            assert check.status_code == 200, check.text
+            assert check.json()["outcome"] == "dry_checked", check.text
+            assert check.headers["cache-control"] == "no-store"
+            override = await client.post(
+                "/controls/overrides",
+                json={
+                    "command_id": "kill-A",
+                    "action": "kill",
+                    "expected_revision": 1,
+                    "reason": "Synthetic halt",
+                },
+                headers=headers,
+            )
+            assert override.status_code == 200, override.text
+            assert override.json()["review_excluded"] is True
+            after = await client.post(
+                "/checks",
+                json={"check_id": "check-B", "request": encode_request(request)},
+                headers=headers,
+            )
+            assert after.json()["code"] == "kill_switch", after.text
+            return receipt
+
+    receipt = asyncio.run(flow())
+    assert len(admission.snapshot()[0]) == 1
+    assert admission.lookup(request.order["client_order_id"])["assessment"].within_limits
+    assert grant.token not in json.dumps(_safety_gateway_journal_ci(mind, gateway))
+    assert receipt["origin"] == "model" and receipt["review_excluded"] is False
+
+
+def test_safety_gateway_sql_startup_control_generation_holds_and_id_collisions(mind):
+    from dataclasses import replace
+
+    from pipmind.safety.integration_sql import IntegrationRefused
+    from pipmind.safety.lease_sql import LeaseRefused
+
+    gateway, admission, leases, _, controls, old, request, _, _ = _safety_gateway_case_ci(
+        mind, ready=False
+    )
+    refused = gateway.accept(old, request)
+    assert refused["code"] == "reconciliation_required"
+    assert admission.snapshot()[0] == ()
+    # Original IDs retain refusal; a deliberate new proposal is required.
+    assert gateway.reconcile(old, request)["outcome"] == "dry_ready"
+    assert gateway.accept(old, request) == refused
+    new = replace(request, order={**request.order, "client_order_id": "new-A"})
+    assert gateway.accept(old, new)["outcome"] == "dry_accepted"
+    with pytest.raises(IntegrationRefused, match="^conflicting_integration_request$"):
+        gateway.accept(old, replace(new, expected_session_revision=0))
+    leases.release(old)
+    current = leases.acquire("new-owner", ttl_seconds=30)
+    with pytest.raises(LeaseRefused, match="^lease_stale_owner$"):
+        gateway.check(old, "stale-owner", new)
+    assert gateway.check(current, "new-owner-hold", new)["code"] == "reconciliation_required"
+    assert gateway.reconcile(current, new)["outcome"] == "dry_ready"
+    assert gateway.check(current, "new-owner-ready", new)["outcome"] == "dry_checked"
+    assert gateway.accept(current, new)["scope"]["generation"] == old.generation
+    assert controls.read().revision == 1 and len(admission.snapshot()[0]) == 1
+
+
+def test_safety_gateway_sql_stale_source_holds_new_risk_and_exact_history(mind):
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from pipmind.contracts import stamp
+
+    gateway, admission, _, _, _, grant, request, _, now = _safety_gateway_case_ci(mind)
+    original = gateway.accept(grant, request)
+    old = stamp(now - timedelta(minutes=2))
+    stale = replace(request, facts=replace(request.facts, as_of=old))
+    refused = gateway.check(grant, "stale-proof", stale)
+    assert refused["outcome"] == "refused"
+    assert gateway.check(grant, "after-stale", request)["code"] == "reconciliation_required"
+    assert gateway.accept(grant, request) == original
+    assert len(admission.snapshot()[0]) == 1
+    assert gateway.reconcile(grant, request)["outcome"] == "dry_ready"
+    assert gateway.check(grant, "fresh-again", request)["outcome"] == "dry_checked"
+    history = _safety_gateway_journal_ci(mind, gateway)
+    assert any(row[1] == "stale-proof" and row[2] == refused for row in history)
+
+
+def test_safety_gateway_sql_lease_expiry_rolls_back_staged_admission_and_gateway_ack(
+    mind, monkeypatch
+):
+    from pipmind.safety.lease_sql import LeaseRefused
+
+    gateway, admission, leases, _, _, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    leases.release(grant)
+    grant = leases.acquire("short-lived-owner", ttl_seconds=2)
+    assert gateway.reconcile(grant, request)["outcome"] == "dry_ready"
+    before = _safety_gateway_journal_ci(mind, gateway)
+    staged = []
+    original = gateway._record
+
+    def delay(cur, *args, **kwargs):
+        value = original(cur, *args, **kwargs)
+        if args[0] == "accept":
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_admission_reservations_v1 WHERE account_key=%s",
+                (gateway._key,),
+            )
+            assert cur.fetchone()[0] == 1
+            staged.append(True)
+            cur.execute("WAITFOR DELAY '00:00:02.100'")
+        return value
+
+    monkeypatch.setattr(gateway, "_record", delay)
+    with pytest.raises(LeaseRefused, match="^lease_expired$"):
+        gateway.accept(grant, request)
+    assert staged == [True]
+    assert admission.lookup(request.order["client_order_id"]) is None
+    assert admission.snapshot()[0] == ()
+    assert _safety_gateway_journal_ci(mind, gateway) == before
+
+
+def test_safety_gateway_sql_ack_uncertainty_keeps_atomic_durable_receipt_and_reservation(mind):
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import LeaseCommitUnknown, SqlLeaseStore
+
+    gateway, admission, leases, sessions, controls, grant, request, book, _ = (
+        _safety_gateway_case_ci(mind)
+    )
+    closed = []
+
+    class LostAck:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return self.db.cursor()
+
+        def commit(self):
+            self.db.commit()
+            raise SystemExit("synthetic lost acknowledgement")
+
+        def close(self):
+            closed.append(True)
+            self.db.close()
+
+    uncertain_leases = SqlLeaseStore(LostAck, leases.binding, leases.authority_epoch)
+    uncertain_admission = SqlAdmissionStore(mind.connect, uncertain_leases, sessions, book)
+    uncertain = SqlSafetyGateway(
+        uncertain_admission, controls, gateway._symbols, base_units_per_size=gateway._unit_factors
+    )
+    with pytest.raises(LeaseCommitUnknown, match="^lease_commit_unknown$"):
+        uncertain.accept(grant, request)
+    assert closed == [True] and len(admission.snapshot()[0]) == 1
+    receipt = gateway.accept(grant, request)
+    assert receipt["outcome"] == "dry_accepted"
+    assert sum(row[0] == "accept" for row in _safety_gateway_journal_ci(mind, gateway)) == 1
+
+
+def test_safety_gateway_sql_control_writer_serializes_with_inflight_acceptance(mind, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    gateway, admission, _, _, controls, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    staged, release, writing = Event(), Event(), Event()
+    original = gateway._record
+
+    def wait(cur, *args, **kwargs):
+        receipt = original(cur, *args, **kwargs)
+        if args[0] == "accept":
+            staged.set()
+            assert release.wait(timeout=5)
+        return receipt
+
+    def kill():
+        writing.set()
+        return controls.apply_override(
+            "racing-kill", "owner", "kill", 1, "Synthetic concurrent halt"
+        )
+
+    monkeypatch.setattr(gateway, "_record", wait)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        accepting = pool.submit(gateway.accept, grant, request)
+        try:
+            assert staged.wait(timeout=5)
+            stopping = pool.submit(kill)
+            assert writing.wait(timeout=5)
+            assert not accepting.done() and not stopping.done()
+        finally:
+            release.set()
+        assert accepting.result(timeout=10)["outcome"] == "dry_accepted"
+        assert stopping.result(timeout=10)["state"]["killed"] is True
+    assert gateway.check(grant, "after-racing-kill", request)["code"] == "kill_switch"
+    assert len(admission.snapshot()[0]) == 1
+
+
+def test_safety_gateway_sql_quote_only_staleness_cannot_clear_hold(mind):
+    from dataclasses import replace
+
+    from pipmind.contracts import stamp
+
+    gateway, admission, _, _, _, grant, request, _, now = _safety_gateway_case_ci(mind, ready=False)
+    # Account/reconciliation/cash-flow are all current. Only the proposal quote is old.
+    stale = replace(
+        request,
+        facts=replace(
+            request.facts,
+            proposal=replace(request.facts.proposal, as_of=stamp(now - timedelta(seconds=31))),
+        ),
+    )
+    receipt = gateway.reconcile(grant, stale)
+    assert receipt["outcome"] == "held" and receipt["code"] == "stale_quote", receipt
+    assert gateway.accept(grant, request)["code"] == "reconciliation_required"
+    assert admission.snapshot()[0] == ()
+
+
+def test_safety_gateway_sql_unit_understatement_refused_before_reserving(mind):
+    from dataclasses import replace
+    from decimal import Decimal
+
+    gateway, admission, _, _, _, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    malicious = replace(
+        request,
+        order={**request.order, "size": Decimal("2500")},
+        facts=replace(
+            request.facts,
+            proposal=replace(request.facts.proposal, base_units_per_size=Decimal("0.01")),
+        ),
+    )
+    receipt = gateway.accept(grant, malicious)
+    assert receipt["outcome"] == "refused" and receipt["code"] == "gateway_unit_factor_mismatch"
+    assert admission.snapshot()[0] == ()
+    assert admission.lookup(request.order["client_order_id"]) is None
+
+
+def test_safety_gateway_sql_post_admission_proof_failure_aborts_entire_intake(mind, monkeypatch):
+    from dataclasses import replace
+
+    from pipmind.safety.lease_sql import LeaseUnavailable
+
+    gateway, admission, _, _, _, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    before = _safety_gateway_journal_ci(mind, gateway)
+    original = admission.preview_in_transaction
+    staged = []
+
+    def expire(cur, proof, *, recheck_request_id=None):
+        assert recheck_request_id == request.order["client_order_id"]
+        cur.execute(
+            "SELECT COUNT(*) FROM dbo.pm_safety_admission_reservations_v1 WHERE account_key=%s",
+            (gateway._key,),
+        )
+        assert cur.fetchone()[0] == 1
+        result = original(cur, proof, recheck_request_id=recheck_request_id)
+        assert result.within_limits
+        staged.append(True)
+        # Inject the failure at the post-stage boundary, not the initial admission.
+        return replace(result, within_limits=False, code="stale_quote", reservation=None)
+
+    monkeypatch.setattr(admission, "preview_in_transaction", expire)
+    with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$"):
+        gateway.accept(grant, request)
+    assert staged == [True]
+    assert admission.lookup(request.order["client_order_id"]) is None
+    assert admission.snapshot()[0] == ()
+    assert _safety_gateway_journal_ci(mind, gateway) == before
+
+
+@pytest.mark.parametrize("failure", ["error", "interrupt", "disconnect"])
+def test_safety_gateway_sql_staged_failure_reopens_without_partial_intake(
+    mind, monkeypatch, failure
+):
+    from pipmind.safety.lease_sql import LeaseUnavailable
+
+    gateway, admission, _, _, _, grant, request, _, _ = _safety_gateway_case_ci(mind)
+    before_history = _safety_gateway_journal_ci(mind, gateway)
+    before_admission = _admission_sql_counts_ci(mind, admission)
+    before_controls = gateway.controls.read()
+    original = gateway._record
+    staged = []
+
+    def fail(cur, *args, **kwargs):
+        receipt = original(cur, *args, **kwargs)
+        if args[0] == "accept":
+            assert receipt["outcome"] == "dry_accepted"
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_admission_reservations_v1 WHERE account_key=%s",
+                (gateway._key,),
+            )
+            assert cur.fetchone()[0] == 1
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_integration_journal_v1 "
+                "WHERE account_key=%s AND channel='accept'",
+                (gateway._key,),
+            )
+            assert cur.fetchone()[0] == 1
+            staged.append(True)
+            if failure == "disconnect":
+                cur.connection.close()
+            if failure == "interrupt":
+                raise KeyboardInterrupt("synthetic precommit integration interruption")
+            raise OSError("synthetic post-stage integration failure")
+        return receipt
+
+    monkeypatch.setattr(gateway, "_record", fail)
+    with pytest.raises(KeyboardInterrupt if failure == "interrupt" else LeaseUnavailable):
+        gateway.accept(grant, request)
+    assert staged == [True]
+    assert _safety_gateway_journal_ci(mind, gateway) == before_history
+    assert _admission_sql_counts_ci(mind, admission) == before_admission
+    assert gateway.controls.read() == before_controls
+    assert admission.lookup(request.order["client_order_id"]) is None
+    monkeypatch.setattr(gateway, "_record", original)
+    assert gateway.accept(grant, request)["outcome"] == "dry_accepted"
+    assert len(admission.snapshot()[0]) == 1
+
+
+def _safety_controls_case_ci(mind):
+    from uuid import uuid4
+
+    from pipmind.safety.controls_sql import SqlControlStore, bootstrap
+    from pipmind.safety.session import SessionBinding
+
+    bootstrap(mind.connect)
+    store = SqlControlStore(mind.connect, SessionBinding("synthetic-" + uuid4().hex, "demo", "USD"))
+    assert store.initialize().paused
+    return store
+
+
+def test_safety_controls_sql_cas_race_and_exact_replay(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    import pytest
+
+    from pipmind.safety.controls_sql import ControlRefused
+
+    store = _safety_controls_case_ci(mind)
+    barrier = Barrier(2)
+
+    def apply(action):
+        barrier.wait(timeout=10)
+        try:
+            return store.apply_override(action, "owner", action, 0, "explicit synthetic command")
+        except ControlRefused as error:
+            assert str(error) == "stale_control_revision"
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = pool.submit(apply, "kill"), pool.submit(apply, "resume")
+        receipts = [a.result(timeout=20), b.result(timeout=20)]
+    assert sum(item is not None for item in receipts) == 1
+    original = next(item for item in receipts if item is not None)
+    assert store.read().revision == 1
+    body = original["body"]
+    assert (
+        store.apply_override(
+            body["command_id"], body["actor_id"], body["action"], 0, body["reason"]
+        )
+        == original
+    )
+    with pytest.raises(ControlRefused, match="^conflicting_control_command$"):
+        store.apply_override(body["command_id"], "owner", body["action"], 0, "changed")
+    assert store.lookup_override(body["command_id"]) == original
+    assert store.initialize() == store.read()
+
+
+def test_safety_controls_sql_same_cursor_read_serializes_racing_kill(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from pipmind.safety.controls_sql import SqlControlStore
+
+    store = _safety_controls_case_ci(mind)
+    store.apply_override("resume", "owner", "resume", 0, "explicit resume")
+    attempted = Event()
+
+    class Cursor:
+        def __init__(self, cur):
+            self.cur = cur
+
+        def execute(self, query, *args):
+            if "sp_getapplock" in query:
+                attempted.set()
+            return self.cur.execute(query, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.cur, name)
+
+    class Connection:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return Cursor(self.db.cursor())
+
+        def commit(self):
+            return self.db.commit()
+
+        def close(self):
+            self.db.close()
+
+    writer = SqlControlStore(Connection, store.binding)
+    db = mind.connect()
+    try:
+        cur = db.cursor()
+        state = store.read_in_transaction(cur)
+        assert not state.paused and not state.killed
+        original = store.lookup_override_in_transaction(cur, "resume")
+        assert original["review_excluded"] and original["origin"] == "trusted_owner_override"
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(writer.apply_override, "kill", "owner", "kill", 1, "stop")
+            try:
+                assert attempted.wait(timeout=5)
+                assert not future.done()
+                assert store.read_in_transaction(cur) == state
+            finally:
+                db.commit()  # Release control lock only after the consistent reader finishes.
+            assert future.result(timeout=10)["state"]["killed"]
+        assert store.read().killed and store.read().paused and store.read().revision == 2
+    finally:
+        db.close()
+
+
+def test_safety_controls_sql_staged_error_interrupt_disconnect_preserve_state(mind):
+    import pytest
+
+    from pipmind.safety.controls_sql import ControlUnavailable, SqlControlStore
+
+    for mode in ("error", "interrupt", "disconnect"):
+        store = _safety_controls_case_ci(mind)
+        before = store.read()
+        staged, closed, disconnected = [], [], []
+
+        class Cursor:
+            def __init__(self, cur, db):
+                self.cur, self.db = cur, db
+
+            def execute(self, query, *args, _mode=mode, _staged=staged, _disconnected=disconnected):
+                result = self.cur.execute(query, *args)
+                if query.startswith("UPDATE dbo.pm_safety_controls_v1 SET revision="):
+                    _staged.append(True)  # Both receipt INSERT and state UPDATE reached actual SQL.
+                    if _mode == "disconnect":
+                        self.db.close()
+                        _disconnected.append(True)
+                    if _mode == "interrupt":
+                        raise KeyboardInterrupt("synthetic interruption after control writes")
+                    raise OSError("synthetic transport failure after control writes")
+                return result
+
+            def __getattr__(self, name):
+                return getattr(self.cur, name)
+
+        class Connection:
+            def __init__(self):
+                self.db = mind.connect()
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return Cursor(self.db.cursor(), self.db)
+
+            def commit(self):
+                pytest.fail("failed control transaction attempted commit")
+
+            def close(self, _closed=closed):
+                _closed.append(True)
+                self.db.close()
+
+        failing = SqlControlStore(Connection, store.binding)
+        with pytest.raises(KeyboardInterrupt if mode == "interrupt" else ControlUnavailable):
+            failing.apply_override("kill", "owner", "kill", 0, "stop")
+        assert staged == closed == [True]
+        assert disconnected == ([True] if mode == "disconnect" else [])
+        assert store.read() == before and store.lookup_override("kill") is None
+        receipt = store.apply_override("kill", "owner", "kill", 0, "stop")
+        assert store.apply_override("kill", "owner", "kill", 0, "stop") == receipt
+
+
+def test_safety_controls_sql_unknown_commit_restart_flatten_and_suggestion_journal(mind):
+    import pytest
+
+    from pipmind.safety.controls_sql import ControlCommitUnknown, ControlRefused, SqlControlStore
+
+    store = _safety_controls_case_ci(mind)
+    commits, closes = [], []
+
+    class LostAck:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return self.db.cursor()
+
+        def commit(self):
+            self.db.commit()
+            commits.append(True)
+            raise SystemExit("synthetic lost acknowledgement")
+
+        def close(self):
+            closes.append(True)
+            self.db.close()
+
+    uncertain = SqlControlStore(LostAck, store.binding)
+    with pytest.raises(ControlCommitUnknown, match="^control_commit_unknown$"):
+        uncertain.apply_override("kill", "owner", "kill", 0, "stop")
+    assert commits == closes == [True]
+    reopened = SqlControlStore(mind.connect, store.binding)
+    assert reopened.read().killed and reopened.read().paused
+    original = reopened.lookup_override("kill")
+    assert original == reopened.apply_override("kill", "owner", "kill", 0, "stop")
+    with pytest.raises(ControlRefused, match="^conflicting_control_command$"):
+        reopened.apply_override("kill", "owner", "kill", 0, "altered")
+    flattened = reopened.apply_override("flatten", "owner", "flatten", 1, "explicit flatten")
+    assert flattened["outcome"] == "unsupported_not_executed"
+    assert flattened["review_excluded"] and reopened.read().killed and reopened.read().paused
+    before = reopened.read()
+    suggestion = reopened.submit_suggestion("idea", "owner", "Exact original suggestion")
+    disposition = reopened.resolve_suggestion("idea", "reviewer", "trial", "Explicit reason")
+    assert not suggestion["review_excluded"] and not disposition["review_excluded"]
+    assert reopened.submit_suggestion("idea", "owner", "Exact original suggestion") == suggestion
+    assert (
+        reopened.resolve_suggestion("idea", "reviewer", "trial", "Explicit reason") == disposition
+    )
+    assert reopened.read() == before
+
+
+def test_safety_controls_sql_latest_override_receipt_and_state_must_agree(mind):
+    import pytest
+
+    from pipmind.safety.controls_sql import ControlUnavailable
+
+    store = _safety_controls_case_ci(mind)
+    receipt = store.apply_override("kill", "owner", "kill", 0, "stop")
+    state = store.read()
+    with mind.transaction() as cur:
+        cur.execute(
+            "SELECT MAX(revision) FROM dbo.pm_safety_control_overrides_v1 WHERE account_key=%s",
+            (store._key,),
+        )
+        assert cur.fetchone()[0] == state.revision == 1
+        cur.execute(
+            "UPDATE dbo.pm_safety_controls_v1 SET killed=0,paused=0 WHERE account_key=%s",
+            (store._key,),
+        )
+    with pytest.raises(ControlUnavailable, match="^control_store_unavailable$"):
+        store.read()
+    with mind.transaction() as cur:
+        cur.execute(
+            "UPDATE dbo.pm_safety_controls_v1 SET killed=1,paused=1 WHERE account_key=%s",
+            (store._key,),
+        )
+    assert store.lookup_override("kill") == receipt
+    with mind.transaction() as cur:
+        cur.execute(
+            "UPDATE dbo.pm_safety_control_overrides_v1 SET revision=2 "
+            "WHERE account_key=%s AND id=%s",
+            (store._key, "kill"),
+        )
+    with pytest.raises(ControlUnavailable, match="^control_store_unavailable$"):
+        store.read()
