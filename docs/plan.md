@@ -178,7 +178,12 @@ session writers never acquire lease/admission locks. Pending reservations remain
 account-wide across sessions and are never cleared by initializing another day.
 
 PIP-21/PIP-23/PIP-27 are To Do while their actual hosted execution is deferred;
-PIP-33 is a deferred parking lot. PIP-28 tracks active offline M5 integration
+PIP-33 is a deferred parking lot. Its next isolated private-tool correction creates
+missing parent directories for a fresh alternate private data root, with
+temporary-directory tests for initialization, idempotency and conflicting paths.
+The default layout, historical artifact bytes and hosted state remain unchanged;
+historical helper reuse and missing original evidence remain explicit limitations.
+PIP-28 tracks active offline M5 integration
 groundwork. These statuses do not imply M4, deployed health, order safety or a
 completed FX day. Historical sections below retain their dated delivery notes.
 
