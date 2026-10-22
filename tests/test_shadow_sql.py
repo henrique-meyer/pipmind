@@ -8858,9 +8858,17 @@ def test_command_journal_sql_complete_history_crosses_native_keyset_page(mind):
         assert [encode_command(row.command) for row in journal.iter_history()] == [
             encode_command(row) for row in original
         ]
-
-
-"""PRIVATE append-only disposable SQL cases; root owns the shared suite append."""
+        # The complete checkpoint must also traverse every physical command
+        # beyond its 64-row page boundary, rather than certifying a prefix.
+        with flow.authority.guard(active):
+            inventory = _p50_capture_ci(  # noqa: F821
+                mind.connect, journal.binding, flow.leases.binding
+            )
+        counts = inventory.command_counts
+        assert counts.commands == counts.unattempted == 65
+        assert counts.refused == counts.attempted == counts.unknown == 0
+        assert [row.count for row in inventory.tables[-4:]] == [1, 65, 0, 0]
+        assert [row.command for row in journal.iter_history()] == original
 
 
 def _p50_capture_ci(connect, binding, lease_binding, *, legacy=False):
