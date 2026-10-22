@@ -105,3 +105,28 @@ positive. Actual least-privileged S0 reads, PITR/name reuse/scale/failover behav
 independent authority and composed source/target recovery remain unperformed
 PIP-47 qualification gates. No production identity path or order transport is
 enabled by this module.
+
+## Hosted qualification checkpoint
+
+PIP-47 has now exercised the explicit reader against the actual demo S0 database
+through its contained managed identity, with encrypted certificate-validated
+transport. An exact privately prepared pin passes; deliberately wrong logical
+server, database and physical-name pins each produce `azure_identity_mismatch`.
+These are actual database observations, rather than scripted positive fixtures.
+The observed principal has no database role memberships and only CONNECT at
+database scope; its application table permissions remain object scoped.
+
+The separately installed fixed owner catalog passes under that actual managed
+identity with only EXECUTE and object VIEW DEFINITION added on the module. It
+reports command tables absent. SQL denies runtime module alteration and dbo
+impersonation. Actual S0 administrator transactions impersonating the restricted
+principal also refuse missing EXECUTE, missing VIEW DEFINITION, changed module
+text and a future command object invisible in the caller's direct catalog. Each
+transaction rolls back and the original exact catalog proof passes afterward.
+
+The hosted database contains M4 mind/feed state; no M5 safety history was created
+to manufacture a complete-checkpoint positive. Restricted full safety capture,
+restored-database lifecycle, independently protected authority, both barriers and
+operational recovery remain separate qualification gates. The app images,
+capacity, runtime controls and public landing are unchanged by these probes.
+Private pins, source artifacts and raw receipts stay in the private repository.

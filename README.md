@@ -67,6 +67,11 @@ The public page is a static site built from JSON snapshots. Visitors do not call
 
 ## Design docs
 
+For a visual walkthrough, start with the [infrastructure diagrams](docs/infrastructure-diagrams.md)
+and [workflow diagrams](docs/workflow-diagrams.md). They distinguish the recorded
+shadow deployment from newer dry implementations and planned capabilities, using
+generic labels instead of instance resource names.
+
 | Doc | What it covers |
 | --- | --- |
 | [Architecture](docs/architecture.md) | Services, event contracts, the mind, learning, limits, failure handling, deployment |

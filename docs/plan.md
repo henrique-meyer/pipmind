@@ -12,6 +12,17 @@ adds no hosted/default/runtime wiring, managed-restore reference, restricted
 inventory selection, resource or PIP-17 change. PIP-47 retains those hosted
 qualification and independent-authority/barrier/provenance gates.
 
+## PIP-55 — Infrastructure and workflow diagrams
+
+[PIP-55](https://nitro.atlassian.net/browse/PIP-55) documents the infrastructure
+connections and end-to-end workflows in two linked Markdown/Mermaid guides.
+Show service/container boundaries, APIs, SQL, model calls, storage, delivery,
+recurring loops and failure/recovery paths. Distinguish the last verified hosted
+shadow layout, newer isolated code and planned trading/learning/publication.
+Use generic labels throughout, without actual instance resource names, domains,
+identifiers or private configuration. Validate diagrams, links and secret hygiene.
+This documentation work changes no hosted resources, configuration or runtime.
+
 ## PIP-54 — Explicit restricted complete-checkpoint capture
 
 [PIP-54](https://nitro.atlassian.net/browse/PIP-54) composes the verified PIP-53
@@ -223,16 +234,24 @@ replacement for mind/feed/assignment/attribution backup verification.
 
 ### PIP-47 — Hosted recovery activation gate
 
-To Do: [qualify recovery identity and independent authority on SQL S0](https://nitro.atlassian.net/browse/PIP-47)
-after PIP-29's reference code. Select a documented S0-compatible restore identity
-mechanism and independently protected monotonic authority; prove new-database
-and in-place/PITR rewind refusal, authority outage/recovery, full native history
-and trusted backup/sidecar provenance on the actual supported path. Missing
-product support stays an explicit refusal. Coordinate PIP-17's stable owner/load
-interface; actual PIP-30 orders and M4 qualification stay separately gated.
-Research/offline tests do not authorize hosted calls, deployment, resource
-creation, capacity changes or recurring cost. Present concrete supported options
-and any cost for owner approval before changing the existing demo environment.
+In Progress: [qualify recovery identity and independent authority on SQL S0](https://nitro.atlassian.net/browse/PIP-47).
+The owner authorized hosted validation and lifted the deployment freeze for this
+story. First qualify the existing S0 managed identity, exact physical identity
+pin, trusted metadata module and complete restricted history capture. Then prove
+restored-database identity refusal, independent monotonic authority, acknowledged
+original-source and target barriers, outage/recovery and trusted restore
+provenance. Missing product support remains an explicit refusal. Preserve all
+history, dependencies and controls, the public landing and PIP-17's interface.
+Any new resources, capacity or recurring commitments require concrete scope and
+cost approval. Operational recovery, actual orders and M4 qualification remain
+separately gated; a partial hosted proof does not activate recovery.
+
+Initial hosted evidence: actual S0 managed-identity exact pin and three mismatch
+refusals pass. The exact trusted owner catalog and two object permissions are
+installed; actual MI positives, runtime ALTER/IMPERSONATE denials and four
+transactional restricted-context negatives pass. No hosted safety history was
+fabricated. A separately approved disposable restore target will test physical
+identity and retained-history provenance without changing the source app.
 
 
 ## PIP-28 — Remaining safety integration (2026-10-21)
