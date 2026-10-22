@@ -111,7 +111,7 @@ PipMind is a public experiment by Henrique Meyer. It is not investment advice an
 
 ## License
 
-[GNU Affero General Public License v3.0](LICENSE).
+PipMind is source-available for noncommercial use under [PolyForm-Noncommercial-1.0.0](LICENSE). It is not an OSI open source license. Commercial use requires permission from the author.
 
 ## Author
 

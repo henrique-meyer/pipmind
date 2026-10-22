@@ -14,7 +14,7 @@ The hosted demo profile is one Azure Container App with two containers, default 
 
 ## M0 — Design baseline
 
-Public repo, AGPL-3.0, this documentation, the ADRs, and the example social-role config.
+Public repo, PolyForm-Noncommercial-1.0.0, this documentation, the ADRs, and the example social-role config.
 
 Done when the docs are on `main` and the architecture diagram renders.
 
