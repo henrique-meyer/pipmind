@@ -1,5 +1,40 @@
 # Implementation plan
 
+## PIP-29 — Original-trader recovery and handover (2026-10-21)
+
+In Progress: build isolated dry recovery and confirmed account-assignment
+handover on the delivered SQL safety boundary. External authority must live
+outside the application database restore domain and fence every recovery-aware
+operation; a separately configured SQL adapter is tested against a second
+**disposable** database, with no production resource provisioned or selected.
+A restored SQL lease alone must never revive its old owner.
+
+Preserve complete operational state/checkpoint inventory, exact history and
+account protections; bind native backup and immutable robot references without
+interpreting robot content as authority. Recovery starts held. Fresh ownership,
+complete current reconciliation and explicit exact target/generation/checkpoint
+confirmation precede a replacement assignment. Pending/ambiguous outcomes,
+missing/mismatched checkpoints and uncertain cross-store commits keep it held
+or indeterminate. Never reset loss/kill controls or replay a pending order.
+
+Separate modules/adapter tests implement external fencing, checkpoint/assignment
+storage and orchestration, with root coordinating Git/Jira/shared SQL CI.
+PIP-17 library/load/UI/shared-shadow files remain excluded. The hosted app,
+Azure capacity/configuration and runtime controls stay unchanged. Owner risk
+choices, real authority deployment/cost, M4 qualification, PIP-17 activation
+integration and PIP-30 venue execution remain separately gated. Mandatory actual
+SQL restore/concurrency/interruption/replay checks are required before code close.
+
+The [recovery and handover guide](safety-recovery.md) describes the explicit
+held/fence/checkpoint/confirmation/fresh-reconciliation sequence. The supplied
+native identity adapter supports SQL Server/Managed Instance and deliberately
+refuses Azure SQL Database S0. Hosted identity and independent authority design
+remain activation work; no fallback marker, resource migration or cost increase
+is authorized. A complete native backup preserves all application tables; the
+streamed inventory explicitly covers fifteen legacy safety tables and is not a
+replacement for mind/feed/assignment/attribution backup verification.
+
+
 ## PIP-28 — Remaining safety integration (2026-10-21)
 
 Code deliverable: the [SQL-backed dry safety gateway](safety-integration.md)

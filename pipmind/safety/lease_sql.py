@@ -11,6 +11,13 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from pipmind.safety.incarnation import (
+    IncarnationRefused,
+    IncarnationUnavailable,
+    encode_incarnation,
+    read_incarnation,
+)
+
 MIN_TTL_SECONDS = 1
 MAX_TTL_SECONDS = 300
 _MAX_GENERATION = 9223372036854775807
@@ -157,16 +164,41 @@ class SqlLeaseStore:
     storing it here does not verify that authority or detect a restored DB.
     """
 
-    def __init__(self, connect, binding, authority_epoch):
+    def __init__(self, connect, binding, authority_epoch, *, incarnation=None):
         self._key = _binding(binding)
         _need(_text(authority_epoch), "lease_invalid_authority")
         _need(callable(connect), "lease_invalid_connector")
         self._connect = connect
         self.binding = binding
         self.authority_epoch = authority_epoch
+        if incarnation is not None:
+            try:
+                encode_incarnation(incarnation)
+            except IncarnationRefused:
+                raise LeaseRefused("lease_invalid_incarnation") from None
+        self._incarnation = incarnation
+
+    @property
+    def incarnation(self):
+        return self._incarnation
 
     def _run(self, operation):
-        return _run(self._connect, "pipmind-safety-lease-v1:" + self._key, operation)
+        def guarded(cur):
+            def check():
+                if self._incarnation is None:
+                    return
+                try:
+                    actual = read_incarnation(cur)
+                except (IncarnationRefused, IncarnationUnavailable):
+                    raise LeaseRefused("lease_incarnation_unavailable") from None
+                _need(actual == self._incarnation, "lease_incarnation_mismatch")
+
+            check()
+            result = operation(cur)
+            check()
+            return result
+
+        return _run(self._connect, "pipmind-safety-lease-v1:" + self._key, guarded)
 
     def _read(self, cur):
         cur.execute(
