@@ -2,7 +2,7 @@
 
 ## PIP-48 — Durable command and unresolved-attempt journal
 
-In Progress: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an
+Code deliverable: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an
 isolated offline SQL command/attempt journal beneath PIP-30. Retain exact
 canonical OrderRequest bodies, scope, original assignment and causal provenance;
 distinguish local recorded/refused facts from venue acceptance. Exact-ID replay
