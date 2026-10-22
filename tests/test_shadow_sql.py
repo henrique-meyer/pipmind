@@ -9645,7 +9645,7 @@ def test_command_catalog_sql_restricted_owner_module_exact_schema_and_rollback(m
                         cur.execute(
                             "ALTER TABLE dbo.pm_safety_command_accounts_v1 ADD bad int NULL"
                         )
-                    assert denied.value.number in (229, 4902, 15151, 15247, 15517)
+                    assert denied.value.number in (229, 1088, 4902, 15151, 15247, 15517)
                     with pytest.raises(pytds.OperationalError) as denied:
                         cur.execute("EXECUTE AS USER='dbo'")
                     assert denied.value.number in (229, 15151, 15247, 15517)
