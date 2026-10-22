@@ -9,14 +9,20 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from pipmind.contracts import stamp, utc
+from pipmind.safety.identity_profiles import (
+    DatabaseIdentity,
+    IdentityProfileRefused,
+    IdentityProfileUnavailable,
+    decode_identity,
+    encode_identity,
+    read_expected_identity,
+    same_database,
+)
 from pipmind.safety.incarnation import (
     DatabaseIncarnation,
     IncarnationRefused,
     IncarnationUnavailable,
-    decode_incarnation,
-    encode_incarnation,
     read_incarnation,
-    same_database,
 )
 from pipmind.safety.lease_sql import LeaseBinding, LeaseCommitUnknown
 
@@ -108,9 +114,20 @@ def _binding(value):
 
 def _incarnation(value):
     try:
-        return encode_incarnation(value)
-    except IncarnationRefused:
+        return encode_identity(value)
+    except IdentityProfileRefused:
         raise AuthorityRefused("authority_invalid_incarnation") from None
+
+
+def _decode_pin(value):
+    # Authority JSON sorts nested object keys. Reconstruct only the fixed Azure
+    # envelope before its strict standalone decoder; outer canonical equality
+    # still rejects duplicate keys, alternate spellings and surplus fields.
+    if type(value) is dict:
+        keys = ("profile", "logical_server", "database", "physical_database_name")
+        _need(set(value) == set(keys), "authority_invalid_incarnation")
+        value = {key: value[key] for key in keys}
+    return decode_identity(json.dumps(value, ensure_ascii=True, separators=(",", ":")))
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,8 +139,8 @@ class AuthorityState:
     assignment_id: str | None
     assignment_generation: int
     robot_sha256: str | None
-    application_incarnation: DatabaseIncarnation
-    source_incarnation: DatabaseIncarnation | None = None
+    application_incarnation: DatabaseIdentity
+    source_incarnation: DatabaseIdentity | None = None
     source_epoch: str | None = None
 
 
@@ -137,6 +154,10 @@ def _validate(value):
     )
     if value.source_incarnation is not None:
         _incarnation(value.source_incarnation)
+        _need(
+            type(value.application_incarnation) is type(value.source_incarnation),
+            "authority_identity_profile_mismatch",
+        )
         _need(_sha(value.source_epoch), "authority_invalid_source_barrier")
     _need(
         _count(value.revision)
@@ -211,15 +232,13 @@ def decode_authority_state(raw):
             data["assignment_id"],
             data["assignment_generation"],
             data["robot_sha256"],
-            decode_incarnation(json.dumps(data["application_incarnation"], separators=(",", ":"))),
-            None
-            if data["source_incarnation"] is None
-            else decode_incarnation(json.dumps(data["source_incarnation"], separators=(",", ":"))),
+            _decode_pin(data["application_incarnation"]),
+            None if data["source_incarnation"] is None else _decode_pin(data["source_incarnation"]),
             data["source_epoch"],
         )
         _need(encode_authority_state(state) == raw, "authority_invalid_state")
         return state
-    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, IncarnationRefused):
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, IdentityProfileRefused):
         raise AuthorityRefused("authority_invalid_state") from None
 
 
@@ -233,8 +252,16 @@ def _close(db):
 
 def _native(cur, expected):
     try:
-        observed = read_incarnation(cur)
-    except (IncarnationRefused, IncarnationUnavailable):
+        if type(expected) is DatabaseIncarnation:
+            observed = read_incarnation(cur)  # Preserve the direct native path.
+        else:
+            observed = read_expected_identity(cur, expected)
+    except (
+        IncarnationRefused,
+        IncarnationUnavailable,
+        IdentityProfileRefused,
+        IdentityProfileUnavailable,
+    ):
         raise AuthorityUnavailable("authority_incarnation_unavailable") from None
     _need(observed == expected, "authority_incarnation_mismatch")
 
@@ -281,7 +308,7 @@ def _transaction(connect, expected, resource):
 
 
 def bootstrap(connect, expected_incarnation):
-    """Explicit external-only DDL against a supplied trusted native incarnation pin."""
+    """Explicit external-only DDL against a supplied trusted closed identity pin."""
     _need(callable(connect), "authority_invalid_connector")
     _incarnation(expected_incarnation)
     with _transaction(connect, expected_incarnation, "pipmind-safety-authority-schema-v1") as cur:
@@ -395,6 +422,10 @@ class SqlAuthorityStore:
 
     def _separate(self, application):
         _incarnation(application)
+        _need(
+            type(self._incarnation) is type(application),
+            "authority_identity_profile_mismatch",
+        )
         _need(not same_database(self._incarnation, application), "authority_database_not_separate")
 
     def _read(self, cur):
@@ -443,6 +474,7 @@ class SqlAuthorityStore:
     def _barrier(
         self, cur, epoch, application_incarnation, *, generation=None, acknowledged_under_epoch=None
     ):
+        self._separate(application_incarnation)
         pin = _incarnation(application_incarnation)
         pin_hash = _hash(pin)
         cur.execute(
@@ -607,6 +639,10 @@ class SqlAuthorityStore:
                 raise ValueError
             before = decode_authority_state(_json(receipt["before"]))
             after = decode_authority_state(_json(receipt["after"]))
+            for state in (before, after):
+                self._separate(state.application_incarnation)
+                if state.source_incarnation is not None:
+                    self._separate(state.source_incarnation)
             if (
                 before.binding != self.binding
                 or after.binding != self.binding

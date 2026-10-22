@@ -11,6 +11,13 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from pipmind.safety.azure_identity_sql import AzureDatabaseIdentity
+from pipmind.safety.identity_profiles import (
+    IdentityProfileRefused,
+    IdentityProfileUnavailable,
+    encode_identity,
+    read_expected_identity,
+)
 from pipmind.safety.incarnation import (
     IncarnationRefused,
     IncarnationUnavailable,
@@ -173,8 +180,11 @@ class SqlLeaseStore:
         self.authority_epoch = authority_epoch
         if incarnation is not None:
             try:
-                encode_incarnation(incarnation)
-            except IncarnationRefused:
+                if type(incarnation) is AzureDatabaseIdentity:
+                    encode_identity(incarnation)
+                else:
+                    encode_incarnation(incarnation)
+            except (IncarnationRefused, IdentityProfileRefused):
                 raise LeaseRefused("lease_invalid_incarnation") from None
         self._incarnation = incarnation
 
@@ -188,8 +198,16 @@ class SqlLeaseStore:
                 if self._incarnation is None:
                     return
                 try:
-                    actual = read_incarnation(cur)
-                except (IncarnationRefused, IncarnationUnavailable):
+                    if type(self._incarnation) is AzureDatabaseIdentity:
+                        actual = read_expected_identity(cur, self._incarnation)
+                    else:
+                        actual = read_incarnation(cur)
+                except (
+                    IncarnationRefused,
+                    IncarnationUnavailable,
+                    IdentityProfileRefused,
+                    IdentityProfileUnavailable,
+                ):
                     raise LeaseRefused("lease_incarnation_unavailable") from None
                 _need(actual == self._incarnation, "lease_incarnation_mismatch")
 
