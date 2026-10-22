@@ -1,4 +1,4 @@
-## PIP-54 â€” Explicit restricted complete-checkpoint capture
+## PIP-54 — Explicit restricted complete-checkpoint capture
 
 [PIP-54](https://nitro.atlassian.net/browse/PIP-54) composes the verified PIP-53
 owner-executed command catalog with PIP-50 complete recovery capture through an
@@ -18,7 +18,7 @@ qualified PIP-53 merge, native In Progress and plan bookkeeping.
 
 # Implementation plan
 
-## PIP-52 â€” Explicit Azure SQL physical identity candidate
+## PIP-52 — Explicit Azure SQL physical identity candidate
 
 [PIP-52](https://nitro.atlassian.net/browse/PIP-52) adds a separate opt-in,
 explicitly pinned Azure SQL physical identity reader and hash domain. Preserve
@@ -32,7 +32,7 @@ wiring, DDL, deployment, hosted changes or PIP-17 overlap. PIP-47 still owns act
 S0 qualification, independent authority, source/target barriers and managed
 restore provenance. Require exact final-head CI, merge and private raw backup.
 
-## PIP-53 â€” Restricted-caller command catalog boundary
+## PIP-53 — Restricted-caller command catalog boundary
 
 [PIP-53](https://nitro.atlassian.net/browse/PIP-53) adds a fixed, read-only,
 owner-executed command metadata module and isolated same-cursor reader. Verify
@@ -49,7 +49,7 @@ qualification remain PIP-47. Code work can proceed independently of PIP-52;
 root serializes shared SQL tests, plans, Git and Jira. Earlier PIP-51 delivery has
 publication priority.
 
-## PIP-51 â€” Broker-read evidence producer for the safety boundary
+## PIP-51 — Broker-read evidence producer for the safety boundary
 
 [PIP-51](https://nitro.atlassian.net/browse/PIP-51) first discovers and reuses
 existing broker capture, reconciliation and admission producers. If the missing
@@ -81,7 +81,7 @@ PIP-49/PIP-50 CI, merges and exact backups retain publication priority; disjoint
 offline discovery/implementation may proceed while those checks run. Actual
 source/venue, S0/authority and operational M4/M5/M6 gates remain separate.
 
-## PIP-50 â€” Complete command-obligation recovery checkpoints
+## PIP-50 — Complete command-obligation recovery checkpoints
 
 [PIP-50](https://nitro.atlassian.net/browse/PIP-50) extends the isolated PIP-29
 recovery boundary to the command account/intents/attempts/unknown history added
@@ -108,10 +108,10 @@ metadata can hide command tables from a limited principal. Reject unverifiable
 visibility; never grant hosted privileges to make a reference test pass. A
 least-privileged authoritative catalog boundary remains explicit PIP-47 work.
 
-## PIP-49 â€” SQL enforcement evaluation subprofile
+## PIP-49 — SQL enforcement evaluation subprofile
 
 Code deliverable: [PIP-49](https://nitro.atlassian.net/browse/PIP-49) connects
-development starter cases S02â€“S07 to actual isolated PIP-28 SQL enforcement.
+development starter cases S02–S07 to actual isolated PIP-28 SQL enforcement.
 Use versioned test-only policy/source/session/mapping supplements, exact source
 case and supplement hashes, and an explicit mapping from original event times to
 the observed disposable SQL clock. Preserve original fixture bytes and splits;
@@ -134,7 +134,7 @@ PIP-17 files, normative contracts, default runtime, history/dependencies, budget
 and stale flags remain unchanged. No hosted call, order, deployment, resource,
 capacity, landing or runtime-state change is part of this code task.
 
-## PIP-48 â€” Durable command and unresolved-attempt journal
+## PIP-48 — Durable command and unresolved-attempt journal
 
 Code deliverable: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an
 isolated offline SQL command/attempt journal beneath PIP-30. Retain exact
@@ -167,7 +167,7 @@ recovery coordinator cannot certify their unresolved obligations. Extend and
 qualify that checkpoint/obligation integration before actual transport or hosted
 recovery activation; no old inventory digest substitutes for command history.
 
-## PIP-29 â€” Original-trader recovery and handover (2026-10-21)
+## PIP-29 — Original-trader recovery and handover (2026-10-21)
 
 Code deliverable: isolated dry recovery and confirmed account-assignment
 handover on the delivered SQL safety boundary. External authority must live
@@ -207,7 +207,7 @@ is authorized. A complete native backup preserves all application tables; the
 streamed inventory explicitly covers fifteen legacy safety tables and is not a
 replacement for mind/feed/assignment/attribution backup verification.
 
-### PIP-47 â€” Hosted recovery activation gate
+### PIP-47 — Hosted recovery activation gate
 
 In Progress: [qualify recovery identity and independent authority on SQL S0](https://nitro.atlassian.net/browse/PIP-47).
 The owner authorized hosted validation and lifted the deployment freeze for this
@@ -222,8 +222,7 @@ cost approval. Operational recovery, actual orders and M4 qualification remain
 separately gated; a partial hosted proof does not activate recovery.
 
 
-
-## PIP-28 â€” Remaining safety integration (2026-10-21)
+## PIP-28 — Remaining safety integration (2026-10-21)
 
 Code deliverable: the [SQL-backed dry safety gateway](safety-integration.md)
 composes preflight, reconciliation, lease, session and reservation APIs in an
@@ -277,7 +276,7 @@ The Jira board separates existing merged code from outstanding live evidence:
 | --- | --- | --- |
 | [PIP-37](https://nitro.atlassian.net/browse/PIP-37): complete-history export sizing | PR #71 | PIP-27: fresh sizing/format decisions and retained-day clone |
 | [PIP-38](https://nitro.atlassian.net/browse/PIP-38): feed fact conflicts and restart isolation | PR #72 | PIP-21: live source coverage and upstream limitations |
-| [PIP-39](https://nitro.atlassian.net/browse/PIP-39): evaluation persistence, usage and local provenance | PRs #73â€“#75 | PIP-23: current-model execution and growth quality; PIP-24: human calibration |
+| [PIP-39](https://nitro.atlassian.net/browse/PIP-39): evaluation persistence, usage and local provenance | PRs #73–#75 | PIP-23: current-model execution and growth quality; PIP-24: human calibration |
 | [PIP-40](https://nitro.atlassian.net/browse/PIP-40): composed SQL memory recovery regression | PR #77 | PIP-23: actual repeated-model behavior |
 | [PIP-41](https://nitro.atlassian.net/browse/PIP-41): Windows oversized-input test execution | PR #76 | PIP-33: separate remaining tooling/evidence notes |
 
@@ -358,7 +357,7 @@ completed FX day. Historical sections below retain their dated delivery notes.
 
 The [roadmap](roadmap.md) defines the application milestones and rollout order. This file tracks requested work against Jira stories; documentation and branding do not change the trading rollout.
 
-## PIP-16 â€” Robot library, Auto Learn and protected rolling saves
+## PIP-16 — Robot library, Auto Learn and protected rolling saves
 
 - Story: [PIP-16](https://nitro.atlassian.net/browse/PIP-16)
 - Status: Design refined; Auto Learn, library working copies and retention implementation remain planned
@@ -378,13 +377,13 @@ The [roadmap](roadmap.md) defines the application milestones and rollout order. 
 | --- | --- |
 | Owner experience following M4 prerequisites | Private authorized chat and separate blank/clone/recovery onboarding; original-record explanations with dated evidence/policy, missing/ambiguous-ID handling, observation/proposal/refusal/fill distinctions and suggestion replies without policy mutation. Reuse existing SQL and model opt-in; preserve hosted qualification work and current deployment. |
 | Owner chat controls alongside M5 | Durable version-bound direct chat edits and exact-diff confirmation; atomic apply/audit, rejection/expiry/conflict/replay/concurrency/failure checks. Autonomous revision invalidates a stale chat diff but is never blocked by pending consent. Clone/recovery retains provenance without copying pending confirmation authority. |
-| M7 â€” Auto Learn | When On, retain autonomous add/trial/sharpen/retire, evidence/override rules and pre-change autosave. Off freezes all durable robot mutation and derived lesson promotion, including stale in-flight commits, without stopping current data/decisions. Verify owner mode persistence, exact restored learned content, nonblocking chat and safe rolling retention. |
+| M7 — Auto Learn | When On, retain autonomous add/trial/sharpen/retire, evidence/override rules and pre-change autosave. Off freezes all durable robot mutation and derived lesson promotion, including stale in-flight commits, without stopping current data/decisions. Verify owner mode persistence, exact restored learned content, nonblocking chat and safe rolling retention. |
 
 Add the compact robot-save profile and named save/list/compare/download workflow as owner-experience work, explicitly versioned apart from current full experience/recovery. M5 implements the separate robot/account/assignment migration, coherent snapshots, confirmed restore with undo and safe replacement on accounts with open positions; M6 validates demo handover and zero duplicate execution. M7 automatically saves the committed robot before review changes without human confirmation. Test save failure/no mutation, concurrent save/review version choice, exact compact content, restored-as-new lineage, account-state exclusion, retained protections and historical robot attribution. No current compact-save, assignment or restore runtime is claimed here.
 
 Confirmation applies to direct owner-chat edits and explicit load/restore controls, not each enabled learning update. Auto Learn On retains autonomous learning from trades, experience and market events, even when independently considering an idea first discussed in chat. Off is a distinct owner decision to freeze automatic learned-state changes. A pending/rejected chat patch is not an executable review command. Private chat/model usage needs measurement and opt-in rather than an assumed free allowance. UI hosting/public-route changes, new inference spend or resources require their own approved delivery scope. PIP-16 does not deploy a UI, enable calls, activate a new policy, delete saves or change the current trader.
 
-## PIP-15 â€” Compact model context and hosted token measurement
+## PIP-15 — Compact model context and hosted token measurement
 
 - Story: [PIP-15](https://nitro.atlassian.net/browse/PIP-15)
 - Status: Complete; refined backend deployed and paired/live-clock measurements verified
@@ -398,7 +397,7 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 - Delivery: PRs #26/#27 pass 309 offline and 27 real SQL tests plus replay, container restart/outage, infrastructure and secret checks. The refined release from [workflow 39148772345](https://github.com/henrique-meyer/pipmind/actions/runs/39148772345) is verified by its running build, independently resolved image digests, ready containers, unchanged resource/configuration/identity/egress and unchanged landing HTTPS smoke.
 - Measured result: three retained events (one release, two news items), with their original historical working/broker/feed state and original triage for the paired decision, produce six valid model responses and no tool round trips. Mean input falls from 44,563.7 to 2,416.7 tokens for triage (94.58%) and 44,896.7 to 5,452 for decisions (87.86%). All 80 immutable predeployment audit records match their original fingerprint. Full comparison traces, including the first guarded trial, remain in separate paused SQL validation minds; source history is preserved. An actual owner-triggered clock event also passes through the deployed engine at 1,980 input / 134 output tokens, ending resumed with no pending input, no current runtime error and zero dispatches. These measurements do not qualify full-day model quality or a monthly invoice; PIP-14 remains open.
 
-## PIP-12 â€” M4 shadow runtime and persistent mind
+## PIP-12 — M4 shadow runtime and persistent mind
 
 - Story: [PIP-12](https://nitro.atlassian.net/browse/PIP-12)
 - Status: Complete (application portion); hosted deployment is PIP-13 and complete-day qualification is PIP-14
@@ -407,7 +406,7 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 - Deployment boundary: prepare the hosted configuration and validation procedure without provisioning Azure resources or enabling paid/provider calls. Resource approval, live Foundry inference, provider coverage/capacity/cost validation and a full trading day of live shadow journaling remain explicit M4 completion gates. M5 ownership/recovery and M6 orders remain separate.
 - Validation: mandatory CI combines the offline suite and twelve starter scenarios through actual SQL, full-text/transaction/clone tests, eight SQL replay gates, authenticated integrated feed handoff, non-root container allocation, app/SQL restart and outage refusal checks. Existing 14/16 replay coverage, 28 portability, 15 gateway and 14 feed gates remain intact. Lint/format, Bicep compilation, dependency-license review, local documentation/JSON checks and secret scanning cover the release. No live model/provider/broker call or cloud deployment is claimed.
 
-## PIP-13 â€” Hosted M4 deployment and initial validation
+## PIP-13 — Hosted M4 deployment and initial validation
 
 - Story: [PIP-13](https://nitro.atlassian.net/browse/PIP-13)
 - Status: Complete (approved deployment and initial validation); full M4 qualification remains PIP-14
@@ -418,7 +417,7 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 - Hosted checkpoint: PRs #23 and #24 supply the approved foundation/backend and correct the SQL client-ID binding and pending-query percent escaping. CI passes 300 offline and 24 actual SQL tests, including notification/canonical-batch separation. Actual encrypted managed-identity SQL access has table-specific permissions and no DDL authority; temporary owner firewall access is removed. Both deployed containers are ready and the three feed workers have current error-free heartbeats. Initial ingestion retains five macro and 35 news events without quarantine. Real project-backed triage and decision calls pass JSON contracts; an isolated actual-model journal/export/paused-clone/retrieval round trip passes. The main shadow process is resumed without broker reads or an order transport. The public landing remains on its previous image/configuration. Full-day/provider/broker/capacity qualification remains open in PIP-14.
 - Runtime verification: the main journal records its first four actual-model observations with six model calls, no model refusals and zero dispatches; the pending queue decreases. All three workers remain alive without restarts and their current heartbeats are error-free; historical startup alerts remain retained. Public HTTPS smoke confirms build, health, SEO, analytics, assets, navigation and private-route isolation, while an independent comparison confirms the landing template/configuration is unchanged. Initial container/SQL metrics are saved privately; a short startup window does not qualify full-day capacity or billed costs. The release workflow now waits a bounded five minutes for revision readiness before enforcing its image/topology checks.
 
-## PIP-14 â€” Complete M4 live qualification
+## PIP-14 — Complete M4 live qualification
 
 - Overnight preparation: reconcile versioned evaluation/source evidence and human-calibration gaps; harden offline release/evaluation guards for thesis coverage, exact report/source binding, wire fidelity, unknown usage and observed/refused outcomes. Keep hosted state unchanged; schedule separate live release/full-day gates and record minor issues in the backlog.
 
@@ -435,14 +434,14 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 - Source cohort: 33 native-unit macro mappings cover eight major currencies, with explicit unknown timing/consensus/history gaps. Sixteen RSS recipes are configured. The four additive recipes (MarketWatch, Bundesbank, BLS employment and BLS CPI) have verified hosted delivery; BabyPips returns HTTP 400 and remains an explicit outage. Nine institutional X identities have hosted official-link verification and active GET-only reads. Initial seeding is bounded to the latest page, prior unfinished history cursors remain retained, and later live posts keep complete pagination. Broader personal office-holder, correspondent, squawk and Truth Social coverage is not yet qualified.
 - Broker reads: direct demo account/market requests, normalized Lightstreamer prices/snapshots and Reuters reads pass without an order transport. Empty current positions/active orders and existing historical records establish a baseline, not full-day zero-order proof. The hosted read-only profile provides paced handoff and independent broker-history capture; startup and a complete declared day require separate verification.
 - Repeated model evals: both v4 and the isolated v5 candidate run 12 starter cases three times each in separate paused SQL minds; each matrix passes all 144 integrity checks. V4 has 85 phase calls, one 90-second decision timeout and 50 differences across 180 unchanged literal fixture checks. V5 has 86 phase calls, six 90-second decision timeouts (six of 35 decision calls), and 52 literal differences across 180 checks. Refusals are retained, with unknown usage; later cases do not erase failed attempts. Known counters are 79,655 input / 12,171 output tokens for v4 and 77,771 / 10,885 for v5, about $0.169/$0.152 at verified uncached rates. Those references exclude unknown attempts, caching and invoice differences; the smaller known total is not evidence of lower billed cost. Median v5 triage/decision latency is 1.97/41.72 seconds, with decision p95 at 90.03 seconds. Timeout reliability and human quality calibration remain open. Exact traces stay in SQL; private review copies retain original fixtures and the rubric. Synthetic episodes do not measure live decision frequency.
-- Expanded-context refinement: v5 has two valid triage replies and one refusal at its 512-token ceiling, plus one valid forced decision and two 90-second decision timeouts. All four application checks pass for the valid decision. V6 adds only triage-specific short-summary guidance: three real calls on the exact retained context are valid, with 5,047 input tokens each, 169â€“264 output tokens and 129â€“197 summary characters. The decision request is byte-for-byte unchanged from the v5 retained actual request. Full state and the 512/4,096-token output limits remain intact. Primary state is unchanged and all validation minds stay paused; these controlled calls do not establish a live wake frequency.
+- Expanded-context refinement: v5 has two valid triage replies and one refusal at its 512-token ceiling, plus one valid forced decision and two 90-second decision timeouts. All four application checks pass for the valid decision. V6 adds only triage-specific short-summary guidance: three real calls on the exact retained context are valid, with 5,047 input tokens each, 169–264 output tokens and 129–197 summary characters. The decision request is byte-for-byte unchanged from the v5 retained actual request. Full state and the 512/4,096-token output limits remain intact. Primary state is unchanged and all validation minds stay paused; these controlled calls do not establish a live wake frequency.
 - Hosted release: prompt v6 is deployed through [workflow 39244651326](https://github.com/henrique-meyer/pipmind/actions/runs/39244651326), after CI passes 349 offline and 42 actual SQL tests. Independent image digests, a ready single replica, unchanged allocation/configuration/identity/SQL egress and the preserved landing HTTPS/SEO/analytics flow pass. The original 2,154 feed events, metadata and saved X history cursors remain exact, with no metadata UPDATE grant and no remaining quarantine. The controlled warm run yields one valid observation/decision, followed by 24 pre-RPC context-size refusals. Its working state grows from 11 views / 11 waiting conditions (7,190 raw bytes; 5,397 projected) to 15 / 15 (9,843 raw; 7,287 projected), pushing later prompts to about 16.7 KiB. That v6 run was paused while feeds continued; inputs/refusals remain retained and dispatches stayed zero. A successful revision or progressing outcome count does not establish successful inference.
 - Approved memory work (2026-10-19): implement bounded current market state and active actionable conditions, retaining all confirmed position theses and exact SQL history/provenance. Retrieve dated support, contrary evidence and historical detail without an age cutoff. This replaces carrying every accumulated paragraph in every prompt; it does not permit clipping unresolved conditions or changing identity/playbook. Prepare every initial view/condition disposition and resolve any semantic ambiguity through focused human review before activation. Enforce size, provenance, freshness and retained-condition transitions; hold the pending input and pause with an alert on overflow. Add an audited reconsideration path for the 24 retained pre-RPC refusals without resetting/deleting outcomes. Validate actual retained comparisons and repeated state growth before resuming. Keep allocation, quotas, prompt guards and landing unchanged; this work remains separate from M7 self-review/playbook revision.
 - Bounded-state implementation: prompt v7 / context v4 opt-in policy, complete initial dispositions, atomic SQL checkpoints and semantic-review acknowledgment; explicit changed-condition dispositions, evidence/time/revision checks and unchanged-thesis preservation. Durable held attempts pause without consuming inputs, and prior context-refused inputs can receive distinct owner-authorized present-time reconsiderations. Validation includes multistep growth, interruption rollback, original-outcome preservation and checkpoint-focused retrieval. Hosted activation and actual measurements are verified separately.
 - Retained-path correction: the initial real probe exposes a second projection of already selected checkpoint cards. Make that projection idempotent, wrap request-assembly failures as known pre-RPC held attempts, and exercise actual SQL retrieval through the Foundry request compiler/native read path across multiple decisions. Preserve the first failed attempts and correct their classification; a placeholder usage record is not evidence of a model timeout. Keep primary reasoning paused until the corrected path is validated and deployed.
 - Longer-run liveness: after the 24 audited reconsiderations and first 28-outcome verification passed, progress stopped at outcome 171 while the process still returned healthy status. Preserve the pending input and record a durable operational hold. Investigate worker lifetime/cancellation, add explicit worker phase/liveness reporting and supervision, and validate sustained progress before resuming unattended shadow reasoning. Preserve the successful checkpoint/clone evidence and all earlier attempts; no resource or capacity increase is authorized.
 - Bounded-memory delivery: PRs #41/#42 deploy prompt v8 / context v5. Complete dispositions consolidate 15 views / 15 waits from 9,843 to 1,987 bytes (5 / 5), resolving no unknown prerequisite. Original paragraphs, dependencies and dated evidence remain retrievable from immutable SQL checkpoints. All 24 original size-refused outcomes remain exact and their distinct present-time reconsiderations are observed. A 2,824-input zero-RPC sizing check fits the unchanged triage guard, including the full 3,200-byte working allowance; future growth still requires runtime checks.
-- Corrected retained cohort: eight attempts contain six observations and two preserved pre-RPC projection failures, with 14 executed model RPCs. Repeating the affected cases succeeds without rewriting the original failures. Working state stays at 1,987â€“2,060 bytes and all five original prerequisites remain unresolved. Known usage is 77,428 input / 7,305 output tokens ($0.1556254 uncached reference); forced decisions do not measure live wake frequency, and earlier actual timeout trials remain retained.
+- Corrected retained cohort: eight attempts contain six observations and two preserved pre-RPC projection failures, with 14 executed model RPCs. Repeating the affected cases succeeds without rewriting the original failures. Working state stays at 1,987–2,060 bytes and all five original prerequisites remain unresolved. Known usage is 77,428 input / 7,305 output tokens ($0.1556254 uncached reference); forced decisions do not measure live wake frequency, and earlier actual timeout trials remain retained.
 - Retained checkpoint: complete export and paused clone pass at 12,364,949 bytes, 378 files and 377 retained records, with the declared source-working-part transformation. Exact source bodies, metadata/provenance, separate destination authority and retrieval of an original QT/APF dependency are verified. This is a retained checkpoint, not a complete FX day; 32 MiB / 10,000-entry limits remain unchanged.
 - Worker delivery: PR #45 and [release 39265812217](https://github.com/henrique-meyer/pipmind/actions/runs/39265812217) provide a persistent owned event loop, child-cancellation handling, cleanup-safe response/usage retention and phase/liveness supervision. Unexpected faults hold pending input; a hard stall durably pauses before failing the existing liveness probe. CI passes 364 offline / 59 real SQL tests. Independent image, ready-replica, allocation/configuration/identity/egress and landing checks pass. The original stalled attempt remains classified as unknown phase/usage; its preserved input is now observed. Sustained live measurements follow separately.
 - Owner restart checkpoint: final SQL audit has 89 new outcomes (88 observations, one confirmed 90-second triage timeout), 134 calls and unchanged original audit/outcomes. Current working state stays at 2,556 bytes, six views / six unresolved conditions and no positions. The 35.5-minute observer retains 118 samples and 88 further outcomes, four private-status HTTP 503s (three captured as `shadow_store_busy`), and a 206-second observation gap after its first unhandled 503. The retrying observer recovers. Both containers have zero restarts; source reasoning remains resumed with no current error/hold and zero dispatches. Known uncached usage is $1.1995773, excluding the timed-out call's unknown usage. The owner requested a restart before the 100-outcome target; that validation target, status contention, full-day capacity and model reliability remain open.
@@ -468,7 +467,7 @@ Confirmation applies to direct owner-chat edits and explicit load/restore contro
 - Boundaries: preserve the landing and all retained history; ask before increasing Azure costs. No additional provider purchase, public-route exposure, capacity/security change, X write, live trading, M5 recovery/leases, M6 execution, M7 review engine or M8 publication is authorized by these remaining gates.
 
 
-## PIP-6 â€” Portable Markdown mind export/import design
+## PIP-6 — Portable Markdown mind export/import design
 
 - Story: [PIP-6](https://nitro.atlassian.net/browse/PIP-6)
 - Status: Design complete; export/import implementation scheduled below
@@ -483,15 +482,15 @@ These requirements extend the existing milestones; this documentation story does
 
 | Milestone | Delivery and acceptance |
 | --- | --- |
-| M1 â€” Contracts/replay | Define the ZIP-based `.pipmind` format, versioned Markdown/front-matter, manifest and recovery-sidecar contracts, clone/recovery semantics and compatibility rules. Add synthetic round-trip and invalid-bundle fixtures, including unsafe archive paths/expansion, with explicit capability/deferred coverage; recovery fixtures cannot dispatch to a broker. |
-| M4 â€” Shadow | Implement SQL-backed consistent export and staged atomic import of all five mind parts; preserve exact identity/playbook text and retained history, IDs, evidence and override tags. Verify experience-clone lineage, historical position theses, separate destination account initialization, rebuilt retrieval and zero orders. Reject incomplete, corrupt, incompatible or unsafe bundles without changing active state. |
-| M5 â€” Safety/recovery | Implement recovery of the original trader from a matching mind/operational checkpoint; validate private destination account binding, retained stop/override state, fresh fenced ownership, pending-command reconciliation and explicit resume. Test SQL round trips, interrupted import, stale exports, account mismatch, overlapping owners and ambiguous orders against actual enforcement paths. |
-| M6 â€” Demo orders | Exercise recovery against the demo gateway with known and uncertain command outcomes; verify no duplicate dispatch, preserved protective orders and agreement with fresh broker snapshots before resumption. |
-| M7 â€” Self-review | Round-trip current and retired rule versions, reviews, suggestion outcomes and override exclusions; preserve evidence references and monotonic versions after clone/recovery and subsequent review. |
+| M1 — Contracts/replay | Define the ZIP-based `.pipmind` format, versioned Markdown/front-matter, manifest and recovery-sidecar contracts, clone/recovery semantics and compatibility rules. Add synthetic round-trip and invalid-bundle fixtures, including unsafe archive paths/expansion, with explicit capability/deferred coverage; recovery fixtures cannot dispatch to a broker. |
+| M4 — Shadow | Implement SQL-backed consistent export and staged atomic import of all five mind parts; preserve exact identity/playbook text and retained history, IDs, evidence and override tags. Verify experience-clone lineage, historical position theses, separate destination account initialization, rebuilt retrieval and zero orders. Reject incomplete, corrupt, incompatible or unsafe bundles without changing active state. |
+| M5 — Safety/recovery | Implement recovery of the original trader from a matching mind/operational checkpoint; validate private destination account binding, retained stop/override state, fresh fenced ownership, pending-command reconciliation and explicit resume. Test SQL round trips, interrupted import, stale exports, account mismatch, overlapping owners and ambiguous orders against actual enforcement paths. |
+| M6 — Demo orders | Exercise recovery against the demo gateway with known and uncertain command outcomes; verify no duplicate dispatch, preserved protective orders and agreement with fresh broker snapshots before resumption. |
+| M7 — Self-review | Round-trip current and retired rule versions, reviews, suggestion outcomes and override exclusions; preserve evidence references and monotonic versions after clone/recovery and subsequent review. |
 
 Keep real bundles in ignored private data/output paths and outside images/public snapshots. Record integrity and compatibility results without private contents. Full operational recovery also requires protected database backups/event records; a Markdown-only mind export cannot authorize or reconstruct account execution state.
 
-## PIP-2 â€” Demo infrastructure and production deployment options
+## PIP-2 — Demo infrastructure and production deployment options
 
 - Story: [PIP-2](https://nitro.atlassian.net/browse/PIP-2)
 - Status: Complete
@@ -502,18 +501,18 @@ Keep real bundles in ignored private data/output paths and outside images/public
 
 ### Demo delivery requirements
 
-These are requirements for future implementation stories, not claims that the system is deployed. Create the individual Jira stories before implementation. Keep the roadmap order: replay harness â†’ shadow mode â†’ demo orders â†’ self-review â†’ public launch.
+These are requirements for future implementation stories, not claims that the system is deployed. Create the individual Jira stories before implementation. Keep the roadmap order: replay harness → shadow mode → demo orders → self-review → public launch.
 
 | Milestone | Revised deployment work and acceptance |
 | --- | --- |
-| M1 â€” Contracts/replay | Define versioned service and ownership envelopes plus store interfaces. Deliver the initial 30-case evaluation dataset, deterministic graders with seeded-failure tests, baseline report and credential-free PR checks described below. Replay uses fakes or an isolated local store; CI makes no Azure or broker calls. Database integration checks exercise the SQL Server adapter and migrations when available. |
-| M2 â€” Gateway | Keep the gateway independently runnable with broker credentials only in its environment. Test durable command IDs, broker-identifier mapping, and recovery from uncertain outcomes in dry mode. |
-| M3 â€” Feeds | Run macro/news/social as independently supervised engine workers. X reads posts and necessary account/role data only; request no write permissions. Test feed isolation and signed webhook durable acceptance/replay protection. |
-| M4 â€” Shadow | After resource approval, use one Container App with engine and gateway containers at 0.25 vCPU / 0.5 GiB each, one replica, default networking, and SQL S0. Provision Microsoft Foundry resource/project and configurable model deployments; verify availability/quota/pricing, managed-identity access and project-backed inference through the Agent Framework Foundry connector. Measure CPU/memory, SQL latency/search, model tokens, and API charges; demonstrate zero orders. |
-| M5 â€” Safety/recovery | Verify shared SQL ownership and stale-owner rejection across overlapping revisions, shutdown/takeover reconciliation, SQL-outage refusal, authenticated controls that run independently of model calls, external heartbeat, and backup restore. Set numerical risk limits before demo orders. |
-| M6 â€” Demo orders | Point explicitly at the broker's demo environment. Exercise round-trip orders, ambiguous-result recovery, persistent deduplication, and broker-snapshot reconciliation. Hosting in a production profile does not select a live broker account. |
-| M7 â€” Self-review | Version the SQL-backed playbook, preserve the five-part mind, and publish review diffs while excluding override evidence. |
-| M8 â€” Public launch | Static Web Apps Free reads sanitized Blob snapshots without broker/model access. Validate cache/staleness behavior, private archive permissions, provider display rights, secret-free frontend, monitoring, and the $180 planning alerts. |
+| M1 — Contracts/replay | Define versioned service and ownership envelopes plus store interfaces. Deliver the initial 30-case evaluation dataset, deterministic graders with seeded-failure tests, baseline report and credential-free PR checks described below. Replay uses fakes or an isolated local store; CI makes no Azure or broker calls. Database integration checks exercise the SQL Server adapter and migrations when available. |
+| M2 — Gateway | Keep the gateway independently runnable with broker credentials only in its environment. Test durable command IDs, broker-identifier mapping, and recovery from uncertain outcomes in dry mode. |
+| M3 — Feeds | Run macro/news/social as independently supervised engine workers. X reads posts and necessary account/role data only; request no write permissions. Test feed isolation and signed webhook durable acceptance/replay protection. |
+| M4 — Shadow | After resource approval, use one Container App with engine and gateway containers at 0.25 vCPU / 0.5 GiB each, one replica, default networking, and SQL S0. Provision Microsoft Foundry resource/project and configurable model deployments; verify availability/quota/pricing, managed-identity access and project-backed inference through the Agent Framework Foundry connector. Measure CPU/memory, SQL latency/search, model tokens, and API charges; demonstrate zero orders. |
+| M5 — Safety/recovery | Verify shared SQL ownership and stale-owner rejection across overlapping revisions, shutdown/takeover reconciliation, SQL-outage refusal, authenticated controls that run independently of model calls, external heartbeat, and backup restore. Set numerical risk limits before demo orders. |
+| M6 — Demo orders | Point explicitly at the broker's demo environment. Exercise round-trip orders, ambiguous-result recovery, persistent deduplication, and broker-snapshot reconciliation. Hosting in a production profile does not select a live broker account. |
+| M7 — Self-review | Version the SQL-backed playbook, preserve the five-part mind, and publish review diffs while excluding override evidence. |
+| M8 — Public launch | Static Web Apps Free reads sanitized Blob snapshots without broker/model access. Validate cache/staleness behavior, private archive permissions, provider display rights, secret-free frontend, monitoring, and the $180 planning alerts. |
 
 The demo uses built-in Container Apps secrets, scoped container environment references, SQL/Blob managed identity access, TLS, and appropriate firewall rules. It accepts shared app identity/lifecycle and one-instance availability, with managed SQL durability and recovery checks. The planning estimate is $59.14/month hosting and $151.31/$159.64 total under annual/monthly FXMacroData billing, before tax and any display add-on; assumptions and exclusions are in the [cost model](cost-model.md).
 
@@ -521,7 +520,7 @@ The demo uses built-in Container Apps secrets, scoped container environment refe
 
 Keep resource sizes, service addresses, identity/secret providers, network access, retention, and monitoring configurable. Separately approved production work can split the containers and feed workers into independent apps/identities, increase SQL and compute capacity, add private networking and stronger access controls, and define redundancy and tested recovery objectives. Retain one active order owner per broker account even with standby replicas. Cost and validate that profile separately; it is outside this documentation story and the demo's $180 planning budget. Production hosting and live broker-account authorization remain separate owner decisions.
 
-## PIP-1 â€” PipMind logo assets
+## PIP-1 — PipMind logo assets
 
 - Story: [PIP-1](https://nitro.atlassian.net/browse/PIP-1)
 - Status: Complete
@@ -530,7 +529,7 @@ Keep resource sizes, service addresses, identity/secret providers, network acces
 - Excludes: application code, trading integrations, and cloud provisioning.
 - Validation: inspected alongside all three reference logos, on white/navy surfaces, and at 16/24/32/48/64 pixels; checked identical SVG mark geometry, valid SVG XML, PNG dimensions, and transparency.
 
-## PIP-3 â€” Replay evaluation design and initial landing deployment
+## PIP-3 — Replay evaluation design and initial landing deployment
 
 - Story: [PIP-3](https://nitro.atlassian.net/browse/PIP-3)
 - Status: Complete; custom-domain HTTPS verified
@@ -552,7 +551,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Activate deferred gateway, SQL ownership, review and public-output cases at M2/M5/M7/M8 against real application paths. M1 fake traces demonstrate grader behavior only. Run optional real-model/judge comparisons through configured Microsoft Foundry deployments explicitly with repetitions and human calibration; track their usage outside the runtime allowance.
 - Keep evaluation quality, safety and profitability separate. Promotion requires mandatory safety cases to pass plus review of quality/cost regressions; continue through shadow mode and demo trading regardless of replay scores.
 
-## PIP-4 â€” Microsoft Foundry AI platform baseline
+## PIP-4 — Microsoft Foundry AI platform baseline
 
 - Story: [PIP-4](https://nitro.atlassian.net/browse/PIP-4)
 - Status: Complete
@@ -561,7 +560,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Excludes: cloud provisioning, AI runtime implementation, model changes and landing-container deployment.
 - Validation: audited tracked platform references and the landing-only infrastructure/dependencies; checked Markdown links/anchors, JSON examples, diff whitespace, secret scan and CI. The existing $35 model allowance and totals remain provisional until Foundry deployment prices and availability are verified.
 
-## PIP-5 â€” Shared landing footer
+## PIP-5 — Shared landing footer
 
 - Story: [PIP-5](https://nitro.atlassian.net/browse/PIP-5)
 - Status: Complete
@@ -569,7 +568,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Acceptance: requested content and links, existing license preserved, adjacent disclaimer lines at the same text size as the credit; desktop credit right-aligned and top-aligned with the first disclaimer line, with responsive stacking when needed; green periods in every wordmark including hover/focus; checked container and actual HTTPS deployment.
 - Validation: local container HTTP checks, adjacent disclaimer paragraphs, matching text sizes and exact desktop top/right alignment verified in the browser; both outbound link destinations and green periods in both wordmarks verified; lint/format, image, Bicep and secret checks run in CI. Release verification checks the published image, ready revision, health/build and custom-domain HTTPS footer while preserving its certificate binding.
 
-## PIP-7 â€” M1 contracts and replay evaluations
+## PIP-7 — M1 contracts and replay evaluations
 
 - Story: [PIP-7](https://nitro.atlassian.net/browse/PIP-7)
 - Status: Complete
@@ -578,7 +577,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Excludes: live inference/vendor/broker calls, Azure provisioning, actual trading, SQL-backed clone/recovery and production safety certification.
 - Validation: 118 tests pass with networking disabled, covering contracts, actual replay paths, grader mutations, isolation, baseline gates and archive rejection. The saved baseline has 13 passing cases and 17 explicit deferrals; the fixture week has 20 events, 15 decisions, five unsent proposals and zero dispatches; all 28 portability fixtures pass. Checked locked dependencies, lint/format, Markdown links/JSON examples and secret handling. CI runs the same offline checks and uploads only a bounded seven-day sanitized summary, alongside existing landing-image, Bicep and secret checks.
 
-## PIP-8 â€” M2 dry broker gateway
+## PIP-8 — M2 dry broker gateway
 
 - Story: [PIP-8](https://nitro.atlassian.net/browse/PIP-8)
 - Status: Complete
@@ -587,7 +586,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Excludes: Azure changes, actual broker/model calls, order submission, hosted SQL/ownership enforcement (M5) and broker demo execution (M6). Local SQLite is an isolated dry development/replay ledger only. Live read compatibility requires a separately configured broker session; synthetic tests do not certify broker access.
 - Validation: 180 tests cover the replay foundation and gateway, with offline recorded-session gates, concurrent/restarted durable acceptance, rollback on failed acknowledgement, mapping/size rejection, bounded read retries, auth restrictions, per-symbol freshness, unsafe input and seeded failures. All 15 gateway checks, 28 portability fixtures and the unchanged fixture week pass; the reviewed baseline activates S01 (14 passes, 16 deferrals). The actual non-root gateway container passes auth/duplicate/restart checks with networking disabled; the default landing container passes its existing HTTP/private-route smoke checks. Lint/format, locked dependencies, local documentation links/JSON examples and secret scanning are checked; required PR CI repeats offline tests/replay and both container checks. No real broker session or Azure deployment is claimed.
 
-## PIP-9 â€” M3 information feeds
+## PIP-9 — M3 information feeds
 
 - Story: [PIP-9](https://nitro.atlassian.net/browse/PIP-9)
 - Status: Complete
@@ -598,7 +597,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Excludes: Azure changes, provider purchases or subscription writes, live model/broker/vendor calls and trading. SQLite is isolated local development/replay only; hosted SQL/live deployment remains M4 and requires separate resource approval. Provider compatibility is unverified until an explicit live read smoke run.
 - Validation: 247 tests pass offline, including real worker kill/restart isolation, transactional input/cursor rollback, cross-transport deduplication, tampered/stale webhook rejection, cache/backoff persistence, RSS/Atom safety, role verification/failure/dormancy, X pagination and no-write policy. All 14 feed gates, 15 gateway gates, 28 portability fixtures and the fixture week pass; the baseline remains 14 passing / 16 deferred starter cases. The actual non-root feed image passes auth and all three kill/restart flows without network access. Locked dependencies, lint/format, documentation links/anchors/JSON examples, secret scans and required PR CI checks cover the change. No real provider connectivity, complete outage backfill, hosted SQL delivery or Azure deployment is claimed.
 
-## PIP-10 â€” Landing page analytics
+## PIP-10 — Landing page analytics
 
 - Story: [PIP-10](https://nitro.atlassian.net/browse/PIP-10)
 - Status: Complete; demo activation deployed and GA4 Realtime receipt verified
@@ -608,7 +607,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Original implementation validation: six landing HTTP/configuration tests, three offline JavaScript behavior checks, Bicep compilation and both enabled/disabled non-root container smoke checks pass. Browser verification confirms the local loader inserts the Google tag, navigation works and no console errors appear. CI repeats these checks alongside the existing offline replay/gateway/feed suite. These initial checks did not establish live GA4 event receipt; the approved activation below does.
 - Activation evidence (2026-10-18): configured the approved stream through the demo environment variable and deployed the existing immutable landing image using [workflow run 39135423994](https://github.com/henrique-meyer/pipmind/actions/runs/39135423994). Bicep deployment, current ready revision/image and public HTTP smoke pass. Independent before/after checks confirm image, public origin, resources, scale, probes, ingress/TLS and environment are preserved. The live browser loads the matching Google tag and navigation works without console errors. In the correct PipMind property, Realtime shows one active user, the landing title with one view, and received page_view, first_visit and session_start events. Screenshots and private configuration remain local; Enhanced Measurement remains off. No new services, credentials or advertising links were created.
 
-## PIP-11 â€” Landing page SEO
+## PIP-11 — Landing page SEO
 
 - Story: [PIP-11](https://nitro.atlassian.net/browse/PIP-11)
 - Status: Complete; approved SEO release deployed and verified
@@ -633,7 +632,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 - Release: owner requested deployment of this focused landing update through existing Bicep/OIDC; preserve resources, capacity, backend, domain and analytics. Verify production HTML/image, revision/build and complete affected browser flow. Return the public URL for re-sharing; WhatsApp cache refresh is outside application control.
 - Validation: the existing approved 1024-square PNG is sufficient and remains unchanged. All 25 landing tests and configured/unconfigured non-root container smoke checks pass, including head metadata consistency, PNG signature/type/dimensions, Host isolation and private routes. Browser approach/home navigation, Ruff, Bicep compilation and secret scanning pass. The deployment workflow repeats the public HTTP smoke; independent absolute-URL image verification and ready-revision checks are retained in private release evidence.
 
-## PIP-18 â€” Landing page portable mind refresh
+## PIP-18 — Landing page portable mind refresh
 
 - Story: [PIP-18](https://nitro.atlassian.net/browse/PIP-18)
 - Status: Landing source merged; automatic CI/CD implemented, release verification tracked in PIP-18
@@ -647,7 +646,7 @@ The M1 foundation is implemented by [PIP-7](#pip-7--m1-contracts-and-replay-eval
 ## PIP-19 - Configurable private data paths
 
 - Story: [PIP-19](https://nitro.atlassian.net/browse/PIP-19)
-- Status: Done â€” PR #67 merged; configurable application paths verified offline.
+- Status: Done — PR #67 merged; configurable application paths verified offline.
 - Private working data, reports and Azure deployment state can live outside the checkout. `PIPMIND_DATA_DIR`, `PIPMIND_REPORTS_DIR` and `PIPMIND_AZURE_DIR` select those roots; when empty, the ignored in-repo `.data/`, `evals/reports/` and `.azure/` remain the defaults, so CI and fresh clones behave as before.
 - Output guards accept the configured roots in addition to the in-repo ignored ones. Nothing loads env files automatically; process variables stay authoritative.
 
@@ -681,7 +680,7 @@ PIP-32 adds an audited atomic compare-and-resume operation under the source lock
 
 PIP-27 must first resolve the retained-history export capacity risk: the inventory manifest can reach its bound before the archive byte or entry limits. Review a compatible bounded-memory format extension and test complete inventory, dependency preservation, rejection/cleanup and paused clone fidelity. Current limits remain enforced until that extension is approved; failed or oversized exports cannot qualify a partial history.
 
-Execution order: atomic release control â†’ throughput/current model qualification â†’ source/role and owner-quality disposition â†’ complete timely shadow day â†’ measured cost/capacity and full retained-mind clone. M5 safety and recovery precede M6 demo orders; M7 reuses PIP-17 controls. Human calibration remains unassigned to await owner scoring. PIP-33 records smaller findings for later discussion and does not block unrelated work. Numeric risk limits and demo-order authority remain explicit owner decisions.
+Execution order: atomic release control → throughput/current model qualification → source/role and owner-quality disposition → complete timely shadow day → measured cost/capacity and full retained-mind clone. M5 safety and recovery precede M6 demo orders; M7 reuses PIP-17 controls. Human calibration remains unassigned to await owner scoring. PIP-33 records smaller findings for later discussion and does not block unrelated work. Numeric risk limits and demo-order authority remain explicit owner decisions.
 
 PIP-47 follows PIP-29's reference code for hosted activation; it does not prevent
 isolated offline PIP-30 design or tests. PIP-17 loading and actual demo-order
