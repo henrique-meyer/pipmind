@@ -46,36 +46,26 @@ and unsent proposals. It cannot place an order.
 
 ```mermaid
 flowchart TB
-  boot[Start / restart] --> load[Load committed SQL mind, inputs and checkpoints]
-  load --> running{Reasoning enabled<br/>and no durable hold?}
+  boot[Start / restart<br/>Load committed SQL mind and checkpoints] --> running{Reasoning enabled<br/>and no durable hold?}
   running -->|No| paused[Remain paused<br/>Feed ingestion can continue]
   paused -->|Explicit authorized shadow resume| running
   running -->|Yes| next[Take next durable input<br/>Include current broker and feed facts]
-  next --> wake{Input handling}
-  wake -->|Snapshot or quote window not due| retain[Retain evidence / refresh observations<br/>No model call for this handling path]
-  wake -->|News, release, post, due price or clock wake| context[Build bounded current-state triage context]
-  context --> triage[Triage model]
+  next --> wake{Reasoning wake?}
+  wake -->|Snapshot or quote window not due| retain[Retain observations<br/>No model call]
+  wake -->|Eligible event or clock| triage[Build bounded current-state context<br/>Call triage model]
   triage --> needed{Strong decision needed<br/>and input is not analysis?}
-  needed -->|No| record[Prepare triage-only outcome]
-  needed -->|Yes| evidence[Select dated and contrary evidence<br/>Build decision context]
-  evidence --> decide[Decision model<br/>Bounded archive search if needed]
-  decide --> valid{Output and memory transition valid?}
-  valid -->|Yes| decision[Prepare decision and updated working memory]
-  valid -->|Ordinary model/schema failure| refusal[Prepare retained model refusal<br/>No invented decision]
-  valid -->|Repairable working-memory transition| repair[One bounded memory correction attempt<br/>Keep action and evidence fixed]
-  repair --> repaired{Corrected transition valid?}
-  repaired -->|Yes| decision
-  repaired -->|No| hold
-  valid -->|Working-state invariant or bounds failure| hold[Retain failed attempt, hold input<br/>Durably pause reasoning]
-  context -->|Mandatory context cannot fit| hold
+  needed -->|No - retain triage outcome| commit
+  needed -->|Yes| decide[Select dated and contrary evidence<br/>Call decision model and bounded archive search]
+  decide --> valid{Output and memory transition valid<br/>after any allowed correction?}
+  valid -->|Yes - decision and updated working memory| commit
+  valid -->|Ordinary model/schema failure| refusal[Retain model refusal<br/>No invented decision]
+  valid -->|Working-state failure| hold[Retain failed attempt and pending input<br/>Durably pause reasoning]
+  triage -->|Mandatory context cannot fit| hold
   triage -->|Timeout or invalid response| refusal
   retain --> commit[Atomic SQL completion<br/>Evidence, outcome, trace, usage and checkpoint<br/>Check expected mind revision]
-  record --> commit
-  decision --> commit
   refusal --> commit
   commit -->|Committed| next
-  commit -->|Stale revision / interrupted / uncertain| inspect[Reload durable state before retry<br/>Do not claim an unacknowledged commit]
-  inspect --> running
+  commit -->|Stale revision or uncertain commit - reload state| running
   hold --> paused
 ```
 
@@ -90,6 +80,12 @@ revision before committing, so a pause or concurrent change invalidates stale
 output. A crash before completion can repeat a billable inference call but cannot
 duplicate an already committed outcome. Holds need inspection and explicit
 resumption; they are not automatically erased by a retry.
+
+A repairable working-memory transition permits one bounded correction attempt
+with the action and evidence fixed. It must then validate normally; a failed
+correction holds the input. Analysis can be triaged but cannot request a strong
+decision on its own. An uncertain commit requires checking durable state before
+retrying; it is not proof of rollback.
 
 ## 3. Proposed action to confirmed broker outcome
 

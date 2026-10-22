@@ -17,63 +17,53 @@ in another. Logical services do not each require their own Azure resource.
 flowchart TB
   visitor[Public visitor]
   owner[Authorized owner operations]
-  macro[FXMacroData API and SSE]
-  calendar[ForexFactory calendar]
-  news[RSS and Atom publishers]
-  social[X read-only API and role sources]
-  broker[FOREX.com demo APIs and Lightstreamer]
+  providers[Macro, calendar, news and social providers<br/>Read APIs, RSS and SSE]
+  broker[FOREX.com demo venue<br/>REST and Lightstreamer]
 
   subgraph azure[Dedicated Azure workload scope]
-    subgraph env[Container Apps managed environment - default networking]
-      landing[Public landing app<br/>HTTPS, page and assets<br/>One container - zero to one replicas]
-      subgraph backend[Private shadow app - exactly one always-on replica]
-        subgraph engine[Engine container - 0.25 vCPU / 0.5 GiB]
-          workers[Independent macro, news and social workers]
-          delivery[Durable feed delivery]
-          core[Shadow core and Agent Framework loop]
-          api[Authenticated internal API<br/>Status and input handoff]
+    subgraph env[Container Apps environment]
+      landing[Public landing app<br/>HTTPS page and assets]
+      subgraph backend[Private shadow app]
+        subgraph engine[Engine container]
+          workers[Macro / news / social workers]
+          core[Shadow core<br/>Agent Framework loop]
         end
-        gateway[Gateway container - 0.25 vCPU / 0.5 GiB<br/>Demo broker reads only]
+        gateway[Gateway container<br/>0.25 vCPU / 0.5 GiB<br/>Demo reads only]
       end
-      secrets[Built-in app secrets<br/>Scoped container configuration]
     end
-    sql[(Azure SQL Database Standard S0<br/>Mind, journal, feed inbox and outbox<br/>Cursors, inputs, audit and retrieval)]
-    foundry[Microsoft Foundry resource and project<br/>Triage and decision model deployments]
-    identity[Backend managed identity<br/>Shared by the two backend containers]
-    logs[Log Analytics / essential monitoring]
-    backups[SQL managed backups]
+    sql[(Azure SQL Standard S0<br/>Mind, events and audit)]
+    foundry[Microsoft Foundry project<br/>Triage and decision models]
+    logs[Essential monitoring]
   end
   analytics[Google Analytics]
 
   visitor -->|HTTPS| landing
   visitor -->|Browser analytics events| analytics
-  owner -->|Private authenticated operations| api
-  api --> core
-  macro -->|Release data| workers
-  calendar -->|Schedule and consensus| workers
-  news -->|Headlines and analysis| workers
-  social -->|Selected post and role reads| workers
-  workers -->|Persist accepted events| sql
-  sql -->|Pending feed outbox| delivery
-  delivery -->|Accept inputs and checkpoint| core
-  core <-->|TLS - durable state and evidence| sql
-  core <-->|Project-backed model requests and responses| foundry
-  gateway <-->|Login, streaming and REST reads| broker
-  gateway -->|Authenticated local state - prices and snapshots| core
-  gateway -->|Headline relay| workers
-  secrets -.->|Provider and internal API configuration| engine
-  secrets -.->|Broker and internal API configuration| gateway
-  identity -.->|SQL authentication and permissions| sql
-  identity -.->|Project-scoped inference access| foundry
-  engine -->|Sanitized diagnostics| logs
-  gateway -->|Sanitized diagnostics| logs
-  landing -->|Application diagnostics| logs
-  sql -->|Platform backup lifecycle| backups
+  owner -->|Private authenticated operations| core
+  providers -->|Provider data| workers
+  workers <-->|Inbox, outbox and cursors| sql
+  workers -->|Durable event handoff| core
+  core <-->|TLS - state and evidence| sql
+  core <-->|Model calls| foundry
+  broker -->|Prices, snapshots and news| gateway
+  gateway -->|Authenticated local handoff| core
+  backend -->|Sanitized diagnostics| logs
+  landing -->|Diagnostics| logs
 ```
 
-Solid arrows show runtime data/control connections. Dotted arrows show identity
-or configuration relationships. Request/response links may carry traffic in
+Arrows show runtime data/control connections. Request/response links may carry traffic in
 both directions even when an arrow emphasizes the delivered data.
+
+| Connection or component | Detail behind the overview |
+| --- | --- |
+| Provider reads | Macro actuals use FXMacroData REST/SSE; ForexFactory supplies calendar/consensus; RSS/Atom supplies news; X supplies selected read-only posts/lookups. |
+| Feed workers | Independent supervised processes inside the engine. SQL inbox/outbox and cursors make handoff durable; broker headlines can be relayed to the news worker. |
+| Private API | Authenticated status/input and feed handoff endpoints belong to the engine. Owner pause/export/clone operations use the private CLI; there is no public owner UI. |
+| Managed identity | Shared backend identity authenticates SQL and project-scoped Foundry access. The two containers do not have independent identities. |
+| Secrets | Built-in app secrets supply provider/internal API configuration to consumers; broker credentials belong only to the gateway configuration. |
+| Backups | SQL managed backups are separate from private experience-bundle exports and future Blob archives. |
+| Landing scale | One container, zero to one replicas. Backend scale is exactly one always-on replica. |
+| Backend capacity | Engine and gateway each use 0.25 vCPU / 0.5 GiB. Default managed networking; no custom VNet. |
 
 The landing has no connection to the private mind, model or broker. Its analytics
 runs in the visitor's browser. The shadow backend records decisions and unsent
