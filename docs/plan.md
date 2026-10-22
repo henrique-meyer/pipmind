@@ -2,7 +2,7 @@
 
 ## PIP-29 — Original-trader recovery and handover (2026-10-21)
 
-In Progress: build isolated dry recovery and confirmed account-assignment
+Code deliverable: isolated dry recovery and confirmed account-assignment
 handover on the delivered SQL safety boundary. External authority must live
 outside the application database restore domain and fence every recovery-aware
 operation; a separately configured SQL adapter is tested against a second
