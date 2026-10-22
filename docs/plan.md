@@ -1,5 +1,37 @@
 # Implementation plan
 
+## PIP-51 — Broker-read evidence producer for the safety boundary
+
+[PIP-51](https://nitro.atlassian.net/browse/PIP-51) first discovers and reuses
+existing broker capture, reconciliation and admission producers. If the missing
+work requires only fresh venue capture, record that gap rather than duplicate a
+framework. Otherwise implement a small standalone adapter for already-obtained
+read captures and explicit trusted request/account/query/receipt provenance.
+
+Preserve exact raw hashes, distinct position/order identities, Decimal quantities
+and supplied trusted unit mappings. Keep venue event time, observed scope and
+local capture time separate. Missing/capped pages, conflicting accounts, unknown
+fields, duplicate identities, stale/future/mixed clocks or unsupported protective
+links remain incomplete/refused. Never infer demo identity, full-book completeness,
+individual hedged protection, cash flows or policy values from absent fields.
+
+The first supported slice projects exact raw open-position captures to partial
+existing SnapshotFacts, preserving position IDs, Decimal units, source paths and
+request/receipt times. Supported synthetic projection positives exercise the
+existing comparator; missing scope/account/order/protection evidence must still
+produce its actual incomplete findings. Full risk-admission or venue protection
+positives cannot be established from these standard read shapes alone. No client
+margin is relabeled as a selected trading-account balance; no local order IDs,
+zero fills or completeness evidence are invented. Historical parsed bodies cannot
+be promoted into original wire-byte captures.
+
+No broker/provider/model/hosted calls, default runtime/HTTP wiring, PIP-17 changes,
+transport, outcome resolution, reservation release, recovery activation, numeric
+owner defaults, resources/capacity or hosted/landing/runtime-state changes.
+PIP-49/PIP-50 CI, merges and exact backups retain publication priority; disjoint
+offline discovery/implementation may proceed while those checks run. Actual
+source/venue, S0/authority and operational M4/M5/M6 gates remain separate.
+
 ## PIP-50 — Complete command-obligation recovery checkpoints
 
 [PIP-50](https://nitro.atlassian.net/browse/PIP-50) extends the isolated PIP-29
