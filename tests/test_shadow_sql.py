@@ -9544,6 +9544,7 @@ def test_command_catalog_sql_restricted_owner_module_exact_schema_and_rollback(m
     import pytds
     import pytest
 
+    from pipmind.safety.admission_sql import _lock
     from pipmind.safety.command_catalog_sql import (
         MODULE_DEFINITION_SHA256,
         MODULE_NAME,
@@ -9595,12 +9596,10 @@ def test_command_catalog_sql_restricted_owner_module_exact_schema_and_rollback(m
                 boundary = tuple(cur.fetchone())
                 assert type(boundary[0]) is int and boundary[0] != 1
                 assert boundary[2] >= 1 and boundary[3] == 1
-                cur.execute(
-                    "DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource=%s,"
-                    "@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=0; SELECT @r",
-                    (lock_name,),
-                )
-                assert cur.fetchone()[0] >= 0
+                # pytds may expose non-row frames before the lock SELECT.
+                # The existing same-cursor helper drains them and checks the
+                # actual return code without connecting or committing.
+                _lock(cur, lock_name)
                 cur.execute(
                     "SELECT name FROM sys.objects WHERE name LIKE 'pm[_]safety[_]command[_]%' "
                     "AND type IN ('U','V','SN','ET')"
