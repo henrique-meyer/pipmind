@@ -8033,3 +8033,816 @@ def test_recovery_sql_open_long_short_handover_preserves_obligations_and_origina
             "sell",
         )
         assert len(request.evidence.observed.protective_orders) == 2 and recovery.read().held
+
+
+def _command_journal_reopen_ci(connect, flow):
+    from pipmind.safety.command_journal_sql import SqlCommandJournal
+    from pipmind.safety.controls_sql import SqlControlStore
+    from pipmind.safety.lease_sql import SqlLeaseStore
+    from pipmind.safety.recovery_sql import SqlRecoveryStore
+
+    leases = SqlLeaseStore(
+        connect,
+        flow.leases.binding,
+        flow.leases.authority_epoch,
+        incarnation=flow.leases.incarnation,
+    )
+    return SqlCommandJournal(
+        connect,
+        leases,
+        SqlRecoveryStore(connect, flow.recovery.binding),
+        SqlControlStore(connect, flow.recovery.binding),
+    )
+
+
+def _command_journal_case_ci(mind):
+    from contextlib import contextmanager
+
+    from pipmind.safety.command_journal_sql import bootstrap
+
+    @contextmanager
+    def case():
+        with _authority_case_ci(mind) as (_, _, external, pin, _):  # noqa: F821
+            flow, gateway, attribution, recovery, grant, request, _, _, _ = (
+                _recovery_gateway_sql_ci(mind, external, pin)  # noqa: F821
+            )
+            assignment = _confirm_recovery_sql_ci(  # noqa: F821
+                flow, grant, request, "command-original"
+            )
+            active = flow.activate_dry(gateway, attribution, grant, assignment, request)[
+                "authority"
+            ]
+            bootstrap(mind.connect)
+            journal = _command_journal_reopen_ci(mind.connect, flow)
+            yield flow, active, journal, grant, assignment, request, gateway
+
+    return case()
+
+
+def _command_journal_call_ci(flow, active, journal, grant, assignment, callback):
+    # This tests the real local boundary inside an actual ACTIVE guard, not a
+    # claim that the command store independently verifies external authority.
+    with flow.authority.guard(active):
+
+        def operation(cur):
+            journal.controls.read_in_transaction(cur)
+            assert journal.recovery.read_in_transaction(cur).assignment == assignment
+            return callback(cur)
+
+        return journal.leases.compare_and_act(grant, operation)
+
+
+def test_command_journal_sql_exact_replay_collision_reopen_and_original_scope(mind):
+    from copy import deepcopy
+    from dataclasses import replace
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.command_journal import encode_command, encode_order, fingerprint
+
+    with _command_journal_case_ci(mind) as (flow, active, journal, grant, assignment, request, _):
+        order = deepcopy(request.order)
+        command_id = order["client_order_id"]
+
+        def record(cur):
+            return journal.record_in_transaction(
+                cur, grant, assignment, order, causation_id="retained-input-A"
+            )
+
+        original = _command_journal_call_ci(flow, active, journal, grant, assignment, record)
+        exact = encode_command(original)
+        assert original.order_body == encode_order(order)
+        assert original.scope.assignment == assignment
+        assert original.scope.owner_id == grant.owner_id
+        assert original.scope.lease_generation == grant.generation
+        assert original.scope.control_revision == journal.controls.read().revision
+        assert original.dispatch_authorized is False
+        before = journal.lookup(command_id)
+        assert before.command == original and before.attempt is None and before.unknown is None
+        assert (
+            _command_journal_call_ci(flow, active, journal, grant, assignment, record) == original
+        )
+
+        # Changes under the same immutable ID cannot replace body or causation.
+        order["side"] = "sell"
+        with pytest.raises(AuthorityUnavailable):
+            _command_journal_call_ci(flow, active, journal, grant, assignment, record)
+        order["side"] = "buy"
+        with pytest.raises(AuthorityUnavailable):
+            _command_journal_call_ci(
+                flow,
+                active,
+                journal,
+                grant,
+                assignment,
+                lambda cur: journal.record_in_transaction(
+                    cur, grant, assignment, order, causation_id="changed-cause"
+                ),
+            )
+        assert encode_command(journal.lookup(command_id).command) == exact
+
+        # A new verified local lease owner may retrieve the original scope;
+        # replay is not relabelled as a new owner/robot decision.
+        journal.leases.release(grant)
+        newer = journal.leases.acquire("command-new-owner", ttl_seconds=300)
+        assert newer.generation > grant.generation
+        reopened = _command_journal_reopen_ci(mind.connect, flow)
+        replay = _command_journal_call_ci(
+            flow,
+            active,
+            reopened,
+            newer,
+            assignment,
+            lambda cur: reopened.record_in_transaction(
+                cur, newer, assignment, order, causation_id="retained-input-A"
+            ),
+        )
+        assert replay == original and fingerprint(encode_command(replay)) == fingerprint(exact)
+        assert reopened.lookup(command_id) == before
+        assert list(reopened.iter_history()) == [before]
+        # A fabricated caller assignment cannot rewrite the retained one.
+        with pytest.raises(AuthorityUnavailable):
+            _command_journal_call_ci(
+                flow,
+                active,
+                reopened,
+                newer,
+                assignment,
+                lambda cur: reopened.record_in_transaction(
+                    cur,
+                    newer,
+                    replace(assignment, assignment_id="fabricated-replacement"),
+                    order,
+                    causation_id="retained-input-A",
+                ),
+            )
+        assert reopened.lookup(command_id) == before
+
+
+def test_command_journal_sql_concurrent_ids_and_competing_attempts_preserve_one_marker(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from copy import deepcopy
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.command_journal import encode_attempt, encode_command, fingerprint
+
+    with _command_journal_case_ci(mind) as (flow, active, journal, grant, assignment, request, _):
+        order = deepcopy(request.order)
+        command_id = order["client_order_id"]
+
+        def record(body):
+            return _command_journal_call_ci(
+                flow,
+                active,
+                journal,
+                grant,
+                assignment,
+                lambda cur: journal.record_in_transaction(
+                    cur, grant, assignment, body, causation_id="concurrent-input"
+                ),
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = pool.submit(record, order), pool.submit(record, deepcopy(order))
+            assert first.result(timeout=15) == second.result(timeout=15)
+        original = journal.lookup(command_id).command
+
+        def collide(body):
+            try:
+                return record(body)
+            except AuthorityUnavailable:
+                return None
+
+        changed = deepcopy(order)
+        changed["side"] = "sell"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            same, different = pool.submit(collide, order), pool.submit(collide, changed)
+            assert same.result(timeout=15) == original
+            assert different.result(timeout=15) is None
+        assert journal.lookup(command_id).command == original
+
+        def attempt(attempt_id):
+            try:
+                return _command_journal_call_ci(
+                    flow,
+                    active,
+                    journal,
+                    grant,
+                    assignment,
+                    lambda cur: journal.attempt_in_transaction(
+                        cur, grant, assignment, command_id, attempt_id
+                    ),
+                )
+            except AuthorityUnavailable:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(attempt, value) for value in ("attempt-A", "attempt-B")]
+            results = [future.result(timeout=15) for future in futures]
+        assert sum(value is not None for value in results) == 1
+        retained = journal.lookup(command_id)
+        assert retained.command == original and retained.unknown is None
+        assert retained.attempt == next(value for value in results if value is not None)
+        assert retained.attempt.command_sha256 == fingerprint(encode_command(original))
+        assert attempt(retained.attempt.attempt_id) == retained.attempt
+        unknown = _command_journal_call_ci(
+            flow,
+            active,
+            journal,
+            grant,
+            assignment,
+            lambda cur: journal.unknown_in_transaction(cur, grant, assignment, command_id),
+        )
+        assert unknown.attempt_sha256 == fingerprint(encode_attempt(retained.attempt))
+        assert unknown.dispatch_authorized is False
+        final = journal.lookup(command_id)
+        assert final.command == original and final.attempt == retained.attempt
+        assert final.unknown == unknown
+        assert final.unresolved is True and final.state == "unknown"
+        reopened = _command_journal_reopen_ci(mind.connect, flow)
+        assert reopened.lookup(command_id) == final and list(reopened.iter_history()) == [final]
+
+
+def test_command_journal_sql_staged_rollback_interrupt_disconnect_and_commit_unknown(mind):
+    from copy import deepcopy
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.lease_sql import LeaseCommitUnknown
+
+    with _command_journal_case_ci(mind) as (
+        flow,
+        active,
+        journal,
+        grant,
+        assignment,
+        request,
+        gateway,
+    ):
+        original_controls = journal.controls.read()
+        original_session = gateway.admission._sessions.read()
+        original_reservations = gateway.admission.snapshot()
+        # A retained prefix ensures rollback is checked against existing history.
+        prefix_order = deepcopy(request.order)
+        prefix_order["client_order_id"] = "immutable-prefix"
+        _command_journal_call_ci(
+            flow,
+            active,
+            journal,
+            grant,
+            assignment,
+            lambda cur: journal.record_in_transaction(
+                cur, grant, assignment, prefix_order, causation_id="prefix-cause"
+            ),
+        )
+        prefix = list(journal.iter_history())
+
+        def run_fault(fault):
+            opened, closed = [], []
+
+            class Connection:
+                def __init__(self):
+                    self.db = mind.connect()
+                    opened.append(self.db)
+
+                @property
+                def autocommit(self):
+                    return self.db.autocommit
+
+                def cursor(self):
+                    return self.db.cursor()
+
+                def commit(self):
+                    self.db.commit()
+                    if fault == "commit-ack":
+                        raise SystemExit("synthetic committed acknowledgement loss")
+
+                def close(self):
+                    closed.append(True)
+                    self.db.close()
+
+            failing = _command_journal_reopen_ci(Connection, flow)
+            order = deepcopy(request.order)
+            order["client_order_id"] = "staged-" + fault
+            staged = []
+
+            def operation(cur):
+                command = failing.record_in_transaction(
+                    cur, grant, assignment, order, causation_id="staged-cause"
+                )
+                attempt = failing.attempt_in_transaction(
+                    cur, grant, assignment, command.command_id, "one-attempt"
+                )
+                unknown = failing.unknown_in_transaction(cur, grant, assignment, command.command_id)
+                staged.append((command, attempt, unknown))
+                if fault == "interrupt":
+                    raise KeyboardInterrupt
+                if fault == "disconnect":
+                    opened[0].close()
+                if fault != "commit-ack":
+                    raise OSError("synthetic failure after all three staged records")
+                return command
+
+            expected = (
+                LeaseCommitUnknown
+                if fault == "commit-ack"
+                else KeyboardInterrupt
+                if fault == "interrupt"
+                else AuthorityUnavailable
+            )
+            with pytest.raises(expected):
+                _command_journal_call_ci(flow, active, failing, grant, assignment, operation)
+            assert closed == [True] and len(staged) == 1
+            retained = _command_journal_reopen_ci(mind.connect, flow).lookup(
+                order["client_order_id"]
+            )
+            if fault == "commit-ack":
+                assert (retained.command, retained.attempt, retained.unknown) == staged[0]
+                assert retained.dispatch_authorized is False
+            else:
+                assert retained is None
+                assert list(journal.iter_history()) == prefix
+
+        for fault in ("error", "interrupt", "disconnect", "commit-ack"):
+            run_fault(fault)
+        assert journal.controls.read() == original_controls
+        assert gateway.admission._sessions.read() == original_session
+        assert gateway.admission.snapshot() == original_reservations
+
+
+def test_command_journal_sql_native_backup_restores_exact_unresolved_history_and_attribution(mind):
+    import os
+    import re
+    from copy import deepcopy
+    from uuid import uuid4
+
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.attribution_sql import SqlAttributionStore
+    from pipmind.safety.command_journal import encode_attempt, encode_command, encode_unknown
+    from pipmind.safety.command_journal_sql import SqlCommandJournal
+    from pipmind.safety.controls_sql import SqlControlStore
+    from pipmind.safety.lease_sql import SqlLeaseStore
+    from pipmind.safety.recovery_flow import RecoveryAwareDryGateway
+    from pipmind.safety.recovery_sql import SqlRecoveryStore
+    from pipmind.safety.session_sql import SqlSessionStore
+    from pipmind.shadow.sql import connector, migrate
+    from pipmind.shadow.store import SqlMind
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    names = ["command_backup_" + uuid4().hex for _ in range(2)]
+    assert all(re.fullmatch(r"command_backup_[0-9a-f]{32}", name) for name in names)
+    source_name, target_name = names
+    backup_path = "/var/opt/mssql/data/" + source_name + ".bak"
+    admin = mind.connect()
+    admin.autocommit = True
+    cur = admin.cursor()
+    cur.execute(f"CREATE DATABASE [{source_name}]")
+    try:
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": source_name})
+        migrate(connect)
+        source = SqlMind(connect, "command-source")
+        source.initialize(
+            "Exact original command-source mind",
+            {"version": "v1", "text": "Exact"},
+            "2026-10-21T00:00:00Z",
+            binding="a" * 64,
+        )
+        with _command_journal_case_ci(source) as (
+            flow,
+            active,
+            journal,
+            grant,
+            assignment,
+            request,
+            gateway,
+        ):
+            attribution = SqlAttributionStore(connect, journal.binding)
+            dry = RecoveryAwareDryGateway(
+                flow.authority, active, gateway, flow.recovery, attribution, assignment
+            )
+            assert dry.accept(grant, request)["gateway_receipt"]["outcome"] == "dry_accepted"
+            original_link = attribution.lookup("accept", request.order["client_order_id"])
+            order = deepcopy(request.order)
+            command_id = order["client_order_id"]
+
+            def operation(cursor):
+                command = journal.record_in_transaction(
+                    cursor, grant, assignment, order, causation_id="backup-input"
+                )
+                attempt = journal.attempt_in_transaction(
+                    cursor, grant, assignment, command_id, "backup-attempt"
+                )
+                unknown = journal.unknown_in_transaction(cursor, grant, assignment, command_id)
+                return command, attempt, unknown
+
+            command, attempt, unknown = _command_journal_call_ci(
+                flow, active, journal, grant, assignment, operation
+            )
+            expected = journal.lookup(command_id)
+            exact = (encode_command(command), encode_attempt(attempt), encode_unknown(unknown))
+            controls_before = journal.controls.read()
+            recovery_before = journal.recovery.read()
+            reservations_before = gateway.admission.snapshot()
+            assert len(reservations_before[0]) == 1 and original_link.assignment == assignment
+            cur.execute(
+                f"BACKUP DATABASE [{source_name}] TO DISK=N'{backup_path}' "
+                "WITH INIT,COPY_ONLY,CHECKSUM"
+            )
+            while cur.nextset():
+                pass
+            cur.execute(f"RESTORE VERIFYONLY FROM DISK=N'{backup_path}' WITH CHECKSUM")
+            while cur.nextset():
+                pass
+            cur.execute(
+                f"RESTORE DATABASE [{target_name}] FROM DISK=N'{backup_path}' "
+                f"WITH MOVE N'{source_name}' TO N'/var/opt/mssql/data/{target_name}.mdf',"
+                f"MOVE N'{source_name}_log' TO N'/var/opt/mssql/data/{target_name}_log.ldf',"
+                "CHECKSUM,RECOVERY"
+            )
+            while cur.nextset():
+                pass
+            restored_connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": target_name})
+            # Historical reads deliberately do not adopt/activate the new DB.
+            # The supplied old pin remains old, never a recovered send permit.
+            restored = SqlCommandJournal(
+                restored_connect,
+                SqlLeaseStore(
+                    restored_connect,
+                    flow.leases.binding,
+                    flow.leases.authority_epoch,
+                    incarnation=flow.leases.incarnation,
+                ),
+                SqlRecoveryStore(restored_connect, journal.binding),
+                SqlControlStore(restored_connect, journal.binding),
+            )
+            actual = restored.lookup(command_id)
+            assert actual == expected and list(restored.iter_history()) == [expected]
+            assert (
+                encode_command(actual.command),
+                encode_attempt(actual.attempt),
+                encode_unknown(actual.unknown),
+            ) == exact
+            assert actual.command.scope.assignment == assignment
+            assert actual.attempt.scope.assignment == assignment
+            assert actual.unknown.scope.assignment == assignment
+            assert actual.dispatch_authorized is False
+            assert restored.controls.read() == controls_before
+            assert restored.recovery.read() == recovery_before
+            restored_sessions = SqlSessionStore(
+                restored_connect, journal.binding, gateway.admission.session_id
+            )
+            restored_admission = SqlAdmissionStore(
+                restored_connect, restored.leases, restored_sessions, gateway.admission._policies
+            )
+            assert restored_sessions.read() == gateway.admission._sessions.read()
+            assert restored_admission.snapshot() == reservations_before
+            assert (
+                SqlAttributionStore(restored_connect, journal.binding).lookup(
+                    "accept", request.order["client_order_id"]
+                )
+                == original_link
+            )
+            assert gateway.admission.snapshot() == reservations_before
+            assert SqlMind(restored_connect, source.trader).head()["paused"] is True
+    finally:
+        for name in reversed(names):
+            cur.execute(
+                f"IF DB_ID(N'{name}') IS NOT NULL BEGIN "
+                f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+                f"DROP DATABASE [{name}]; END"
+            )
+        admin.close()
+
+
+def test_command_journal_sql_current_controls_released_lease_and_assignment_boundaries(mind):
+    from dataclasses import replace
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+
+    with _command_journal_case_ci(mind) as (flow, active, journal, grant, assignment, request, _):  # noqa: F821
+        order = {**request.order, "client_order_id": "control-original"}
+
+        def call(callback, current_grant=grant):
+            return _command_journal_call_ci(  # noqa: F821
+                flow, active, journal, current_grant, assignment, callback
+            )
+
+        original = call(
+            lambda cur: journal.record_in_transaction(
+                cur, grant, assignment, order, causation_id="control-source"
+            )
+        )
+        attempt = call(
+            lambda cur: journal.attempt_in_transaction(
+                cur, grant, assignment, "control-original", "original-attempt"
+            )
+        )
+        for action in ("pause", "kill"):
+            before = journal.controls.read()
+            held = journal.controls.apply_override(
+                "command-test-" + action,
+                "owner",
+                action,
+                before.revision,
+                "Explicit synthetic control-boundary proof",
+            )["state"]
+            assert held["paused"] is True
+            new_id = "held-audit-" + action
+            audit = call(
+                lambda cur, identity=new_id: journal.record_in_transaction(
+                    cur,
+                    grant,
+                    assignment,
+                    {**request.order, "client_order_id": identity},
+                    causation_id="held-source",
+                )
+            )
+            assert audit.scope.control_revision == held["revision"]
+            assert audit.local_outcome == "recorded" and audit.dispatch_authorized is False
+            refused = call(
+                lambda cur, identity=new_id + "-refused": journal.record_in_transaction(
+                    cur,
+                    grant,
+                    assignment,
+                    {**request.order, "client_order_id": identity},
+                    causation_id="held-refusal-source",
+                    local_outcome="refused",
+                    code="locally_refused",
+                )
+            )
+            assert (
+                refused.local_outcome == "refused"
+                and refused.scope.control_revision == held["revision"]
+            )
+            # Registration is an audit fact, never permission to create a marker
+            # under either pause or kill. Nothing is implicitly lifted.
+            with pytest.raises(AuthorityUnavailable):
+                call(
+                    lambda cur, identity=new_id: journal.attempt_in_transaction(
+                        cur, grant, assignment, identity, "must-not-mark"
+                    )
+                )
+            assert journal.lookup(new_id).attempt is None
+            unknown = call(
+                lambda cur: journal.unknown_in_transaction(
+                    cur, grant, assignment, "control-original"
+                )
+            )
+            assert unknown.scope.control_revision >= original.scope.control_revision
+            retained = journal.lookup("control-original")
+            assert (
+                retained.command == original and retained.attempt == attempt and retained.unresolved
+            )
+
+        journal.leases.release(grant)
+        with pytest.raises(AuthorityUnavailable):
+            call(
+                lambda cur: journal.record_in_transaction(
+                    cur,
+                    grant,
+                    assignment,
+                    {**request.order, "client_order_id": "released-owner"},
+                    causation_id="released-source",
+                )
+            )
+        assert journal.lookup("released-owner") is None
+        current = journal.leases.acquire("new-current-owner", ttl_seconds=300)
+        with pytest.raises(AuthorityUnavailable):
+            call(
+                lambda cur: journal.record_in_transaction(
+                    cur,
+                    current,
+                    replace(assignment, assignment_id="unretained-assignment"),
+                    {**request.order, "client_order_id": "wrong-assignment"},
+                    causation_id="wrong-source",
+                ),
+                current,
+            )
+        assert journal.lookup("wrong-assignment") is None
+        assert journal.lookup("control-original").command == original
+
+
+def test_command_journal_sql_poststaging_lease_expiry_rolls_back_account_and_intent(
+    mind, monkeypatch
+):
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.session import account_key
+
+    with _command_journal_case_ci(mind) as (flow, active, journal, old, assignment, request, _):  # noqa: F821
+        journal.leases.release(old)
+        grant = journal.leases.acquire("short-command-owner", ttl_seconds=2)
+        staged = []
+        original = journal._save
+
+        def delayed(cur, table, record, encoder):
+            original(cur, table, record, encoder)
+            staged.append(record.command_id)
+            cur.execute("WAITFOR DELAY '00:00:02.100'")
+
+        monkeypatch.setattr(journal, "_save", delayed)
+        with pytest.raises(AuthorityUnavailable):
+            _command_journal_call_ci(  # noqa: F821
+                flow,
+                active,
+                journal,
+                grant,
+                assignment,
+                lambda cur: journal.record_in_transaction(
+                    cur, grant, assignment, request.order, causation_id="expiry-source"
+                ),
+            )
+        assert staged == [request.order["client_order_id"]]
+        assert journal.lookup(request.order["client_order_id"]) is None
+        with mind.transaction() as cur:
+            for table in ("accounts", "intents", "attempts", "unknown"):
+                cur.execute(
+                    "SELECT COUNT(*) FROM dbo.pm_safety_command_"
+                    + table
+                    + "_v1 WHERE account_key=%s",
+                    (account_key(journal.binding),),
+                )
+                assert cur.fetchone()[0] == 0
+
+
+def test_command_journal_sql_confirmed_handover_preserves_A_and_B_only_observes_unknown(mind):
+    import pytest
+
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.attribution_sql import SqlAttributionStore
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.command_journal import encode_attempt, encode_command, fingerprint
+    from pipmind.safety.command_journal_sql import SqlCommandJournal
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+
+    with _command_journal_case_ci(mind) as (flow, active, journal, grant, first, request, gateway):  # noqa: F821
+        order = request.order
+        command_id = order["client_order_id"]
+        original = _command_journal_call_ci(  # noqa: F821
+            flow,
+            active,
+            journal,
+            grant,
+            first,
+            lambda cur: journal.record_in_transaction(
+                cur, grant, first, order, causation_id="original-A"
+            ),
+        )
+        attempt = _command_journal_call_ci(  # noqa: F821
+            flow,
+            active,
+            journal,
+            grant,
+            first,
+            lambda cur: journal.attempt_in_transaction(cur, grant, first, command_id, "attempt-A"),
+        )
+        untouched_id = "unattempted-A"
+        untouched = _command_journal_call_ci(  # noqa: F821
+            flow,
+            active,
+            journal,
+            grant,
+            first,
+            lambda cur: journal.record_in_transaction(
+                cur,
+                grant,
+                first,
+                {**order, "client_order_id": untouched_id},
+                causation_id="unattempted-A",
+            ),
+        )
+        attribution = SqlAttributionStore(mind.connect, journal.binding)
+        wrapped = RecoveryAwareDryGateway(
+            flow.authority, active, gateway, flow.recovery, attribution, first
+        )
+        accepted = wrapped.accept(grant, request)
+        assert accepted["gateway_receipt"]["outcome"] == "dry_accepted"
+        original_link = attribution.lookup("accept", command_id)
+        before = (
+            gateway.admission.snapshot(),
+            gateway.controls.read(),
+            gateway.admission.sessions.read(),
+            mind.head(),
+        )
+        assert len(before[0][0]) == 1
+
+        flow.authority.fence(
+            "command-handover-B",
+            "owner",
+            active.revision,
+            active.epoch,
+            active.application_incarnation,
+            "Explicit confirmed dry handover retaining unresolved command obligations",
+        )
+        held = flow.authority.read()
+        rebind_held(flow.authority, held, mind.connect, active.epoch)
+        leases = SqlLeaseStore(
+            mind.connect, flow.leases.binding, held.epoch, incarnation=held.application_incarnation
+        )
+        new_grant = leases.acquire("command-owner-B", ttl_seconds=300)
+        admission = SqlAdmissionStore(
+            mind.connect, leases, gateway.admission.sessions, gateway.admission._policies
+        )
+        next_gateway = SqlSafetyGateway(
+            admission, gateway.controls, gateway._symbols, base_units_per_size=gateway._unit_factors
+        )
+        next_flow = DryRecoveryCoordinator(flow.authority, held, leases, flow.recovery)
+        second = _confirm_recovery_sql_ci(next_flow, new_grant, request, "command-B")  # noqa: F821
+        result = next_flow.activate_dry(next_gateway, attribution, new_grant, second, request)
+        new_active = result["authority"]
+        assert new_active.mode == "active" and second != first
+        current = SqlCommandJournal(mind.connect, leases, flow.recovery, gateway.controls)
+
+        def call(callback):
+            return _command_journal_call_ci(  # noqa: F821
+                next_flow, new_active, current, new_grant, second, callback
+            )
+
+        unknown = call(
+            lambda cur: current.unknown_in_transaction(cur, new_grant, second, command_id)
+        )
+        assert unknown.scope.assignment == second and unknown.scope.owner_id == new_grant.owner_id
+        assert unknown.command_sha256 == fingerprint(encode_command(original))
+        assert unknown.attempt_sha256 == fingerprint(encode_attempt(attempt))
+        assert (
+            call(
+                lambda cur: current.attempt_in_transaction(
+                    cur, new_grant, second, command_id, "attempt-A"
+                )
+            )
+            == attempt
+        )  # Original historical marker, never a second attempt.
+        with pytest.raises(AuthorityUnavailable):
+            call(
+                lambda cur: current.attempt_in_transaction(
+                    cur, new_grant, second, untouched_id, "must-not-adopt-A"
+                )
+            )
+        retained = current.lookup(command_id)
+        assert (
+            retained.command == original
+            and retained.attempt == attempt
+            and retained.unknown == unknown
+        )
+        assert (
+            current.lookup(untouched_id).command == untouched
+            and current.lookup(untouched_id).attempt is None
+        )
+        assert (
+            attribution.lookup("accept", command_id) == original_link
+            and original_link.assignment == first
+        )
+        assert (
+            admission.snapshot(),
+            gateway.controls.read(),
+            gateway.admission.sessions.read(),
+            mind.head(),
+        ) == before
+        assert result["dispatch_authorized"] is result["engine_resumed"] is False
+        # This separately verifies retained journal bodies; the existing 15-table
+        # recovery inventory does not consume/qualify these new obligations.
+
+
+def test_command_journal_sql_complete_history_crosses_native_keyset_page(mind):
+    from pipmind.safety.command_journal import encode_command
+
+    with _command_journal_case_ci(mind) as (flow, active, journal, grant, assignment, request, _):  # noqa: F821
+
+        def batch(cur):
+            return [
+                journal.record_in_transaction(
+                    cur,
+                    grant,
+                    assignment,
+                    {**request.order, "client_order_id": f"page-{index:03d}"},
+                    causation_id="page-source",
+                )
+                for index in range(65)
+            ]
+
+        original = _command_journal_call_ci(  # noqa: F821
+            flow, active, journal, grant, assignment, batch
+        )
+        history = list(journal.iter_history())
+        assert len(history) == 65 and [row.command for row in history] == original
+        assert [row.command.command_id for row in history] == [
+            f"page-{index:03d}" for index in range(65)
+        ]
+        assert all(
+            row.attempt is None and row.unknown is None and not row.dispatch_authorized
+            for row in history
+        )
+        assert [encode_command(row.command) for row in journal.iter_history()] == [
+            encode_command(row) for row in original
+        ]
