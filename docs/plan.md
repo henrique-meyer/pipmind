@@ -1,3 +1,14 @@
+## PIP-55 — Infrastructure and workflow diagrams
+
+[PIP-55](https://nitro.atlassian.net/browse/PIP-55) documents the infrastructure
+connections and end-to-end workflows in two linked Markdown/Mermaid guides.
+Show service/container boundaries, APIs, SQL, model calls, storage, delivery,
+recurring loops and failure/recovery paths. Distinguish the last verified hosted
+shadow layout, newer isolated code and planned trading/learning/publication.
+Use generic labels throughout, without actual instance resource names, domains,
+identifiers or private configuration. Validate diagrams, links and secret hygiene.
+This documentation work changes no hosted resources, configuration or runtime.
+
 ## PIP-54 — Explicit restricted complete-checkpoint capture
 
 [PIP-54](https://nitro.atlassian.net/browse/PIP-54) composes the verified PIP-53
