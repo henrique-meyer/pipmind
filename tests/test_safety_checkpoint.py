@@ -103,7 +103,7 @@ class Cursor:
             self.metadata[params[0]] = self.metadata.get(params[0], 0) + 1
             self.result = []
             for name, kind, length, nullable, key in SCHEMA[params[0]]:
-                precision, scale = {"bigint": (19, 0), "bit": (1, 0), "datetime2": (27, 6)}.get(
+                precision, scale = {"bigint": (19, 0), "bit": (1, 0), "datetime2": (26, 6)}.get(
                     kind, (0, 0)
                 )
                 self.result.append(
@@ -212,6 +212,35 @@ def test_complete_inventory_and_exact_codec_are_deterministic_and_frozen():
         first.sha256 = "0" * 64
     with pytest.raises(FrozenInstanceError):
         first.tables[0].count = 0
+
+
+def test_literal_native_lease_catalog_accepts_datetime2_6_precision_26_only():
+    # Independent literal catalog rows for the existing lease DDL, not generated
+    # from the inventory schema or its precision table. Microsoft documents
+    # datetime2(s) precision as s + 20 for nonzero s; datetime2(6) is (26, 6).
+    catalog = [
+        ("binding_key", "char", 64, 0, 0, False, 1, "Latin1_General_100_BIN2"),
+        ("account_id", "nvarchar", 256, 0, 0, False, 0, None),
+        ("environment", "nvarchar", 256, 0, 0, False, 0, None),
+        ("resource", "nvarchar", 256, 0, 0, False, 0, None),
+        ("authority_epoch", "nvarchar", 256, 0, 0, False, 0, None),
+        ("generation", "bigint", 8, 19, 0, False, 0, None),
+        ("owner_id", "nvarchar", 256, 0, 0, True, 0, None),
+        ("token_sha256", "char", 64, 0, 0, True, 0, None),
+        ("expires_at", "datetime2", 8, 26, 6, True, 0, None),
+    ]
+
+    class NativeLeaseCatalog(Cursor):
+        def execute(self, query, params=()):
+            super().execute(query, params)
+            if "FROM sys.columns" in query and params[0] == "dbo.pm_safety_leases_v1":
+                self.result = list(catalog)
+            return self
+
+    assert capture(NativeLeaseCatalog()) == capture()
+    catalog[-1] = ("expires_at", "datetime2", 8, 27, 6, True, 0, None)
+    with pytest.raises(CheckpointUnavailable, match="^safety_inventory_unavailable$"):
+        capture(NativeLeaseCatalog())
 
 
 def test_no_history_prefix_cap_and_mutation_at_final_old_row_changes_digest():

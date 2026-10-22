@@ -72,6 +72,11 @@ def context(monkeypatch):
     open_guard = []
 
     class Guard:
+        def record_application_barrier(self, pin, generation):
+            assert open_guard and events[-1] == "main_ack"
+            assert pin == APP and type(generation) is int and generation > 0
+            events.append(("application_barrier", pin, generation))
+
         def activate(self, *args):
             assert open_guard and "main_ack" in events
             events.append(("activate", args))
@@ -447,7 +452,14 @@ def test_held_epoch_rebind_clears_old_owner_advances_generation_and_exact_replay
     def connect():
         connection = db.connect()
         original = connection.cursor
+        original_commit = connection.commit
         connection.cursor = lambda: Cursor(original())
+
+        def acknowledged_commit():
+            original_commit()
+            c["events"].append("main_ack")
+
+        connection.commit = acknowledged_commit
         return connection
 
     old = SqlLeaseStore(connect, c["leases"].binding, "old-epoch", incarnation=APP)
@@ -464,6 +476,17 @@ def test_held_epoch_rebind_clears_old_owner_advances_generation_and_exact_replay
     row = next(iter(db.rows.values()))
     assert row[5:] == [None, None, None]
     assert recovery_flow.rebind_held(c["authority"], c["expected"], connect, "old-epoch") == result
+    barriers = [
+        event for event in c["events"] if type(event) is tuple and event[0] == "application_barrier"
+    ]
+    assert barriers == [("application_barrier", APP, result["generation"])] * 2
+    db.commit_failure = "after"
+    with pytest.raises(LeaseCommitUnknown):
+        recovery_flow.rebind_held(c["authority"], c["expected"], connect, "old-epoch")
+    assert [
+        event for event in c["events"] if type(event) is tuple and event[0] == "application_barrier"
+    ] == barriers
+    db.commit_failure = None
     current = SqlLeaseStore(connect, c["leases"].binding, c["expected"].epoch, incarnation=APP)
     with pytest.raises(LeaseRefused):
         current.compare_and_act(grant, lambda cur: pytest.fail("old grant must not reach callback"))

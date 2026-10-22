@@ -6505,6 +6505,7 @@ def test_external_authority_sql_exact_fence_reopen_and_stale_guard(mind):
 
     with _authority_case_ci(mind) as (store, held, connect, pin, app):
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             active = guard.activate("assignment-A", 1, "a" * 64)
         assert store.read() == active
         receipt = store.fence(
@@ -6518,6 +6519,7 @@ def test_external_authority_sql_exact_fence_reopen_and_stale_guard(mind):
             with reopened.guard(active):
                 pytest.fail("stale owner entered external guard")
         with reopened.guard(fenced, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             replacement = guard.activate("assignment-B", 2, "b" * 64)
         assert (
             reopened.fence("fence-A", "owner", active.revision, active.epoch, app, "Explicit fence")
@@ -6539,6 +6541,7 @@ def test_external_authority_sql_fence_waits_for_existing_guard_and_denies_old_st
 
     with _authority_case_ci(mind) as (store, held, _, _, app):
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             active = guard.activate("assignment-A", 1, "a" * 64)
         entered, release, fencing = Event(), Event(), Event()
 
@@ -6603,11 +6606,13 @@ def test_external_authority_sql_staged_failure_interrupt_and_disconnect_keep_hol
             expected = KeyboardInterrupt if mode == "interrupt" else AuthorityUnavailable
             with pytest.raises(expected):
                 with store.guard(held, mode="held") as guard:
+                    guard.record_application_barrier(guard.state.application_incarnation, 1)
                     guard.activate("assignment-A", 1, "a" * 64)
             assert staged == [True]
             assert SqlAuthorityStore(connect, store.binding, pin).read() == held
         monkeypatch.setattr(store, "_write", original)
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             active = guard.activate("assignment-A", 1, "a" * 64)
         assert store.read() == active
 
@@ -6626,6 +6631,7 @@ def test_external_authority_sql_external_lost_ack_and_inner_application_uncertai
         uncertain_app = LeaseCommitUnknown("lease_commit_unknown")
         with pytest.raises(LeaseCommitUnknown) as caught:
             with store.guard(held, mode="held") as guard:
+                guard.record_application_barrier(guard.state.application_incarnation, 1)
                 guard.activate("not-acknowledged", 1, "a" * 64)
                 raise uncertain_app
         assert caught.value is uncertain_app and store.read() == held
@@ -6651,6 +6657,7 @@ def test_external_authority_sql_external_lost_ack_and_inner_application_uncertai
         uncertain = SqlAuthorityStore(LostAck, store.binding, pin)
         with pytest.raises(AuthorityCommitUnknown, match="^authority_commit_unknown$"):
             with uncertain.guard(held, mode="held") as guard:
+                guard.record_application_barrier(guard.state.application_incarnation, 1)
                 guard.activate("persisted-with-lost-ack", 1, "a" * 64)
         reopened = SqlAuthorityStore(connect, store.binding, pin)
         current = reopened.read()
@@ -7530,3 +7537,255 @@ def test_recovery_attribution_sql_atomic_hook_links_and_original_assignment_repl
     assert len(admission.snapshot()[0]) == 1
     monkeypatch.setattr(attribution, "record_in_transaction", real_record)
     assert hooked.check(grant, check_id, request)["gateway_receipt"]["outcome"] == "dry_checked"
+
+
+"""Root integrates this real-SQL regression; never execute it against hosted SQL."""
+
+
+def test_recovery_sql_authority_disconnect_fence_is_not_application_quiescence(mind, monkeypatch):
+    import os
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable, SqlAuthorityStore
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    with _authority_case_ci(mind) as (_, _, external, external_pin, _):  # noqa: F821
+        flow, gateway, attribution, recovery, grant, request, _, _, _ = _recovery_gateway_sql_ci(  # noqa: F821
+            mind, external, external_pin
+        )
+        first = _confirm_recovery_sql_ci(flow, grant, request, "disconnect-A")  # noqa: F821
+        active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+        staged, release, rebind_attempted = Event(), Event(), Event()
+        guard_spids, staged_assignments = [], []
+
+        class GuardConnection:
+            def __init__(self):
+                self.db = external()
+                cur = self.db.cursor()
+                cur.execute("SELECT @@SPID")
+                spid = cur.fetchone()[0]
+                assert type(spid) is int and 1 <= spid <= 32767
+                guard_spids.append(spid)
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return self.db.cursor()
+
+            def commit(self):
+                self.db.commit()
+
+            def close(self):
+                self.db.close()
+
+        worker_authority = SqlAuthorityStore(GuardConnection, flow.leases.binding, external_pin)
+        wrapper = RecoveryAwareDryGateway(
+            worker_authority, active, gateway, recovery, attribution, first
+        )
+        original_compare = flow.leases.compare_and_act
+
+        def delayed_compare(current_grant, callback):
+            def operation(cur):
+                result = callback(cur)
+                assert result["gateway_receipt"]["outcome"] == "dry_accepted"
+                assert result["attribution"]["assignment"]["assignment_id"] == first.assignment_id
+                staged_assignments.append(result["attribution"]["assignment"]["assignment_id"])
+                # All acceptance/attribution writes have executed on the lease
+                # transaction. No main commit or returned permit exists yet.
+                staged.set()
+                assert release.wait(timeout=10)
+                return result
+
+            return original_compare(current_grant, operation)
+
+        monkeypatch.setattr(flow.leases, "compare_and_act", delayed_compare)
+
+        class RebindCursor:
+            def __init__(self, cur):
+                self.cur = cur
+
+            def execute(self, query, *args):
+                if "sp_getapplock" in query:
+                    rebind_attempted.set()
+                return self.cur.execute(query, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.cur, name)
+
+        class RebindConnection:
+            def __init__(self):
+                self.db = mind.connect()
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return RebindCursor(self.db.cursor())
+
+            def commit(self):
+                self.db.commit()
+
+            def close(self):
+                self.db.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            running = pool.submit(wrapper.accept, grant, request)
+            try:
+                assert staged.wait(timeout=5)
+                assert len(guard_spids) == 1 and staged_assignments == [first.assignment_id]
+                # KILL is explicitly restricted to the captured live guard SPID
+                # on the disposable local CI server. The admin session differs.
+                admin = external()
+                try:
+                    admin.autocommit = True
+                    cur = admin.cursor()
+                    cur.execute("SELECT @@SPID")
+                    assert cur.fetchone()[0] != guard_spids[0]
+                    cur.execute("KILL " + str(guard_spids[0]))
+                    while cur.nextset():
+                        pass
+                finally:
+                    admin.close()
+
+                fence = flow.authority.fence(
+                    "disconnect-fence",
+                    "owner",
+                    active.revision,
+                    active.epoch,
+                    active.application_incarnation,
+                    "Explicit fence after loss of an in-flight external guard connection",
+                )
+                held = flow.authority.read()
+                assert fence["after"]["epoch"] == held.epoch and held.mode == "held"
+                assert held.assignment_generation == first.generation
+                assert not running.done()  # Fence acknowledged; app transaction still staged.
+                rebinding = pool.submit(
+                    rebind_held, flow.authority, held, RebindConnection, active.epoch
+                )
+                assert rebind_attempted.wait(timeout=3)
+                with pytest.raises(TimeoutError):
+                    rebinding.result(timeout=0.2)
+            finally:
+                release.set()
+            # The application write may commit, but the severed external guard
+            # must prevent the outer operation from returning a positive result.
+            with pytest.raises(AuthorityUnavailable):
+                running.result(timeout=5)
+            rebound = rebinding.result(timeout=5)
+
+        assert rebound["generation"] > grant.generation and rebound["held"] is True
+        assert flow.authority.read() == held
+        assert len(gateway.admission.snapshot()[0]) == 1
+        original_link = attribution.lookup("accept", request.order["client_order_id"])
+        assert original_link.assignment == first and original_link.dispatch_authorized is False
+        with pytest.raises(LeaseRefused):
+            original_compare(grant, lambda cur: pytest.fail("old owner reached SQL callback"))
+
+        current = SqlLeaseStore(
+            mind.connect, flow.leases.binding, held.epoch, incarnation=held.application_incarnation
+        )
+        replacement_grant = current.acquire("replacement-owner", ttl_seconds=300)
+        assert replacement_grant.generation > rebound["generation"]
+        replacement_flow = DryRecoveryCoordinator(flow.authority, held, current, recovery)
+        second = _confirm_recovery_sql_ci(  # noqa: F821
+            replacement_flow, replacement_grant, request, "disconnect-B"
+        )
+        assert second.generation == first.generation + 1 and second.epoch == held.epoch
+        assert attribution.lookup("accept", request.order["client_order_id"]) == original_link
+        assert len(gateway.admission.snapshot()[0]) == 1
+        assert recovery.read().held and flow.authority.read() == held and mind.head()["paused"]
+
+
+def test_recovery_sql_target_barrier_does_not_substitute_for_missing_original_source(mind):
+    import os
+    import re
+    from uuid import uuid4
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.incarnation import read_incarnation
+    from pipmind.safety.lease_sql import SqlLeaseStore, bootstrap
+    from pipmind.safety.recovery_flow import rebind_held
+    from pipmind.shadow.sql import connector
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    name = "barrier_target_" + uuid4().hex
+    assert re.fullmatch(r"barrier_target_[0-9a-f]{32}", name)
+    admin = mind.connect()
+    admin.autocommit = True
+    cur = admin.cursor()
+    cur.execute(f"CREATE DATABASE [{name}]")
+    try:
+        target_connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        target = target_connect()
+        try:
+            target_pin = read_incarnation(target.cursor())
+        finally:
+            target.close()
+        bootstrap(target_connect)
+        with _authority_case_ci(mind) as (_, _, external, external_pin, _):  # noqa: F821
+            flow, gateway, attribution, recovery, grant, request, _, _, _ = (
+                _recovery_gateway_sql_ci(  # noqa: F821
+                    mind, external, external_pin
+                )
+            )
+            first = _confirm_recovery_sql_ci(flow, grant, request, "missing-source")  # noqa: F821
+            active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+            assert active.application_incarnation != target_pin
+            # Initial source rebind's E1 barrier predates ACTIVE E1 work. A
+            # direct target fence E2 must require a NEW original-source proof.
+            flow.authority.fence(
+                "target-before-source",
+                "owner",
+                active.revision,
+                active.epoch,
+                target_pin,
+                "Deliberate negative test: source has not been drained",
+            )
+            held = flow.authority.read()
+            source_pointer = (held.source_incarnation, held.source_epoch)
+            assert source_pointer == (active.application_incarnation, held.epoch)
+            target_leases = SqlLeaseStore(
+                target_connect, flow.leases.binding, held.epoch, incarnation=target_pin
+            )
+            target_leases.initialize()  # Fresh, empty target; never resets an existing owner.
+            target_barrier = rebind_held(flow.authority, held, target_connect, held.epoch)
+            assert target_barrier["held"] and target_barrier["generation"] == 0
+            with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
+                with flow.authority.guard(held, mode="held") as guard:
+                    guard.activate("must-not-activate", first.generation + 1, "a" * 64)
+            assert flow.authority.read() == held
+            # Another HELD target fence must not overwrite the original source
+            # pointer or make the absent source acknowledgement disappear.
+            flow.authority.fence(
+                "target-again",
+                "owner",
+                held.revision,
+                held.epoch,
+                target_pin,
+                "Repeated target fence must preserve required original source",
+            )
+            next_held = flow.authority.read()
+            assert (next_held.source_incarnation, next_held.source_epoch) == source_pointer
+            rebind_held(flow.authority, next_held, target_connect, held.epoch)
+            with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
+                with flow.authority.guard(next_held, mode="held") as guard:
+                    guard.activate("still-must-not-activate", first.generation + 1, "a" * 64)
+            assert flow.authority.read() == next_held and recovery.read().assignment == first
+    finally:
+        cur.execute(f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+        cur.execute(f"DROP DATABASE [{name}]")
+        admin.close()

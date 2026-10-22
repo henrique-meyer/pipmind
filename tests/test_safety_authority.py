@@ -47,7 +47,7 @@ class Database:
     def __init__(self):
         self.incarnation = AUTH
         self.engine = 3
-        self.rows, self.journal = {}, {}
+        self.rows, self.journal, self.barriers = {}, {}, {}
         self.connections, self.statements = [], []
         self.autocommit = False
         self.outage = self.native_missing = False
@@ -69,6 +69,7 @@ class Connection:
     def __init__(self, database):
         self.database = database
         self.rows, self.journal = deepcopy(database.rows), deepcopy(database.journal)
+        self.barriers = deepcopy(database.barriers)
         self.autocommit = database.autocommit
         self.closed = self.committed = False
 
@@ -82,6 +83,7 @@ class Connection:
         if db.commit_interrupt and db.commit_interrupt[0] == "before":
             raise db.commit_interrupt[1]("private commit interrupt")
         db.rows, db.journal = deepcopy(self.rows), deepcopy(self.journal)
+        db.barriers = deepcopy(self.barriers)
         self.committed = True
         if db.commit_failure == "after":
             raise OSError("private lost acknowledgement")
@@ -122,6 +124,17 @@ class Cursor:
                 self.queue = [row]
         elif q.startswith("SELECT TOP(1) operation_id"):
             self.queue = [(op,) for key, op in self.connection.journal if key == params[0]][:1]
+        elif q.startswith("SELECT TOP(1) epoch"):
+            self.queue = [
+                (epoch,) for key, epoch, pin in self.connection.barriers if key == params[0]
+            ][:1]
+        elif "FROM dbo.pm_safety_authority_barriers_v1" in q:
+            row = self.connection.barriers.get(tuple(params[1:]))
+            if row is not None:
+                self.queue = [row]
+        elif q.startswith("INSERT INTO dbo.pm_safety_authority_barriers_v1"):
+            key, epoch, pin, raw, checksum = params
+            self.connection.barriers[key, epoch, pin] = (raw, checksum)
         elif q.startswith("INSERT INTO dbo.pm_safety_authority_v1"):
             key, *row = params
             self.connection.rows[key] = tuple(row)
@@ -156,6 +169,7 @@ def setup():
 
 def activate(store, held, *, generation=1, assignment="assignment-A"):
     with store.guard(held, mode="held") as guard:
+        guard.record_application_barrier(held.application_incarnation, generation)
         pending = guard.activate(assignment, generation, "a" * 64)
         assert guard.state == pending
     return pending
@@ -169,7 +183,7 @@ def test_constructor_no_sql_explicit_bootstrap_and_held_initialize_never_reset()
     db, store = setup()
     assert not db.connections
     bootstrap(db.connect, AUTH)
-    assert sum(q.startswith("IF OBJECT_ID") for q, _ in db.statements) == 2
+    assert sum(q.startswith("IF OBJECT_ID") for q, _ in db.statements) == 3
     state = store.initialize(APP)
     assert state.mode == "held" and state.revision == state.assignment_generation == 0
     assert len(state.epoch) == 64 and state.assignment_id is state.robot_sha256 is None
@@ -299,6 +313,7 @@ def test_activation_generation_never_rewinds_or_reuses_after_fencing(generation)
     before = deepcopy(db.rows)
     with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             guard.activate("new", generation, "b" * 64)
     assert db.rows == before
 
@@ -312,6 +327,7 @@ def test_inner_exception_text_never_leaks_and_staged_activation_rolls_back(excep
     before = deepcopy(db.rows)
     with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             guard.activate("new", 1, "a" * 64)
             raise exception("PRIVATE sensitive callback data")
     assert db.rows == before and db.connections[-1].closed
@@ -324,6 +340,7 @@ def test_precommit_baseexception_propagates_and_external_state_stays_held(except
     before = deepcopy(db.rows)
     with pytest.raises(exception):
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             guard.activate("new", 1, "a" * 64)
             raise exception("synthetic interrupt")
     assert db.rows == before and db.connections[-1].closed
@@ -370,6 +387,7 @@ def test_explicit_external_native_pin_checked_before_and_after_guard(phase):
     with pytest.raises(AuthorityRefused, match="^authority_incarnation_mismatch$"):
         with store.guard(held, mode="held") as guard:
             entered.append(True)
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             guard.activate("new", 1, "a" * 64)
             db.incarnation = changed
     assert bool(entered) == (phase == "after") and db.rows == before
@@ -418,6 +436,7 @@ def test_guard_preserves_external_hold_when_application_work_may_already_be_comm
     with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
         with store.guard(held, mode="held") as guard:
             application_commits.append("independent application commit")
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             guard.activate("replacement", 1, "a" * 64)
             raise OSError("after independent application commit")
     assert application_commits and store.read() == held
@@ -451,7 +470,147 @@ def test_application_commit_unknown_is_preserved_while_external_activation_abort
     original = LeaseCommitUnknown("lease_commit_unknown")
     with pytest.raises(LeaseCommitUnknown, match="^lease_commit_unknown$") as caught:
         with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
             guard.activate("replacement", 1, "a" * 64)
             raise original
     assert caught.value is original and store.read() == held
     assert db.connections[-1].closed
+
+
+def test_source_pointer_fields_are_paired_and_native_canonical():
+    _, store = setup()
+    held = store.initialize(APP)
+    for bad in (
+        replace(held, source_epoch="a" * 64),
+        replace(held, source_incarnation=APP),
+        replace(held, source_incarnation=APP, source_epoch="not-sha"),
+    ):
+        with pytest.raises(AuthorityRefused):
+            encode_authority_state(bad)
+    valid = replace(held, source_incarnation=APP, source_epoch="a" * 64)
+    assert decode_authority_state(encode_authority_state(valid)) == valid
+
+
+def test_activation_without_acknowledged_target_barrier_refuses():
+    db, store = setup()
+    held = store.initialize(APP)
+    with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
+        with store.guard(held, mode="held") as guard:
+            guard.activate("missing-proof", 1, "a" * 64)
+    assert store.read() == held and not db.barriers
+
+
+def test_active_fence_creates_fresh_source_requirement_not_old_activation_proof():
+    db, store = setup()
+    active = activate(store, store.initialize(APP))
+    assert any(key[1] == active.epoch for key in db.barriers)
+    target = replace(APP, database="restored", database_guid="77777777-7777-4777-8777-777777777777")
+    fence(store, active, app=target)
+    held = store.read()
+    assert held.source_incarnation == APP and held.source_epoch == held.epoch
+    assert held.source_epoch != active.epoch
+    # The old initial barrier predates active work; target proof cannot reuse it.
+    with store.guard(held, mode="held") as guard:
+        target_receipt = guard.record_application_barrier(target, 2)
+    assert target_receipt["epoch"] == held.epoch
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(held, mode="held") as guard:
+            guard.activate("unsafe-target-only", 2, "b" * 64)
+    assert store.read() == held
+
+
+def test_held_retargeting_cannot_erase_source_requirement_and_explicit_source_drain_satisfies_it():
+    import json
+
+    db, store = setup()
+    active = activate(store, store.initialize(APP))
+    fence(store, active)
+    source_hold = store.read()
+    required_epoch = source_hold.epoch
+    target = replace(APP, database="restored", database_guid="77777777-7777-4777-8777-777777777777")
+    fence(store, source_hold, op="target", app=target)
+    target_hold = store.read()
+    assert target_hold.source_incarnation == APP and target_hold.source_epoch == required_epoch
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(target_hold, mode="held") as guard:
+            guard.record_application_barrier(APP, 3)  # Cannot assert an unrelated source pin.
+    with store.guard(target_hold, mode="held") as guard:
+        guard.record_application_barrier(target, 2)
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(target_hold, mode="held") as guard:
+            guard.activate("premature", 2, "b" * 64)
+    # Explicitly return authority to the source, drain/rebind it, then retarget.
+    fence(store, target_hold, op="source-again", app=APP)
+    returned = store.read()
+    with store.guard(returned, mode="held") as guard:
+        guard.record_application_barrier(APP, 4)
+    source_proofs = [
+        json.loads(row[0]) for key, row in db.barriers.items() if key[1] == required_epoch
+    ]
+    assert len(source_proofs) == 1
+    assert source_proofs[0]["acknowledged_under_epoch"] == returned.epoch
+    assert source_proofs[0]["application_incarnation"] == json.loads(encode_incarnation(APP))
+    fence(store, returned, op="target-again", app=target)
+    ready = store.read()
+    assert ready.source_epoch == required_epoch
+    result = activate(store, ready, generation=2, assignment="safe-target")
+    assert result.mode == "active" and result.source_epoch == required_epoch
+
+
+def test_barrier_exact_replay_keeps_first_receipt_without_revision_or_generation_relabel():
+    db, store = setup()
+    held = store.initialize(APP)
+    with store.guard(held, mode="held") as guard:
+        original = guard.record_application_barrier(APP, 3)
+    before = deepcopy(db.barriers)
+    with store.guard(held, mode="held") as guard:
+        assert guard.record_application_barrier(APP, 4) == original
+        assert guard.state == held
+    assert db.barriers == before and store.read() == held
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(APP, 2)
+    assert db.barriers == before
+
+
+@pytest.mark.parametrize("generation", [True, -1, MAX_REVISION + 1, None, "1"])
+def test_barrier_generation_is_exact_bounded_integer(generation):
+    db, store = setup()
+    held = store.initialize(APP)
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(APP, generation)
+    assert not db.barriers and store.read() == held
+
+
+def test_barrier_sql_failure_or_unknown_commit_never_claims_known_acknowledgement():
+    db, store = setup()
+    held = store.initialize(APP)
+    db.fail_on = "INSERT INTO dbo.pm_safety_authority_barriers_v1"
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(APP, 1)
+    assert not db.barriers
+    db.fail_on = None
+    db.commit_failure = "after"
+    with pytest.raises(AuthorityCommitUnknown):
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(APP, 1)
+    assert len(db.barriers) == 1
+    db.commit_failure = None
+    assert store.read() == held
+
+
+def test_corrupt_required_barrier_refuses_activation_without_repairing_history():
+    db, store = setup()
+    held = store.initialize(APP)
+    with store.guard(held, mode="held") as guard:
+        guard.record_application_barrier(APP, 1)
+    key = next(iter(db.barriers))
+    raw, _ = db.barriers[key]
+    db.barriers[key] = (raw, "0" * 64)
+    before = deepcopy(db.barriers)
+    with pytest.raises(AuthorityUnavailable):
+        with store.guard(held, mode="held") as guard:
+            guard.activate("no-corrupt-proof", 1, "a" * 64)
+    assert db.barriers == before and store.read() == held

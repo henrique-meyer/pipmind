@@ -373,7 +373,7 @@ def _schema(cur, table, columns):
     if len(rows) != len(columns) or cur.fetchmany(PAGE_ROWS):
         _unavailable()
     for row, (name, kind, length, nullable, key) in zip(rows, columns, strict=True):
-        precision, scale = {"bigint": (19, 0), "bit": (1, 0), "datetime2": (27, 6)}.get(
+        precision, scale = {"bigint": (19, 0), "bit": (1, 0), "datetime2": (26, 6)}.get(
             kind, (0, 0)
         )
         if tuple(row[:7]) != (name, kind, length, precision, scale, nullable, key):

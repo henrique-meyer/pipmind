@@ -9,6 +9,12 @@ operation; a separately configured SQL adapter is tested against a second
 **disposable** database, with no production resource provisioned or selected.
 A restored SQL lease alone must never revive its old owner.
 
+External lock loss can outlive an application's in-flight transaction. A fence
+blocks new guard admission but is not proof of application quiescence. Activation
+must also verify independently retained original-source and target lease-barrier
+acknowledgements. Rebinding a restored target alone cannot drain the old physical
+source; missing source-barrier proof keeps the account held.
+
 Preserve complete operational state/checkpoint inventory, exact history and
 account protections; bind native backup and immutable robot references without
 interpreting robot content as authority. Recovery starts held. Fresh ownership,

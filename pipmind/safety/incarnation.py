@@ -103,7 +103,10 @@ def read_incarnation(cursor):
             raise IncarnationUnavailable("database_incarnation_unavailable")
         if type(row[0]) is not int or row[0] not in (1, 2, 3, 4, 8):
             raise IncarnationRefused("database_incarnation_unsupported")
-        return DatabaseIncarnation(*row[1:])
+        # SQL Server renders uniqueidentifier values with uppercase hex. Pins
+        # and exported codecs remain canonical lowercase; normalize only the
+        # trusted native catalog representation, never arbitrary input JSON.
+        return DatabaseIncarnation(row[1], row[2], str(UUID(row[3])), str(UUID(row[4])))
     except IncarnationRefused:
         raise
     except Exception:

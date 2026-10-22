@@ -123,8 +123,12 @@ def rebind_held(authority, expected, connect, previous_epoch):
         )
         return {"epoch": expected.epoch, "generation": old[4] + 1, "held": True}
 
-    with authority.guard(expected, mode="held"):
+    with authority.guard(expected, mode="held") as guard:
         result = reader._run(operation)
+        # Only an acknowledged barrier on this exact physical database drains
+        # its old transactions. Persist that proof outside the restore domain;
+        # target rebinding cannot substitute for an unfenced original source.
+        guard.record_application_barrier(expected.application_incarnation, result["generation"])
     return result
 
 

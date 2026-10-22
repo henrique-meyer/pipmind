@@ -38,6 +38,13 @@ metadata. Its canonical JSON is bounded to 64 KiB. The table version is
 or key collations refuse capture. Account currency pins must match the supplied
 binding. Empty tables are represented explicitly, rather than omitted.
 
+The existing `datetime2(6)` columns require catalog precision 26 and scale 6;
+precision 27 is the default `datetime2(7)` precision, not the precision for every
+column of that type. Microsoft's [SQL_VARIANT_PROPERTY documentation](https://learn.microsoft.com/en-us/sql/t-sql/functions/sql-variant-property-transact-sql?view=sql-server-ver17)
+defines nonzero `datetime2(s)` precision as `s + 20`. The offline regression uses
+literal lease catalog rows as an independent check; actual SQL CI must still
+validate the real catalog and capture flow.
+
 ## Exact coverage
 
 All account sessions and their observation history are included, not only the

@@ -40,9 +40,13 @@ procedure and are not implemented here.
 All connectors must use trusted server/database identity, bounded driver
 timeouts, fresh nonpooled connections and `autocommit=False`. Recovery-aware
 `SqlLeaseStore` instances require an explicit application `incarnation` pin.
-Native identity is checked before and after their transaction. External guards
-hold the authority transaction lock through application commit acknowledgement;
-this is not a distributed transaction or a SQL-to-venue send protocol.
+Native identity is checked before and after their transaction. While connected,
+external guards retain the authority transaction lock through application commit
+acknowledgement. Loss of that separate connection can release the external lock
+while old application work is still finishing. Therefore an external fence alone
+is admission fencing, not application quiescence. Independently retained source
+and target lease-barrier acknowledgements are also required for activation.
+This is not a distributed transaction or a SQL-to-venue send protocol.
 
 ## Backup and inventory are separate evidence
 
@@ -81,14 +85,24 @@ owner or establish the provenance of a market snapshot.
    fence the external authority using its exact current revision/epoch, an
    immutable operation ID, actor and reason. Wait for acknowledgement. Fencing
    rotates the epoch, preserves the assignment-generation high-water and enters
-   `held`; old expected states cannot enter another recovery-aware guard. A guard
-   already running may finish before the fence is acknowledged.
+   `held`; old expected states cannot enter another recovery-aware guard. If an
+   old external connection was lost, its application transaction can finish
+   after the fence acknowledges. Before restoring to another physical database,
+   call `rebind_held` on the **original source** and wait for its application
+   commit and external barrier acknowledgement. Its lease lock waits for old
+   application transactions, then invalidates their ownership. Source proof is
+   retained in the independent authority and survives subsequent held fences.
+   An unavailable or unproven source leaves activation held.
 2. **Restore only the application database when restoring is required.** Use the
    independently verified complete native backup through trusted native tooling.
    Observe and explicitly bind the resulting application incarnation in a held
    external fence. If maintenance required a fence before the target incarnation
    was known, a further explicit compare-and-set fence can bind the observed
-   target while remaining held. Never adopt a changed incarnation on startup.
+   target while remaining held. This preserves the original source-barrier
+   requirement; a target-only rebind cannot satisfy it. If the target was fenced
+   first, remain held and explicitly fence back to the source to drain it, then
+   return to the target, or use a separately qualified physical-fencing recovery
+   procedure. Never adopt a changed incarnation on startup.
    An in-place robot handover skips restore and uses the existing pinned database.
 3. **Compare restored safety state before changing the lease.** Construct pinned
    lease/recovery stores and a `DryRecoveryCoordinator(authority, held_state,
@@ -104,7 +118,10 @@ owner or establish the provenance of a market snapshot.
    the application lease epoch, advances its generation and clears its old owner,
    token hash and expiry. It does not reset any account data, kill/pause control,
    loss latch, reservation, pending obligation or history. Exact replay preserves
-   the current row. Separately acquire a new lease using the held epoch and pinned
+   the current row. Only after the application commit acknowledges does it record
+   the exact physical incarnation, fence epoch and lease generation as an
+   immutable external barrier. Both source and target proof are checked before
+   activation. Separately acquire a new lease using the held epoch and pinned
    application incarnation; an old restored grant is never reused.
 5. **Prepare the exact proposed assignment.** Initialize recovery storage only
    where explicitly required; repeated initialization preserves existing state.
@@ -132,7 +149,8 @@ owner or establish the provenance of a market snapshot.
    runs full fresh positive safety reconciliation and records immutable
    attribution in the application transaction. Only after that transaction is
    acknowledged does the held external guard stage activation for the strictly
-   newer assignment generation and robot hash. Wait for external acknowledgement
+   newer assignment generation and robot hash, after validating independent
+   original-source and current-target barrier records. Wait for external acknowledgement
    too. Failed, stale, incomplete or ambiguous facts leave no dry activation.
 8. **Use only the recovery-aware wrapper for subsequent dry operations.** Construct
    `RecoveryAwareDryGateway` with the acknowledged active external state, exact
@@ -162,7 +180,8 @@ The composition orders locks as external authority → lease → session → con
 → recovery → integration → admission → policy book. Inventory checks caller-owned
 locks; same-cursor assignment and attribution operations neither open another
 application connection nor commit. The external guard remains open until the
-application commit has returned. Plan preparation uses separate acknowledged
+application commit has returned; separate connection loss still requires the
+source lease drain described above. Plan preparation uses separate acknowledged
 application operations under the same external held guard; confirmation rechecks
 the exact complete inventory before its transition.
 
@@ -182,6 +201,11 @@ no universal rollback promise across them. If application work committed and
 external activation later failed, external rollback cannot erase the application
 reconciliation/attribution. A generic outer operation error can also occur after
 an inner acknowledged commit; it does not establish that nothing persisted.
+An old application's dry audit/reservation may commit after an external fence
+when that old external connection was lost. Rebinding the same original source
+must wait for and preserve that work before replacement activation. Source
+barrier proof and a consistent complete backup/catch-up checkpoint are distinct
+requirements; a barrier never certifies missing post-backup history.
 
 | Result | Required interpretation |
 | --- | --- |

@@ -24,6 +24,7 @@ MAX_RECORD_BYTES = 65536
 MAX_REVISION = 9223372036854775807
 _STATE = "dbo.pm_safety_authority_v1"
 _JOURNAL = "dbo.pm_safety_authority_fences_v1"
+_BARRIERS = "dbo.pm_safety_authority_barriers_v1"
 _BIN = "COLLATE Latin1_General_100_BIN2"
 _CONFLICT = object()
 _DDL = (
@@ -38,6 +39,12 @@ _DDL = (
     body_sha256 char(64) {_BIN} NOT NULL,receipt nvarchar(max) NOT NULL,
     receipt_sha256 char(64) {_BIN} NOT NULL,
     CONSTRAINT PK_pm_safety_authority_fences_v1 PRIMARY KEY(binding_key,operation_id))""",
+    f"""IF OBJECT_ID('{_BARRIERS}','U') IS NULL CREATE TABLE {_BARRIERS} (
+    binding_key char(64) {_BIN} NOT NULL REFERENCES {_STATE}(binding_key),
+    epoch char(64) {_BIN} NOT NULL,incarnation_sha256 char(64) {_BIN} NOT NULL,
+    body nvarchar(max) NOT NULL,sha256 char(64) {_BIN} NOT NULL,
+    CONSTRAINT PK_pm_safety_authority_barriers_v1
+    PRIMARY KEY(binding_key,epoch,incarnation_sha256))""",
 )
 
 
@@ -116,12 +123,21 @@ class AuthorityState:
     assignment_generation: int
     robot_sha256: str | None
     application_incarnation: DatabaseIncarnation
+    source_incarnation: DatabaseIncarnation | None = None
+    source_epoch: str | None = None
 
 
 def _validate(value):
     _need(type(value) is AuthorityState, "authority_invalid_state")
     _binding(value.binding)
     _incarnation(value.application_incarnation)
+    _need(
+        (value.source_incarnation is None) == (value.source_epoch is None),
+        "authority_invalid_source_barrier",
+    )
+    if value.source_incarnation is not None:
+        _incarnation(value.source_incarnation)
+        _need(_sha(value.source_epoch), "authority_invalid_source_barrier")
     _need(
         _count(value.revision)
         and _count(value.assignment_generation)
@@ -150,6 +166,10 @@ def _payload(state):
         "assignment_generation": state.assignment_generation,
         "robot_sha256": state.robot_sha256,
         "application_incarnation": json.loads(_incarnation(state.application_incarnation)),
+        "source_incarnation": None
+        if state.source_incarnation is None
+        else json.loads(_incarnation(state.source_incarnation)),
+        "source_epoch": state.source_epoch,
     }
 
 
@@ -176,6 +196,8 @@ def decode_authority_state(raw):
                 "assignment_generation",
                 "robot_sha256",
                 "application_incarnation",
+                "source_incarnation",
+                "source_epoch",
             },
             "authority_invalid_state",
         )
@@ -190,6 +212,10 @@ def decode_authority_state(raw):
             data["assignment_generation"],
             data["robot_sha256"],
             decode_incarnation(json.dumps(data["application_incarnation"], separators=(",", ":"))),
+            None
+            if data["source_incarnation"] is None
+            else decode_incarnation(json.dumps(data["source_incarnation"], separators=(",", ":"))),
+            data["source_epoch"],
         )
         _need(encode_authority_state(state) == raw, "authority_invalid_state")
         return state
@@ -274,6 +300,38 @@ class AuthorityGuard:
     def state(self):
         return self._state
 
+    def record_application_barrier(self, application_incarnation, generation):
+        """Trusted root ONLY after acknowledged application SQL lease rebind.
+
+        This records caller evidence, not a distributed transaction or independent
+        observation of another database. A current-source acknowledgement also
+        satisfies its preserved (possibly older) source-fence identity.
+        """
+        _need(self._open, "authority_guard_closed")
+        _need(self._state.mode == "held", "authority_barrier_requires_hold")
+        _incarnation(application_incarnation)
+        _need(
+            application_incarnation == self._state.application_incarnation,
+            "authority_barrier_incarnation_mismatch",
+        )
+        _need(_count(generation), "authority_invalid_barrier_generation")
+        result = self._store._barrier(
+            self._cursor,
+            self._state.epoch,
+            application_incarnation,
+            generation=generation,
+            acknowledged_under_epoch=self._state.epoch,
+        )
+        if application_incarnation == self._state.source_incarnation:
+            self._store._barrier(
+                self._cursor,
+                self._state.source_epoch,
+                application_incarnation,
+                generation=generation,
+                acknowledged_under_epoch=self._state.epoch,
+            )
+        return result  # Still pending until this authority transaction acknowledges.
+
     def activate(self, assignment_id, assignment_generation, robot_sha256):
         _need(self._open, "authority_guard_closed")
         _need(self._state.mode == "held", "authority_activation_requires_hold")
@@ -285,6 +343,21 @@ class AuthorityGuard:
         )
         _need(_sha(robot_sha256), "authority_invalid_robot_hash")
         _need(self._state.revision < MAX_REVISION, "authority_revision_exhausted")
+        _need(
+            self._store._barrier(
+                self._cursor, self._state.epoch, self._state.application_incarnation
+            )
+            is not None,
+            "authority_barrier_missing",
+        )
+        if self._state.source_incarnation is not None:
+            _need(
+                self._store._barrier(
+                    self._cursor, self._state.source_epoch, self._state.source_incarnation
+                )
+                is not None,
+                "authority_source_barrier_missing",
+            )
         changed = replace(
             self._state,
             revision=self._state.revision + 1,
@@ -337,6 +410,9 @@ class SqlAuthorityStore:
             )
             if cur.fetchone() is not None:
                 raise AuthorityUnavailable("authority_store_unavailable")
+            cur.execute(f"SELECT TOP(1) epoch FROM {_BARRIERS} WHERE binding_key=%s", (self._key,))
+            if cur.fetchone() is not None:
+                raise AuthorityUnavailable("authority_store_unavailable")
             return None
         try:
             if tuple(row[:3]) != (
@@ -351,6 +427,8 @@ class SqlAuthorityStore:
             if state.binding != self.binding:
                 raise ValueError
             self._separate(state.application_incarnation)
+            if state.source_incarnation is not None:
+                self._separate(state.source_incarnation)
             return state
         except (AuthorityRefused, ValueError, TypeError, UnicodeError):
             raise AuthorityUnavailable("authority_store_unavailable") from None
@@ -361,6 +439,93 @@ class SqlAuthorityStore:
             f"UPDATE {_STATE} SET body=%s,sha256=%s WHERE binding_key=%s",
             (raw, _hash(raw), self._key),
         )
+
+    def _barrier(
+        self, cur, epoch, application_incarnation, *, generation=None, acknowledged_under_epoch=None
+    ):
+        pin = _incarnation(application_incarnation)
+        pin_hash = _hash(pin)
+        cur.execute(
+            f"SELECT CASE WHEN DATALENGTH(body)<=%s THEN body END,sha256 FROM {_BARRIERS} "
+            "WITH(UPDLOCK,HOLDLOCK) WHERE binding_key=%s AND epoch=%s AND incarnation_sha256=%s",
+            (2 * MAX_RECORD_BYTES, self._key, epoch, pin_hash),
+        )
+        row = cur.fetchone()
+        if row is not None:
+            try:
+                if (
+                    type(row[0]) is not str
+                    or len(row[0].encode("utf-8")) > MAX_RECORD_BYTES
+                    or _hash(row[0]) != row[1]
+                ):
+                    raise ValueError
+                receipt = json.loads(row[0])
+                if (
+                    type(receipt) is not dict
+                    or set(receipt)
+                    != {
+                        "schema_version",
+                        "kind",
+                        "binding",
+                        "epoch",
+                        "acknowledged_under_epoch",
+                        "application_incarnation",
+                        "lease_generation",
+                        "observed_at",
+                        "historical_receipt_only",
+                        "dispatch_authorized",
+                    }
+                    or _json(receipt) != row[0]
+                    or type(receipt["schema_version"]) is not int
+                    or receipt["schema_version"] != 1
+                    or receipt["kind"] != "application_barrier"
+                    or receipt["binding"]
+                    != [self.binding.account_id, self.binding.environment, self.binding.resource]
+                    or receipt["epoch"] != epoch
+                    or not _sha(receipt["epoch"])
+                    or not _sha(receipt["acknowledged_under_epoch"])
+                    or receipt["application_incarnation"] != json.loads(pin)
+                    or not _count(receipt["lease_generation"])
+                    or receipt["historical_receipt_only"] is not True
+                    or receipt["dispatch_authorized"] is not False
+                ):
+                    raise ValueError
+                utc(receipt["observed_at"])
+            except (ValueError, TypeError, KeyError, UnicodeError, AuthorityRefused):
+                raise AuthorityUnavailable("authority_store_unavailable") from None
+            if generation is not None:
+                _need(
+                    generation >= receipt["lease_generation"],
+                    "authority_barrier_generation_regression",
+                )
+            return receipt  # Immutable first receipt, never relabel a previous acknowledgement.
+        if generation is None:
+            return None
+        _need(
+            _sha(epoch) and _sha(acknowledged_under_epoch) and _count(generation),
+            "authority_invalid_barrier",
+        )
+        cur.execute("SELECT SYSUTCDATETIME()")
+        now = cur.fetchone()[0]
+        _need(type(now) is datetime and now.tzinfo is None, "authority_invalid_server_time")
+        receipt = {
+            "schema_version": 1,
+            "kind": "application_barrier",
+            "binding": [self.binding.account_id, self.binding.environment, self.binding.resource],
+            "epoch": epoch,
+            "acknowledged_under_epoch": acknowledged_under_epoch,
+            "application_incarnation": json.loads(pin),
+            "lease_generation": generation,
+            "observed_at": stamp(now.replace(tzinfo=UTC)),
+            "historical_receipt_only": True,
+            "dispatch_authorized": False,
+        }
+        raw = _json(receipt)
+        cur.execute(
+            f"INSERT INTO {_BARRIERS} VALUES(%s,%s,%s,%s,%s)",
+            (self._key, epoch, pin_hash, raw, _hash(raw)),
+        )
+        return receipt
 
     def initialize(self, application_incarnation):
         self._separate(application_incarnation)
@@ -452,6 +617,14 @@ class SqlAuthorityStore:
                 or body["expected_revision"] != before.revision
                 or body["expected_epoch"] != before.epoch
                 or body["application_incarnation"] != receipt["after"]["application_incarnation"]
+                or after.source_incarnation
+                != (
+                    before.application_incarnation
+                    if before.mode == "active"
+                    else before.source_incarnation
+                )
+                or after.source_epoch
+                != (after.epoch if before.mode == "active" else before.source_epoch)
             ):
                 raise ValueError
             utc(receipt["observed_at"])
@@ -515,6 +688,10 @@ class SqlAuthorityStore:
                     assignment_id=None,
                     robot_sha256=None,
                     application_incarnation=application_incarnation,
+                    source_incarnation=state.application_incarnation
+                    if state.mode == "active"
+                    else state.source_incarnation,
+                    source_epoch=epoch if state.mode == "active" else state.source_epoch,
                 )
                 cur.execute("SELECT SYSUTCDATETIME()")
                 now = cur.fetchone()[0]

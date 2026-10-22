@@ -38,8 +38,8 @@ adding capacity or creating another service.
 native incarnation pin for the authority database. Its constructor performs no
 SQL and never learns or adopts that pin from the current database. Explicit
 `bootstrap(connect, expected_incarnation)` creates only isolated
-`pm_safety_authority_v1` and `pm_safety_authority_fences_v1` tables, under the same
-native pin checks.
+`pm_safety_authority_v1`, `pm_safety_authority_fences_v1` and
+`pm_safety_authority_barriers_v1` tables, under the same native pin checks.
 
 Every transaction uses a fresh non-pooled `autocommit=False` connection,
 serializable isolation, a transaction-owned exclusive account/resource application
@@ -63,7 +63,8 @@ trusted operational procedure; no automatic authority recovery/reset exists.
 
 `initialize(application_incarnation)` explicitly creates revision 0, a fresh
 256-bit random epoch, mode `held`, no active assignment/robot and assignment
-generation high-water 0. Repeating it returns existing state without clearing
+generation high-water 0. Its paired `source_incarnation` / `source_epoch` fields
+start null. Repeating it returns existing state without clearing
 active assignments or rotating authority. A different application incarnation
 refuses until an explicit fence; startup cannot silently adopt a restored database.
 `read()` returns exact frozen `AuthorityState` after acknowledged completion.
@@ -74,7 +75,11 @@ state facts for immutable references; a serialized state is not a live permit.
 application_incarnation, reason)` performs a compare-and-set, increments revision,
 rotates the epoch, binds the explicitly supplied application incarnation and
 leaves mode `held`. It clears the active assignment ID/robot hash while preserving
-the assignment-generation high-water. It retains the exact original operation,
+the assignment-generation high-water. Fencing an active assignment also records a
+required source application incarnation and the **new fence epoch**. Fencing an
+already held state preserves that source pointer even if the target incarnation
+changes. A barrier recorded before the active period cannot satisfy this new
+fence identity. It retains the exact original operation,
 before/after states, native application binding, server time and hashes in an
 immutable receipt. Operation IDs are unique per authority binding. Exact retry
 returns the original historical receipt, even if later activation advanced state;
@@ -84,16 +89,24 @@ All receipts set `historical_receipt_only=true` and `dispatch_authorized=false`.
 
 `guard(expected_state, *, mode='active')` is a context manager. It requires exact
 current binding, revision, epoch, mode, assignment, generation, robot hash and
-application incarnation, and holds the external authority transaction lock through
-nested application SQL work and its commit. Mode `held` must be requested
+application incarnation. With a healthy external connection it holds the authority
+transaction lock through nested application SQL work and its commit. Independent
+connection loss can release that lock while the application transaction is still
+live; the durable barrier protocol below addresses this gap. Mode `held` must be requested
 explicitly for recovery planning/confirmation. A fence waits for an existing
-guard to exit, or returns the bounded lock-busy refusal. Once fencing is
-acknowledged, old expected states cannot enter another guard.
+guard's external transaction to end, or returns the bounded lock-busy refusal.
+Once fencing is acknowledged, old expected states cannot enter another guard.
+An application transaction which already entered can nevertheless commit after
+that acknowledgement if its separate external connection was lost. An external
+fence alone therefore does not prove application quiescence.
 
 The yielded guard exposes read-only `.state`. In a held guard,
 `activate(assignment_id, assignment_generation, robot_sha256)` can stage activation
 in the same epoch only with a strictly higher explicit generation and a valid
-robot hash; it increments revision and returns the **pending** new state. It
+robot hash. It also requires verified durable barriers for the current target
+incarnation/current epoch and, when present, the preserved source incarnation/
+source-fence epoch. Missing or corrupt proof refuses. It increments revision and
+returns the **pending** new state. It
 updates `.state` but does not commit. A closed guard cannot activate, and merely
 entering/exiting a held guard never activates. There is no generic caller SQL
 callback, exposed cursor, default assignment, lease token or automatic unfence.
@@ -109,10 +122,61 @@ application leases must themselves enforce the native application incarnation;
 a valid external state alone cannot detect which application database a caller
 actually opened.
 
+## Acknowledged application barriers
+
+After the external fence is acknowledged, the trusted recovery root must obtain
+an acknowledged application SQL lease rebind/barrier on the **same physical source
+incarnation**. That application transaction takes the existing lease lock, waits
+for any earlier application lease transaction to finish, clears the old holder
+and advances its generation/epoch. It must verify the native application identity
+before and after that work. No source barrier is inferred from an external lock,
+a failed callback, a target database or a successful SQL connection.
+
+Only after that application commit is acknowledged may the trusted root call
+`guard.record_application_barrier(application_incarnation, generation)` inside a
+held external guard for that same current application incarnation. The exact
+nonnegative integer generation is the acknowledged application lease generation,
+not an owner risk default. The adapter cannot independently observe another
+database's commit; this is a deliberately restricted trusted-caller evidence API.
+
+The method records an immutable canonical receipt keyed by authority binding,
+barrier epoch and native-incarnation hash. It retains the exact binding, native
+pin, lease generation, SQL time, barrier epoch and `acknowledged_under_epoch`.
+When the guarded application is also the required source, it records the required
+source-fence identity as well, even if a later explicit held fence returned to
+that source under a newer epoch. The acknowledgement-under field preserves that
+actual chronology instead of pretending the later drain occurred at the old fence.
+The source pointer and current authority revision/state are not changed by
+recording a barrier. Exact repeat keeps the first receipt when the supplied
+acknowledged generation is at least the recorded generation; regression refuses.
+All returned receipts remain provisional until the external context commit is
+acknowledged, and they remain historical evidence rather than dispatch permits.
+
+For a restore into a different database, rebinding **only the target** cannot
+satisfy the source requirement. The trusted sequence is to fence/hold against the
+old source, acknowledge its application lease barrier, then fence/hold against the
+target and acknowledge its target barrier before activation. If authority was
+already retargeted without draining the source, the source pointer persists:
+explicitly fence back to the source, complete and record its barrier, then retarget
+and record the target barrier. A source that is unavailable or cannot be proven
+must remain held; a target barrier cannot erase or replace it. Any alternative
+physical fencing mechanism requires a separately reviewed evidence protocol;
+there is no bypass flag or automatic force activation here.
+
+This barrier concerns the old risk-operation lease scope. It is not a global
+freeze of unrelated feed/mind writes or a distributed SQL-to-broker transaction.
+The calling coordinator must keep all recovery-aware risk operations behind the
+external held/active checks. Arbitrary legacy callers and administrative restore
+operations remain outside that trusted protocol. Native full backup must retain
+all authority barrier rows in their independently protected authority domain;
+restoring that authority alongside the application defeats the protection.
+
 ## Cross-store uncertainty
 
-The external lock is held while the application transaction commits; return a
-positive result only after the outer authority context also exits successfully.
+Return a positive result only after the outer authority context also exits
+successfully. An external connection failure can release its lock before an
+already running application commit; do not report the fence alone as quiescence.
+The acknowledged source/target barrier gates apply before replacement activation.
 There is no distributed transaction between those stores. If application commit
 succeeds and later work fails, external rollback cannot roll back the application.
 The coordinator must retain held/indeterminate recovery state and reconcile exact
@@ -133,7 +197,10 @@ required; an active state read after uncertainty is not itself an execution perm
 
 Offline tests exercise native metadata/platform refusal, exact state codecs,
 held activation, monotonic generations, stale guards, pre/post incarnation pins,
-same-database rejection, immutable fence retries/conflicts, callback exceptions,
+same-database rejection, immutable fence retries/conflicts, paired source-pointer
+codecs, fresh post-active source requirements, held retarget preservation, missing/
+corrupt barrier refusals, immutable barrier replay and source-return/target activation,
+callback exceptions,
 independent application-commit uncertainty, staged rollback and external commit
 ambiguity. They use transactional SQL doubles, not a model or venue.
 Disposable SQL CI must additionally prove actual row/application locks, competing
