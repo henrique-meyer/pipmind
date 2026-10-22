@@ -22,9 +22,10 @@ flowchart TB
   fetch --> validate{Valid signature where required,<br/>schema, identity and chronology?}
   validate -->|No| refused[Retain refusal or quarantine evidence<br/>Expose source gap]
   refused --> wait[Wait / provider-specific backoff]
-  validate -->|Yes| persist[Commit inbox, canonical event,<br/>cursor and outbox atomically]
+  validate -->|Yes| persist[Commit durable inbox acceptance<br/>SSE cursor advances with inbox commit]
   persist --> ack[Acknowledge durable acceptance<br/>Webhook 2xx only after commit]
-  ack --> handoff[Deliver pending outbox page to shadow]
+  ack --> normalize[Normalize retained payload<br/>Commit canonical event and outbox atomically]
+  normalize --> handoff[Deliver pending outbox page to shadow]
   handoff --> accepted{Shadow acceptance committed?}
   accepted -->|No or acknowledgement lost| replay[Retain outbox and retry exact identities]
   replay --> handoff
@@ -35,6 +36,9 @@ flowchart TB
 
 SQL retains accepted source facts before reasoning. Exact redelivery deduplicates;
 changed facts under an existing identity refuse rather than overwrite history.
+Webhook acknowledgement confirms inbox acceptance, not completed normalization,
+model reasoning or downstream delivery. Polling adapters can commit normalized
+events directly; the diagram shows the durable-inbox stream/webhook path.
 SSE reconnect uses the saved cursor. Calendar caching and provider-specific pacing
 prevent a tight retry loop. Signed webhook code exists; the diagram does not
 claim an approved public callback route is deployed.
