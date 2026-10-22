@@ -7164,6 +7164,19 @@ def test_recovery_flow_sql_checkpoint_change_refuses_confirmation_without_reset(
         assert flow.authority.read() == flow.expected
 
 
+def _recovery_saved_mind_ci(store):
+    bundle = validate_bundle(export_experience(store, MOMENT))
+    # A new export deliberately has a fresh export_id and ZIP entry timestamps.
+    # Compare every retained file byte, all other manifest fields and exact SQL
+    # head/record state instead of treating the archive container as history.
+    return (
+        {k: v for k, v in bundle.manifest.items() if k != "export_id"},
+        {k: v for k, v in bundle.files.items() if k != "manifest.json"},
+        store.head(),
+        store.retained(),
+    )
+
+
 @pytest.mark.skipif(
     os.environ.get("PIPMIND_SQL_LOCAL") != "true",
     reason="Native restore requires disposable local SQL",
@@ -7254,7 +7267,7 @@ def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
                     "UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (source.trader,)
                 )
             inventory = flow.capture(grant)
-            exact_mind = export_experience(source, MOMENT)
+            exact_mind = _recovery_saved_mind_ci(source)
             exact_assignment = recovery.read()
             cur.execute(
                 f"BACKUP DATABASE [{source_name}] TO DISK=N'{backup_path}' "
@@ -7275,7 +7288,7 @@ def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
                 pass
             restored_connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": target_name})
             restored = SqlMind(restored_connect, source.trader)
-            assert export_experience(restored, MOMENT) == exact_mind
+            assert _recovery_saved_mind_ci(restored) == exact_mind
             restored_recovery = SqlRecoveryStore(restored_connect, recovery.binding)
             assert restored_recovery.read() == exact_assignment
             restored_feeds = SqlFeedStore(restored_connect)
@@ -7435,7 +7448,8 @@ def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
             assert rewound_pin != original_pin
             with pytest.raises(LeaseRefused, match="^lease_incarnation_mismatch$"):
                 flow.leases.compare_and_act(grant, lambda cursor: None)
-            assert export_experience(source, MOMENT) == exact_mind
+            assert _recovery_saved_mind_ci(source) == exact_mind
+            assert source.runtime("after-backup-tail") is None
     finally:
         for name in reversed(names):
             cur.execute(
