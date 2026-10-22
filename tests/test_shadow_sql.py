@@ -6453,3 +6453,1583 @@ def test_safety_controls_sql_latest_override_receipt_and_state_must_agree(mind):
         )
     with pytest.raises(ControlUnavailable, match="^control_store_unavailable$"):
         store.read()
+
+
+"""PRIVATE append-only real SQL CI fragment; never run against hosted SQL."""
+
+
+def _authority_case_ci(mind):
+    import os
+    from contextlib import contextmanager
+    from uuid import uuid4
+
+    from pipmind.safety.authority_sql import SqlAuthorityStore, bootstrap
+    from pipmind.safety.incarnation import read_incarnation
+    from pipmind.safety.lease_sql import LeaseBinding
+    from pipmind.shadow.sql import connector
+
+    @contextmanager
+    def case():
+        if os.environ.get("PIPMIND_SQL_LOCAL") != "true":
+            raise AssertionError("Authority CI requires explicitly disposable local SQL")
+        name = "authority_ci_" + uuid4().hex
+        admin = mind.connect()
+        admin.autocommit = True
+        cur = admin.cursor()
+        cur.execute(f"CREATE DATABASE [{name}]")
+        try:
+            connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+            source, external = mind.connect(), connect()
+            try:
+                app, pin = read_incarnation(source.cursor()), read_incarnation(external.cursor())
+            finally:
+                source.close()
+                external.close()
+            bootstrap(connect, pin)
+            binding = LeaseBinding("authority-test-" + uuid4().hex, "demo", "execution")
+            store = SqlAuthorityStore(connect, binding, pin)
+            held = store.initialize(app)
+            yield store, held, connect, pin, app
+        finally:
+            cur.execute(f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+            cur.execute(f"DROP DATABASE [{name}]")
+            admin.close()
+
+    return case()
+
+
+def test_external_authority_sql_exact_fence_reopen_and_stale_guard(mind):
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityRefused, SqlAuthorityStore
+
+    with _authority_case_ci(mind) as (store, held, connect, pin, app):
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
+            active = guard.activate("assignment-A", 1, "a" * 64)
+        assert store.read() == active
+        receipt = store.fence(
+            "fence-A", "owner", active.revision, active.epoch, app, "Explicit fence"
+        )
+        reopened = SqlAuthorityStore(connect, store.binding, pin)
+        fenced = reopened.read()
+        assert fenced.mode == "held" and fenced.epoch != active.epoch
+        assert fenced.assignment_generation == 1 and fenced.assignment_id is None
+        with pytest.raises(AuthorityRefused, match="^authority_stale_state$"):
+            with reopened.guard(active):
+                pytest.fail("stale owner entered external guard")
+        with reopened.guard(fenced, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
+            replacement = guard.activate("assignment-B", 2, "b" * 64)
+        assert (
+            reopened.fence("fence-A", "owner", active.revision, active.epoch, app, "Explicit fence")
+            == receipt
+        )
+        assert reopened.read() == replacement
+        with pytest.raises(AuthorityRefused, match="^conflicting_authority_operation$"):
+            reopened.fence("fence-A", "owner", active.revision, active.epoch, app, "Changed")
+        assert reopened.read() == replacement
+
+
+def test_external_authority_sql_fence_waits_for_existing_guard_and_denies_old_state(mind):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityRefused
+
+    with _authority_case_ci(mind) as (store, held, _, _, app):
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
+            active = guard.activate("assignment-A", 1, "a" * 64)
+        entered, release, fencing = Event(), Event(), Event()
+
+        def old_operation():
+            with store.guard(active) as guard:
+                assert guard.state == active
+                entered.set()
+                assert release.wait(timeout=4)
+            return True
+
+        def fence():
+            fencing.set()
+            return store.fence(
+                "concurrent-fence",
+                "owner",
+                active.revision,
+                active.epoch,
+                app,
+                "Explicit concurrent fence",
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            running = pool.submit(old_operation)
+            try:
+                assert entered.wait(timeout=3)
+                stopping = pool.submit(fence)
+                assert fencing.wait(timeout=3)
+                with pytest.raises(TimeoutError):
+                    stopping.result(timeout=0.2)
+            finally:
+                release.set()
+            assert running.result(timeout=5)
+            receipt = stopping.result(timeout=5)
+        assert receipt["after"]["mode"] == "held"
+        with pytest.raises(AuthorityRefused, match="^authority_stale_state$"):
+            with store.guard(active):
+                pytest.fail("fenced state reentered")
+
+
+def test_external_authority_sql_staged_failure_interrupt_and_disconnect_keep_hold(
+    mind, monkeypatch
+):
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable, SqlAuthorityStore
+
+    with _authority_case_ci(mind) as (store, held, connect, pin, _):
+        original = store._write
+        for mode in ("error", "interrupt", "disconnect"):
+            staged = []
+
+            def fail(cur, changed, _mode=mode, _staged=staged):
+                original(cur, changed)
+                _staged.append(True)
+                if _mode == "interrupt":
+                    raise KeyboardInterrupt("synthetic precommit authority interruption")
+                if _mode == "disconnect":
+                    cur.connection.close()
+                raise OSError("synthetic failure after staged authority activation")
+
+            monkeypatch.setattr(store, "_write", fail)
+            expected = KeyboardInterrupt if mode == "interrupt" else AuthorityUnavailable
+            with pytest.raises(expected):
+                with store.guard(held, mode="held") as guard:
+                    guard.record_application_barrier(guard.state.application_incarnation, 1)
+                    guard.activate("assignment-A", 1, "a" * 64)
+            assert staged == [True]
+            assert SqlAuthorityStore(connect, store.binding, pin).read() == held
+        monkeypatch.setattr(store, "_write", original)
+        with store.guard(held, mode="held") as guard:
+            guard.record_application_barrier(guard.state.application_incarnation, 1)
+            active = guard.activate("assignment-A", 1, "a" * 64)
+        assert store.read() == active
+
+
+def test_external_authority_sql_external_lost_ack_and_inner_application_uncertainty(mind):
+    import pytest
+
+    from pipmind.safety.authority_sql import (
+        AuthorityCommitUnknown,
+        AuthorityRefused,
+        SqlAuthorityStore,
+    )
+    from pipmind.safety.lease_sql import LeaseCommitUnknown
+
+    with _authority_case_ci(mind) as (store, held, connect, pin, _):
+        uncertain_app = LeaseCommitUnknown("lease_commit_unknown")
+        with pytest.raises(LeaseCommitUnknown) as caught:
+            with store.guard(held, mode="held") as guard:
+                guard.record_application_barrier(guard.state.application_incarnation, 1)
+                guard.activate("not-acknowledged", 1, "a" * 64)
+                raise uncertain_app
+        assert caught.value is uncertain_app and store.read() == held
+
+        class LostAck:
+            def __init__(self):
+                self.db = connect()
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return self.db.cursor()
+
+            def commit(self):
+                self.db.commit()
+                raise SystemExit("synthetic external commit acknowledgement loss")
+
+            def close(self):
+                self.db.close()
+
+        uncertain = SqlAuthorityStore(LostAck, store.binding, pin)
+        with pytest.raises(AuthorityCommitUnknown, match="^authority_commit_unknown$"):
+            with uncertain.guard(held, mode="held") as guard:
+                guard.record_application_barrier(guard.state.application_incarnation, 1)
+                guard.activate("persisted-with-lost-ack", 1, "a" * 64)
+        reopened = SqlAuthorityStore(connect, store.binding, pin)
+        current = reopened.read()
+        assert current.mode == "active" and current.assignment_id == "persisted-with-lost-ack"
+        with pytest.raises(AuthorityRefused, match="^authority_stale_state$"):
+            with reopened.guard(held, mode="held"):
+                pytest.fail("old held state survived activation")
+
+
+"""Root integration into mandatory tests/test_shadow_sql.py; do not execute standalone."""
+
+
+def _safety_inventory_sql_ci(mind, binding, lease_binding):
+    from pipmind.safety.checkpoint_sql import capture_in_transaction, required_locks
+
+    db = mind.connect()
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+        )
+        for resource in required_locks(binding, lease_binding):
+            cur.execute(
+                "DECLARE @r int; EXEC @r=sp_getapplock @Resource=%s,"
+                "@LockMode='Exclusive',@LockOwner='Transaction',@LockTimeout=5000; SELECT @r",
+                (resource,),
+            )
+            while cur.description is None:
+                assert cur.nextset()
+            assert cur.fetchone()[0] >= 0
+        first = capture_in_transaction(cur, binding, lease_binding)
+        assert capture_in_transaction(cur, binding, lease_binding) == first
+        db.commit()
+        return first
+    finally:
+        db.close()
+
+
+def test_safety_checkpoint_sql_complete_history_scoped_lobs_and_readonly_restart(mind):
+    from dataclasses import replace
+    from datetime import timedelta
+
+    from pipmind.contracts import stamp
+    from pipmind.safety.checkpoint_sql import COVERED_TABLES, decode_inventory, encode_inventory
+
+    gateway, admission, leases, sessions, controls, grant, request, _, now = (
+        _safety_gateway_case_ci(mind)  # noqa: F821 -- root-owned shared SQL fixture
+    )
+    assert gateway.accept(grant, request)["outcome"] == "dry_accepted"
+    controls.submit_suggestion("wide-checkpoint", "owner", "exact" * 8000)
+    latest = sessions.read().latest
+    for index in range(65):
+        older = stamp(now - timedelta(seconds=index + 1))
+        sessions.observe(
+            replace(
+                latest,
+                observation_id=f"old-checkpoint-{index}",
+                as_of=older,
+                cash_flow_ends_at=older,
+                account_evidence_id=f"historical-source-{index}",
+            ),
+            now=now,
+        )
+    before_controls, before_session = controls.read(), sessions.read()
+    before_reservations = admission.snapshot()
+    inventory = _safety_inventory_sql_ci(mind, sessions.binding, leases.binding)
+    assert tuple(row.name for row in inventory.tables) == COVERED_TABLES
+    by_table = {row.name: row for row in inventory.tables}
+    assert by_table["dbo.pm_safety_session_observations_v1"].count == 66
+    assert by_table["dbo.pm_safety_admission_reservations_v1"].count == 1
+    assert by_table["dbo.pm_safety_control_suggestions_v1"].count == 1
+    assert decode_inventory(encode_inventory(inventory)) == inventory
+    assert controls.read() == before_controls and sessions.read() == before_session
+    assert admission.snapshot() == before_reservations
+    # A second fully initialized account and its referenced policy books do not
+    # change the selected account's inventory. Each capture uses a fresh connection.
+    _safety_gateway_case_ci(mind)  # noqa: F821 -- root-owned shared SQL fixture
+    assert _safety_inventory_sql_ci(mind, sessions.binding, leases.binding) == inventory
+
+
+def test_safety_checkpoint_sql_missing_lock_refuses_without_operational_mutation(mind):
+    import pytest
+
+    from pipmind.safety.checkpoint_sql import CheckpointUnavailable, capture_in_transaction
+
+    _, admission, leases, sessions, controls, _, _, _, _ = _safety_gateway_case_ci(mind)  # noqa: F821
+    before = (controls.read(), sessions.read(), admission.snapshot())
+    db = mind.connect()
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT 1")
+        assert cur.fetchone() == (1,)
+        with pytest.raises(CheckpointUnavailable, match="^safety_inventory_unavailable$"):
+            capture_in_transaction(cur, sessions.binding, leases.binding)
+    finally:
+        db.close()
+    assert (controls.read(), sessions.read(), admission.snapshot()) == before
+
+
+"""Self-contained functions for root's mandatory SQL suite; never run locally."""
+
+
+def _safety_recovery_case_ci(mind):
+    from uuid import uuid4
+
+    from pipmind.safety.recovery_sql import RobotReference, SqlRecoveryStore, bootstrap
+    from pipmind.safety.session import SessionBinding
+
+    bootstrap(mind.connect)
+    store = SqlRecoveryStore(mind.connect, SessionBinding("recovery-" + uuid4().hex, "demo", "USD"))
+    assert store.initialize().generation == 0
+
+    def plan(name, generation=0):
+        return store.create_plan(
+            name,
+            "trusted-owner",
+            generation,
+            "a" * 64,
+            RobotReference(name, "v1", "b" * 64),
+            "epoch-ci",
+            "c" * 64,
+            "explicit synthetic recovery",
+            ("position-long", "position-short"),
+        )
+
+    return store, plan
+
+
+def _safety_recovery_confirm_ci(store, record, connect=None):
+    db = (connect or store.connect)()
+    try:
+        cur = db.cursor()
+        store.read_in_transaction(cur)
+        receipt = store.confirm_in_transaction(
+            cur,
+            record["plan"].plan_id,
+            record["digest"],
+            epoch="epoch-ci",
+            checkpoint_sha256="a" * 64,
+            obligation_ids=("position-long", "position-short"),
+        )
+        db.commit()
+        return receipt
+    finally:
+        db.close()
+
+
+def test_safety_recovery_sql_generation_race_and_historical_attribution(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    import pytest
+
+    from pipmind.safety.recovery_sql import RecoveryRefused
+
+    store, plan = _safety_recovery_case_ci(mind)
+    records = [plan("first"), plan("competing")]
+    barrier = Barrier(2)
+
+    def confirm(record):
+        barrier.wait(timeout=10)
+        try:
+            return _safety_recovery_confirm_ci(store, record)
+        except RecoveryRefused as error:
+            assert str(error) == "stale_assignment_generation"
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(confirm, record) for record in records]
+        receipts = [future.result(timeout=20) for future in futures]
+    assert sum(item is not None for item in receipts) == 1
+    original = next(item for item in receipts if item is not None)
+    winner = next(record for record in records if record["plan"].plan_id == original["plan_id"])
+    assert store.read().held and store.read().generation == 1
+    next_plan = plan("replacement", 1)
+    changed = _safety_recovery_confirm_ci(store, next_plan)
+    assert changed["previous_assignment"] == original["assignment"]
+    assert changed["position_obligation_ids"] == ["position-long", "position-short"]
+    assert _safety_recovery_confirm_ci(store, winner) == original
+    assert store.initialize().generation == 2
+    with pytest.raises(RecoveryRefused, match="^stale_assignment_generation$"):
+        plan("stale-new")
+
+
+def test_safety_recovery_sql_same_cursor_lock_blocks_competing_confirmation(mind):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from pipmind.safety.recovery_sql import SqlRecoveryStore
+
+    store, plan = _safety_recovery_case_ci(mind)
+    record = plan("held")
+    attempted = Event()
+
+    class Cursor:
+        def __init__(self, cur):
+            self.cur = cur
+
+        def execute(self, query, *args):
+            if "sp_getapplock" in query:
+                attempted.set()
+            return self.cur.execute(query, *args)
+
+        def __getattr__(self, name):
+            return getattr(self.cur, name)
+
+    class Connection:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return Cursor(self.db.cursor())
+
+        def commit(self):
+            self.db.commit()
+
+        def close(self):
+            self.db.close()
+
+    writer = SqlRecoveryStore(Connection, store.binding)
+    db = mind.connect()
+    try:
+        cur = db.cursor()
+        initial = store.read_in_transaction(cur)
+        assert store.plan_in_transaction(cur, "held") == record
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_safety_recovery_confirm_ci, writer, record)
+            try:
+                assert attempted.wait(timeout=5) and not future.done()
+                assert store.read_in_transaction(cur) == initial
+            finally:
+                db.commit()
+            assert future.result(timeout=10)["assignment"]["generation"] == 1
+    finally:
+        db.close()
+
+
+def test_safety_recovery_sql_staged_error_interrupt_disconnect_roll_back(mind):
+    import pytest
+
+    from pipmind.safety.recovery_sql import RecoveryUnavailable
+    from pipmind.safety.session import account_key
+
+    for mode in ("failure", "interrupt", "disconnect"):
+        store, plan = _safety_recovery_case_ci(mind)
+        record = plan(mode)
+        db = mind.connect()
+        staged = []
+
+        class Cursor:
+            def __init__(self, cur, mode, db, staged):
+                self.cur, self.mode, self.db, self.staged = cur, mode, db, staged
+
+            def execute(self, query, *args):
+                if query.startswith("UPDATE dbo.pm_safety_recovery_accounts_v1"):
+                    self.staged.append(True)
+                    if self.mode == "disconnect":
+                        self.db.close()
+                    if self.mode == "interrupt":
+                        raise KeyboardInterrupt("synthetic interruption")
+                    raise OSError("synthetic write failure")
+                return self.cur.execute(query, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.cur, name)
+
+        try:
+            cur = Cursor(db.cursor(), mode, db, staged)
+            store.read_in_transaction(cur)
+            expected = KeyboardInterrupt if mode == "interrupt" else RecoveryUnavailable
+            with pytest.raises(expected):
+                store.confirm_in_transaction(
+                    cur,
+                    mode,
+                    record["digest"],
+                    epoch="epoch-ci",
+                    checkpoint_sha256="a" * 64,
+                    obligation_ids=("position-long", "position-short"),
+                )
+        finally:
+            db.close()
+        assert staged == [True] and store.read().generation == 0
+        check = mind.connect()
+        try:
+            cur = check.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM dbo.pm_safety_recovery_transitions_v1 WHERE account_key=%s",
+                (account_key(store.binding),),
+            )
+            assert cur.fetchone()[0] == 0
+        finally:
+            check.close()
+        assert _safety_recovery_confirm_ci(store, record)["held"]
+
+
+def test_safety_recovery_sql_lost_commit_ack_and_restart_lookup(mind):
+    import pytest
+
+    from pipmind.safety.recovery_sql import RecoveryCommitUnknown, RobotReference, SqlRecoveryStore
+
+    store, plan = _safety_recovery_case_ci(mind)
+
+    class Connection:
+        def __init__(self):
+            self.db = mind.connect()
+
+        @property
+        def autocommit(self):
+            return self.db.autocommit
+
+        def cursor(self):
+            return self.db.cursor()
+
+        def commit(self):
+            self.db.commit()
+            raise KeyboardInterrupt("synthetic lost acknowledgement after effect")
+
+        def close(self):
+            self.db.close()
+
+    uncertain = SqlRecoveryStore(Connection, store.binding)
+    with pytest.raises(RecoveryCommitUnknown, match="^recovery_commit_unknown$"):
+        uncertain.create_plan(
+            "ack",
+            "trusted-owner",
+            0,
+            "a" * 64,
+            RobotReference("ack", "v1", "b" * 64),
+            "epoch-ci",
+            "c" * 64,
+            "explicit synthetic recovery",
+            ("position-long", "position-short"),
+        )
+    record = plan("ack")
+    receipt = _safety_recovery_confirm_ci(store, record)
+    restarted = SqlRecoveryStore(mind.connect, store.binding)
+    assert restarted.read().generation == 1
+    assert _safety_recovery_confirm_ci(restarted, record) == receipt
+
+
+def test_safety_recovery_sql_index_or_body_corruption_refuses(mind):
+    import pytest
+
+    from pipmind.safety.recovery_sql import RecoveryUnavailable
+    from pipmind.safety.session import account_key
+
+    store, plan = _safety_recovery_case_ci(mind)
+    record = plan("corruption")
+    _safety_recovery_confirm_ci(store, record)
+    db = mind.connect()
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "UPDATE dbo.pm_safety_recovery_accounts_v1 SET generation=0 WHERE account_key=%s",
+            (account_key(store.binding),),
+        )
+        db.commit()
+    finally:
+        db.close()
+    with pytest.raises(RecoveryUnavailable, match="^recovery_store_unavailable$"):
+        store.read()
+    with pytest.raises(RecoveryUnavailable, match="^recovery_store_unavailable$"):
+        store.initialize()
+
+
+def _recovery_gateway_sql_ci(mind, external, external_pin):
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.attribution_sql import SqlAttributionStore
+    from pipmind.safety.attribution_sql import bootstrap as attribution_bootstrap
+    from pipmind.safety.authority_sql import SqlAuthorityStore
+    from pipmind.safety.incarnation import read_incarnation
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import SqlLeaseStore
+    from pipmind.safety.recovery_flow import DryRecoveryCoordinator, rebind_held
+    from pipmind.safety.recovery_sql import SqlRecoveryStore
+    from pipmind.safety.recovery_sql import bootstrap as recovery_bootstrap
+
+    gateway, _, old, sessions, controls, old_grant, request, book, _ = _safety_gateway_case_ci(
+        mind, ready=False
+    )
+    with mind.transaction() as cur:
+        pin = read_incarnation(cur)
+    authority = SqlAuthorityStore(external, old.binding, external_pin)
+    held = authority.initialize(pin)
+    recovery_bootstrap(mind.connect)
+    attribution_bootstrap(mind.connect)
+    recovery = SqlRecoveryStore(mind.connect, sessions.binding)
+    recovery.initialize()
+    rebind_held(authority, held, mind.connect, old.authority_epoch)
+    leases = SqlLeaseStore(mind.connect, old.binding, held.epoch, incarnation=pin)
+    grant = leases.acquire("recovery-owner", ttl_seconds=300)
+    admission = SqlAdmissionStore(mind.connect, leases, sessions, book)
+    gateway = SqlSafetyGateway(
+        admission, controls, gateway._symbols, base_units_per_size=gateway._unit_factors
+    )
+    attribution = SqlAttributionStore(mind.connect, sessions.binding)
+    flow = DryRecoveryCoordinator(authority, held, leases, recovery)
+    return flow, gateway, attribution, recovery, grant, request, old, old_grant, book
+
+
+def _confirm_recovery_sql_ci(flow, grant, request, suffix="A"):
+    from pipmind.safety.recovery_sql import RobotReference
+
+    record = flow.prepare(
+        grant,
+        plan_id="handover-" + suffix,
+        actor_id="owner",
+        expected_generation=flow.recovery.read().generation,
+        target_robot=RobotReference("robot-" + suffix, "v1", digest("robot-" + suffix)),
+        reason="Explicit synthetic handover with existing obligations",
+        position_obligation_ids=tuple(request.evidence.observed.position_ids),
+    )
+    receipt = flow.confirm(grant, record["plan"].plan_id, record["digest"])
+    assert receipt["held"] is True and flow.authority.read().mode == "held"
+    return flow.recovery.read().assignment
+
+
+def test_recovery_flow_sql_handover_preserves_account_and_original_attribution(mind):
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.authority_sql import AuthorityRefused
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+
+    with _authority_case_ci(mind) as (_, _, external, external_pin, _):
+        flow, gateway, attribution, recovery, grant, request, old, old_grant, book = (
+            _recovery_gateway_sql_ci(mind, external, external_pin)
+        )
+        with pytest.raises(LeaseRefused):
+            old.compare_and_act(old_grant, lambda cur: None)
+        first = _confirm_recovery_sql_ci(flow, grant, request)
+        active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+        wrapper = RecoveryAwareDryGateway(
+            flow.authority, active, gateway, recovery, attribution, first
+        )
+        accepted = wrapper.accept(grant, request)
+        assert accepted["gateway_receipt"]["outcome"] == "dry_accepted", accepted
+        before = (gateway.admission.snapshot(), gateway.controls.read(), mind.head())
+        flow.authority.fence(
+            "fence-B",
+            "owner",
+            active.revision,
+            active.epoch,
+            active.application_incarnation,
+            "Confirmed robot replacement",
+        )
+        held = flow.authority.read()
+        with pytest.raises(AuthorityRefused):
+            wrapper.accept(grant, request)
+        rebind_held(flow.authority, held, mind.connect, active.epoch)
+        leases = SqlLeaseStore(
+            mind.connect, old.binding, held.epoch, incarnation=held.application_incarnation
+        )
+        new_grant = leases.acquire("replacement-owner", ttl_seconds=300)
+        admission = SqlAdmissionStore(mind.connect, leases, gateway.admission.sessions, book)
+        next_gateway = SqlSafetyGateway(
+            admission, gateway.controls, gateway._symbols, base_units_per_size=gateway._unit_factors
+        )
+        next_flow = DryRecoveryCoordinator(flow.authority, held, leases, recovery)
+        second = _confirm_recovery_sql_ci(next_flow, new_grant, request, "B")
+        next_active = next_flow.activate_dry(next_gateway, attribution, new_grant, second, request)[
+            "authority"
+        ]
+        replacement = RecoveryAwareDryGateway(
+            flow.authority, next_active, next_gateway, recovery, attribution, second
+        )
+        assert replacement.accept(new_grant, request) == accepted
+        link = attribution.lookup("accept", request.order["client_order_id"])
+        assert link.assignment == first and first.robot.robot_id == "robot-A"
+        assert (admission.snapshot(), gateway.controls.read(), mind.head()) == before
+        assert before[2]["paused"] is True and accepted["dispatch_authorized"] is False
+
+
+def test_recovery_flow_sql_checkpoint_change_refuses_confirmation_without_reset(mind):
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.recovery_sql import RobotReference
+
+    with _authority_case_ci(mind) as (_, _, external, external_pin, _):
+        flow, gateway, _, recovery, grant, request, _, _, _ = _recovery_gateway_sql_ci(
+            mind, external, external_pin
+        )
+        record = flow.prepare(
+            grant,
+            plan_id="stale-plan",
+            actor_id="owner",
+            expected_generation=0,
+            target_robot=RobotReference("robot", "v1", "c" * 64),
+            reason="Explicit test",
+            position_obligation_ids=tuple(request.evidence.observed.position_ids),
+        )
+        gateway.controls.submit_suggestion("preserved-tail", "owner", "Exact retained history")
+        changed = gateway.controls.read()
+        with pytest.raises(AuthorityUnavailable):
+            flow.confirm(grant, "stale-plan", record["digest"])
+        assert recovery.read().assignment is None and gateway.controls.read() == changed
+        assert flow.authority.read() == flow.expected
+
+
+def _recovery_saved_mind_ci(store):
+    bundle = validate_bundle(export_experience(store, MOMENT))
+    # A new export deliberately has a fresh export_id and ZIP entry timestamps.
+    # Compare every retained file byte, all other manifest fields and exact SQL
+    # head/record state instead of treating the archive container as history.
+    return (
+        {k: v for k, v in bundle.manifest.items() if k != "export_id"},
+        {k: v for k, v in bundle.files.items() if k != "manifest.json"},
+        store.head(),
+        store.retained(),
+    )
+
+
+@pytest.mark.skipif(
+    os.environ.get("PIPMIND_SQL_LOCAL") != "true",
+    reason="Native restore requires disposable local SQL",
+)
+def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
+    import re
+
+    from pipmind.feeds.common import identity
+    from pipmind.feeds.fixtures import pulse
+    from pipmind.feeds.sql_store import SqlFeedStore
+    from pipmind.safety.attribution_sql import SqlAttributionStore
+    from pipmind.safety.authority_sql import AuthorityRefused
+    from pipmind.safety.checkpoint_sql import NativeBackupReference
+    from pipmind.safety.incarnation import read_incarnation
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+    from pipmind.safety.recovery_sql import SqlRecoveryStore
+
+    names = ["recovery_" + uuid4().hex for _ in range(2)]
+    assert all(re.fullmatch(r"recovery_[0-9a-f]{32}", n) for n in names)
+    source_name, target_name = names
+    backup_path = "/var/opt/mssql/data/" + source_name + ".bak"
+    admin = mind.connect()
+    admin.autocommit = True
+    cur = admin.cursor()
+    cur.execute(f"CREATE DATABASE [{source_name}]")
+    try:
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": source_name})
+        migrate(connect)
+        source = SqlMind(connect, "native-original")
+        source.initialize(
+            "Exact original identity",
+            {"version": "v1", "text": "Exact"},
+            MOMENT.isoformat(),
+            binding=digest("same-account"),
+        )
+        with _authority_case_ci(mind) as (_, _, external, external_pin, _):
+            flow, gateway, attribution, recovery, grant, request, _, _, _ = (
+                _recovery_gateway_sql_ci(source, external, external_pin)
+            )
+            assignment = _confirm_recovery_sql_ci(flow, grant, request)
+            active = flow.activate_dry(gateway, attribution, grant, assignment, request)[
+                "authority"
+            ]
+            wrapper = RecoveryAwareDryGateway(
+                flow.authority, active, gateway, recovery, attribution, assignment
+            )
+            assert wrapper.accept(grant, request)["gateway_receipt"]["outcome"] == "dry_accepted"
+            exact_link = attribution.lookup("accept", request.order["client_order_id"])
+            flow.authority.fence(
+                "backup-fence",
+                "owner",
+                active.revision,
+                active.epoch,
+                active.application_incarnation,
+                "Explicit consistent backup checkpoint",
+            )
+            held = flow.authority.read()
+            rebind_held(flow.authority, held, connect, active.epoch)
+            pinned = SqlLeaseStore(
+                connect, flow.leases.binding, held.epoch, incarnation=held.application_incarnation
+            )
+            grant = pinned.acquire("backup-owner", ttl_seconds=300)
+            flow = DryRecoveryCoordinator(flow.authority, held, pinned, recovery)
+            feeds = SqlFeedStore(connect)
+            key = "native-backup-event"
+            feeds.ingest("macro", key, {"exact": "source payload"}, identity(key), MOMENT)
+            event = pulse("macro", MOMENT)
+            event["event_id"] = key
+            feeds.complete_batch("macro", key, [event], MOMENT, cursor=(key, "complete"))
+            exact_feed = feeds.handoff(include_calendar=True)
+            with source.transaction() as record_cursor:
+                source._insert(
+                    record_cursor,
+                    metadata("native-journal", "journal", MOMENT.isoformat(), source.trader),
+                    "Exact original-trader journal and provenance retained by native backup.",
+                )
+                source._write_working(
+                    record_cursor,
+                    {"views": ["Exact dated belief"], "waiting_for": [], "position_theses": []},
+                    MOMENT,
+                )
+                record_cursor.execute(
+                    "UPDATE pm_minds SET revision=revision+1 WHERE trader=%s", (source.trader,)
+                )
+            inventory = flow.capture(grant)
+            exact_mind = _recovery_saved_mind_ci(source)
+            exact_runtime = source.runtime("feed_status")
+            exact_assignment = recovery.read()
+            cur.execute(
+                f"BACKUP DATABASE [{source_name}] TO DISK=N'{backup_path}' "
+                "WITH INIT,COPY_ONLY,CHECKSUM"
+            )
+            while cur.nextset():
+                pass
+            cur.execute(f"RESTORE VERIFYONLY FROM DISK=N'{backup_path}' WITH CHECKSUM")
+            while cur.nextset():
+                pass
+            cur.execute(
+                f"RESTORE DATABASE [{target_name}] FROM DISK=N'{backup_path}' "
+                f"WITH MOVE N'{source_name}' TO N'/var/opt/mssql/data/{target_name}.mdf',"
+                f"MOVE N'{source_name}_log' TO N'/var/opt/mssql/data/{target_name}_log.ldf',"
+                "CHECKSUM,RECOVERY"
+            )
+            while cur.nextset():
+                pass
+            restored_connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": target_name})
+            restored = SqlMind(restored_connect, source.trader)
+            assert _recovery_saved_mind_ci(restored) == exact_mind
+            restored_recovery = SqlRecoveryStore(restored_connect, recovery.binding)
+            assert restored_recovery.read() == exact_assignment
+            restored_feeds = SqlFeedStore(restored_connect)
+            assert restored_feeds.handoff(include_calendar=True) == exact_feed
+            assert restored_feeds.state(key) == "complete"
+            with restored_feeds.transaction() as feed_cursor:
+                feed_cursor.execute("SELECT status,raw FROM pf_inbox WHERE k=%s", (key,))
+                inbox = feed_cursor.fetchone()
+                assert inbox[0] == "complete" and loads(inbox[1]) == {"exact": "source payload"}
+            assert (
+                SqlAttributionStore(restored_connect, recovery.binding).lookup(
+                    "accept", request.order["client_order_id"]
+                )
+                == exact_link
+            )
+            db = restored_connect()
+            try:
+                restored_pin = read_incarnation(db.cursor())
+            finally:
+                db.close()
+            assert restored_pin.database_guid != flow.leases.incarnation.database_guid
+            stale = SqlLeaseStore(
+                restored_connect,
+                flow.leases.binding,
+                flow.expected.epoch,
+                incarnation=flow.leases.incarnation,
+            )
+            with pytest.raises(LeaseRefused, match="^lease_incarnation_mismatch$"):
+                stale.compare_and_act(grant, lambda cursor: None)
+            with pytest.raises(LeaseRefused):
+                DryRecoveryCoordinator(
+                    flow.authority,
+                    flow.expected,
+                    SqlLeaseStore(
+                        restored_connect,
+                        stale.binding,
+                        flow.expected.epoch,
+                        incarnation=restored_pin,
+                    ),
+                    restored_recovery,
+                )
+            flow.authority.fence(
+                "restore-fence",
+                "owner",
+                flow.expected.revision,
+                flow.expected.epoch,
+                restored_pin,
+                "Explicit native restore",
+            )
+            held = flow.authority.read()
+            restored_flow = DryRecoveryCoordinator(
+                flow.authority,
+                held,
+                SqlLeaseStore(
+                    restored_connect, stale.binding, held.epoch, incarnation=restored_pin
+                ),
+                restored_recovery,
+            )
+            # Only a syntactically valid sidecar; file identity/provenance remains
+            # a trusted backup-provider responsibility, not a claim of this API.
+            reference = NativeBackupReference(
+                "test-backup", "a" * 64, MOMENT.isoformat(), inventory.sha256
+            )
+            assert restored_flow.verify_restored(inventory, reference) == inventory
+            assert restored.head()["paused"] is True and assignment == exact_assignment.assignment
+            # Resume the original-trader dry path on the restored database only
+            # after fresh source evidence, a new native-pinned lease and plan.
+            from dataclasses import replace
+            from datetime import UTC
+
+            from pipmind.safety.admission_sql import SqlAdmissionStore
+            from pipmind.safety.controls_sql import SqlControlStore
+            from pipmind.safety.integration_sql import SqlSafetyGateway
+            from pipmind.safety.session_sql import SqlSessionStore
+
+            rebind_held(flow.authority, held, restored_connect, flow.expected.epoch)
+            restored_leases = restored_flow.leases
+            new_grant = restored_leases.acquire("restored-owner", ttl_seconds=300)
+            sessions = SqlSessionStore(
+                restored_connect, recovery.binding, gateway.admission.session_id
+            )
+            with restored.transaction() as clock_cursor:
+                clock_cursor.execute("SELECT SYSUTCDATETIME()")
+                now = clock_cursor.fetchone()[0].replace(tzinfo=UTC)
+            fresh, fresh_state, _ = _safety_admission_request_ci(
+                now=now,
+                account=recovery.binding.account_id,
+                request_id="recovered-proposal",
+                marks=(request.order["client_order_id"],),
+            )
+            previous_state = sessions.read()
+            sessions.observe(
+                replace(
+                    fresh_state.latest,
+                    observation_id="restored-fresh-observation",
+                    cash_flow_started_at=previous_state.spec.started_at,
+                ),
+                now=now,
+            )
+            current_state = sessions.read()
+            fresh = replace(
+                fresh,
+                expected_session_revision=current_state.revision,
+                expected_observation_sha256=current_state.latest_sha256,
+            )
+            restored_admission = SqlAdmissionStore(
+                restored_connect, restored_leases, sessions, gateway.admission._policies
+            )
+            controls = SqlControlStore(restored_connect, recovery.binding)
+            restored_gateway = SqlSafetyGateway(
+                restored_admission,
+                controls,
+                gateway._symbols,
+                base_units_per_size=gateway._unit_factors,
+            )
+            record = restored_flow.prepare(
+                new_grant,
+                plan_id="recover-original",
+                actor_id="owner",
+                expected_generation=exact_assignment.generation,
+                target_robot=assignment.robot,
+                reason="Confirmed original-trader recovery",
+                position_obligation_ids=tuple(fresh.evidence.observed.position_ids),
+            )
+            restored_flow.confirm(new_grant, "recover-original", record["digest"])
+            recovered_assignment = restored_recovery.read().assignment
+            restored_attribution = SqlAttributionStore(restored_connect, recovery.binding)
+            resumed = restored_flow.activate_dry(
+                restored_gateway, restored_attribution, new_grant, recovered_assignment, fresh
+            )
+            assert resumed["authority"].mode == "active" and resumed["engine_resumed"] is False
+            assert restored_admission.snapshot()[0] == gateway.admission.snapshot()[0]
+            assert controls.read() == gateway.controls.read()
+            assert (
+                restored_attribution.lookup("accept", request.order["client_order_id"])
+                == exact_link
+            )
+            with pytest.raises(AuthorityRefused):
+                flow.capture(grant)
+            # Also prove an in-place database rewind changes native identity,
+            # not merely a restore under a different database name.
+            source.set_runtime("feed_status", {"exact": "retained until native rewind"})
+            assert source.runtime("feed_status") != exact_runtime
+            original_pin = flow.leases.incarnation
+            cur.execute(f"ALTER DATABASE [{source_name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+            cur.execute(
+                f"RESTORE DATABASE [{source_name}] FROM DISK=N'{backup_path}' "
+                "WITH REPLACE,CHECKSUM,RECOVERY"
+            )
+            while cur.nextset():
+                pass
+            cur.execute(f"ALTER DATABASE [{source_name}] SET MULTI_USER")
+            db = connect()
+            try:
+                rewound_pin = read_incarnation(db.cursor())
+            finally:
+                db.close()
+            assert rewound_pin != original_pin
+            with pytest.raises(LeaseRefused, match="^lease_incarnation_mismatch$"):
+                flow.leases.compare_and_act(grant, lambda cursor: None)
+            assert _recovery_saved_mind_ci(source) == exact_mind
+            assert source.runtime("feed_status") == exact_runtime
+    finally:
+        for name in reversed(names):
+            cur.execute(
+                f"IF DB_ID(N'{name}') IS NOT NULL BEGIN "
+                f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+                f"DROP DATABASE [{name}]; END"
+            )
+        admin.close()
+
+
+"""PRIVATE actual SQL attribution hook proof for serial root integration."""
+
+
+def test_recovery_attribution_sql_atomic_hook_links_and_original_assignment_replay(
+    mind, monkeypatch
+):
+    from dataclasses import asdict, replace
+    from uuid import uuid4
+
+    import pytest
+
+    from pipmind.contracts import stamp
+    from pipmind.safety.attribution_sql import SqlAttributionStore, _lock, bootstrap
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import LeaseUnavailable
+    from pipmind.safety.recovery_sql import Assignment, RobotReference
+    from pipmind.safety.session import account_key
+
+    gateway, admission, _, sessions, controls, grant, request, _, now = _safety_gateway_case_ci(
+        mind
+    )
+    bootstrap(mind.connect)
+    attribution = SqlAttributionStore(mind.connect, sessions.binding)
+    current = Assignment(
+        sessions.binding,
+        1,
+        "assignment-A",
+        RobotReference("robot-A", "v1", "a" * 64),
+        grant.authority_epoch,
+        "b" * 64,
+        stamp(now),
+    )
+    context = [current]
+
+    def before(cur, given):
+        assert given == grant
+        sessions.read_in_transaction(cur)
+        controls.read_in_transaction(cur)
+        _lock(cur, "pipmind-safety-recovery-v1:" + account_key(sessions.binding))
+        return context[0]
+
+    def after(cur, assignment, result):
+        link = attribution.record_in_transaction(cur, assignment, result)
+        return {
+            "gateway_receipt": result,
+            "attribution": asdict(link),
+            "dispatch_authorized": False,
+        }
+
+    hooked = SqlSafetyGateway(
+        admission,
+        controls,
+        gateway._symbols,
+        base_units_per_size=gateway._unit_factors,
+        before=before,
+        after=after,
+    )
+    original = hooked.accept(grant, request)
+    assert original["attribution"]["assignment"]["assignment_id"] == "assignment-A"
+    assert len(admission.snapshot()[0]) == 1
+    # This is attribution-only replay proof: an enclosing recovery coordinator
+    # separately verifies the real current assignment/authority before calling.
+    context[0] = replace(
+        current,
+        assignment_id="assignment-B",
+        generation=2,
+        robot=RobotReference("robot-B", "v2", "c" * 64),
+    )
+    assert hooked.accept(grant, request) == original
+    reopened = SqlAttributionStore(mind.connect, sessions.binding)
+    assert reopened.lookup("accept", request.order["client_order_id"]).assignment == current
+
+    check_id = "staged-check-" + uuid4().hex
+    journal_before = _safety_gateway_journal_ci(mind, gateway)
+    real_record = attribution.record_in_transaction
+    staged = []
+
+    def fail(cur, assignment, result):
+        link = real_record(cur, assignment, result)
+        staged.append(link)
+        raise OSError("synthetic failure after attribution SQL insert")
+
+    monkeypatch.setattr(attribution, "record_in_transaction", fail)
+    with pytest.raises(LeaseUnavailable, match="^lease_store_unavailable$"):
+        hooked.check(grant, check_id, request)
+    assert len(staged) == 1
+    assert reopened.lookup("check", check_id) is None
+    assert _safety_gateway_journal_ci(mind, gateway) == journal_before
+    assert len(admission.snapshot()[0]) == 1
+    monkeypatch.setattr(attribution, "record_in_transaction", real_record)
+    assert hooked.check(grant, check_id, request)["gateway_receipt"]["outcome"] == "dry_checked"
+
+
+"""Root integrates this real-SQL regression; never execute it against hosted SQL."""
+
+
+def test_recovery_sql_authority_disconnect_fence_is_not_application_quiescence(mind, monkeypatch):
+    import os
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    from threading import Event
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable, SqlAuthorityStore
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    with _authority_case_ci(mind) as (_, _, external, external_pin, _):  # noqa: F821
+        flow, gateway, attribution, recovery, grant, request, _, _, _ = _recovery_gateway_sql_ci(  # noqa: F821
+            mind, external, external_pin
+        )
+        first = _confirm_recovery_sql_ci(flow, grant, request, "disconnect-A")  # noqa: F821
+        active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+        staged, release, rebind_attempted = Event(), Event(), Event()
+        guard_spids, staged_assignments = [], []
+
+        class GuardConnection:
+            def __init__(self):
+                self.db = external()
+                cur = self.db.cursor()
+                cur.execute("SELECT @@SPID")
+                spid = cur.fetchone()[0]
+                assert type(spid) is int and 1 <= spid <= 32767
+                guard_spids.append(spid)
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return self.db.cursor()
+
+            def commit(self):
+                self.db.commit()
+
+            def close(self):
+                self.db.close()
+
+        worker_authority = SqlAuthorityStore(GuardConnection, flow.leases.binding, external_pin)
+        wrapper = RecoveryAwareDryGateway(
+            worker_authority, active, gateway, recovery, attribution, first
+        )
+        original_compare = flow.leases.compare_and_act
+
+        def delayed_compare(current_grant, callback):
+            def operation(cur):
+                result = callback(cur)
+                assert result["gateway_receipt"]["outcome"] == "dry_accepted"
+                assert result["attribution"]["assignment"]["assignment_id"] == first.assignment_id
+                staged_assignments.append(result["attribution"]["assignment"]["assignment_id"])
+                # All acceptance/attribution writes have executed on the lease
+                # transaction. No main commit or returned permit exists yet.
+                staged.set()
+                assert release.wait(timeout=10)
+                return result
+
+            return original_compare(current_grant, operation)
+
+        monkeypatch.setattr(flow.leases, "compare_and_act", delayed_compare)
+
+        class RebindCursor:
+            def __init__(self, cur):
+                self.cur = cur
+
+            def execute(self, query, *args):
+                if "sp_getapplock" in query:
+                    rebind_attempted.set()
+                return self.cur.execute(query, *args)
+
+            def __getattr__(self, name):
+                return getattr(self.cur, name)
+
+        class RebindConnection:
+            def __init__(self):
+                self.db = mind.connect()
+
+            @property
+            def autocommit(self):
+                return self.db.autocommit
+
+            def cursor(self):
+                return RebindCursor(self.db.cursor())
+
+            def commit(self):
+                self.db.commit()
+
+            def close(self):
+                self.db.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            running = pool.submit(wrapper.accept, grant, request)
+            try:
+                assert staged.wait(timeout=5)
+                assert len(guard_spids) == 1 and staged_assignments == [first.assignment_id]
+                # KILL is explicitly restricted to the captured live guard SPID
+                # on the disposable local CI server. The admin session differs.
+                admin = external()
+                try:
+                    admin.autocommit = True
+                    cur = admin.cursor()
+                    cur.execute("SELECT @@SPID")
+                    assert cur.fetchone()[0] != guard_spids[0]
+                    cur.execute("KILL " + str(guard_spids[0]))
+                    while cur.nextset():
+                        pass
+                finally:
+                    admin.close()
+
+                fence = flow.authority.fence(
+                    "disconnect-fence",
+                    "owner",
+                    active.revision,
+                    active.epoch,
+                    active.application_incarnation,
+                    "Explicit fence after loss of an in-flight external guard connection",
+                )
+                held = flow.authority.read()
+                assert fence["after"]["epoch"] == held.epoch and held.mode == "held"
+                assert held.assignment_generation == first.generation
+                assert not running.done()  # Fence acknowledged; app transaction still staged.
+                rebinding = pool.submit(
+                    rebind_held, flow.authority, held, RebindConnection, active.epoch
+                )
+                assert rebind_attempted.wait(timeout=3)
+                with pytest.raises(TimeoutError):
+                    rebinding.result(timeout=0.2)
+            finally:
+                release.set()
+            # The application write may commit, but the severed external guard
+            # must prevent the outer operation from returning a positive result.
+            with pytest.raises(AuthorityUnavailable):
+                running.result(timeout=5)
+            rebound = rebinding.result(timeout=5)
+
+        assert rebound["generation"] > grant.generation and rebound["held"] is True
+        assert flow.authority.read() == held
+        assert len(gateway.admission.snapshot()[0]) == 1
+        original_link = attribution.lookup("accept", request.order["client_order_id"])
+        assert original_link.assignment == first and original_link.dispatch_authorized is False
+        with pytest.raises(LeaseRefused):
+            original_compare(grant, lambda cur: pytest.fail("old owner reached SQL callback"))
+
+        current = SqlLeaseStore(
+            mind.connect, flow.leases.binding, held.epoch, incarnation=held.application_incarnation
+        )
+        replacement_grant = current.acquire("replacement-owner", ttl_seconds=300)
+        assert replacement_grant.generation > rebound["generation"]
+        replacement_flow = DryRecoveryCoordinator(flow.authority, held, current, recovery)
+        second = _confirm_recovery_sql_ci(  # noqa: F821
+            replacement_flow, replacement_grant, request, "disconnect-B"
+        )
+        assert second.generation == first.generation + 1 and second.epoch == held.epoch
+        assert attribution.lookup("accept", request.order["client_order_id"]) == original_link
+        assert len(gateway.admission.snapshot()[0]) == 1
+        assert recovery.read().held and flow.authority.read() == held and mind.head()["paused"]
+
+
+def test_recovery_sql_target_barrier_does_not_substitute_for_missing_original_source(mind):
+    import os
+    import re
+    from uuid import uuid4
+
+    import pytest
+
+    from pipmind.safety.authority_sql import AuthorityUnavailable
+    from pipmind.safety.incarnation import read_incarnation
+    from pipmind.safety.lease_sql import SqlLeaseStore, bootstrap
+    from pipmind.safety.recovery_flow import rebind_held
+    from pipmind.shadow.sql import connector
+
+    assert os.environ.get("PIPMIND_SQL_LOCAL") == "true"
+    name = "barrier_target_" + uuid4().hex
+    assert re.fullmatch(r"barrier_target_[0-9a-f]{32}", name)
+    admin = mind.connect()
+    admin.autocommit = True
+    cur = admin.cursor()
+    cur.execute(f"CREATE DATABASE [{name}]")
+    try:
+        target_connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        target = target_connect()
+        try:
+            target_pin = read_incarnation(target.cursor())
+        finally:
+            target.close()
+        bootstrap(target_connect)
+        with _authority_case_ci(mind) as (_, _, external, external_pin, _):  # noqa: F821
+            flow, gateway, attribution, recovery, grant, request, _, _, _ = (
+                _recovery_gateway_sql_ci(  # noqa: F821
+                    mind, external, external_pin
+                )
+            )
+            first = _confirm_recovery_sql_ci(flow, grant, request, "missing-source")  # noqa: F821
+            active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+            assert active.application_incarnation != target_pin
+            # Initial source rebind's E1 barrier predates ACTIVE E1 work. A
+            # direct target fence E2 must require a NEW original-source proof.
+            flow.authority.fence(
+                "target-before-source",
+                "owner",
+                active.revision,
+                active.epoch,
+                target_pin,
+                "Deliberate negative test: source has not been drained",
+            )
+            held = flow.authority.read()
+            source_pointer = (held.source_incarnation, held.source_epoch)
+            assert source_pointer == (active.application_incarnation, held.epoch)
+            target_leases = SqlLeaseStore(
+                target_connect, flow.leases.binding, held.epoch, incarnation=target_pin
+            )
+            target_leases.initialize()  # Fresh, empty target; never resets an existing owner.
+            target_barrier = rebind_held(flow.authority, held, target_connect, held.epoch)
+            assert target_barrier["held"] and target_barrier["generation"] == 0
+            with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
+                with flow.authority.guard(held, mode="held") as guard:
+                    guard.activate("must-not-activate", first.generation + 1, "a" * 64)
+            assert flow.authority.read() == held
+            # Another HELD target fence must not overwrite the original source
+            # pointer or make the absent source acknowledgement disappear.
+            flow.authority.fence(
+                "target-again",
+                "owner",
+                held.revision,
+                held.epoch,
+                target_pin,
+                "Repeated target fence must preserve required original source",
+            )
+            next_held = flow.authority.read()
+            assert (next_held.source_incarnation, next_held.source_epoch) == source_pointer
+            rebind_held(flow.authority, next_held, target_connect, held.epoch)
+            with pytest.raises(AuthorityUnavailable, match="^authority_operation_failed$"):
+                with flow.authority.guard(next_held, mode="held") as guard:
+                    guard.activate("still-must-not-activate", first.generation + 1, "a" * 64)
+            assert flow.authority.read() == next_held and recovery.read().assignment == first
+    finally:
+        cur.execute(f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+        cur.execute(f"DROP DATABASE [{name}]")
+        admin.close()
+
+
+"""Focused root-integrated SQL proof; explicit synthetic facts, no venue calls."""
+
+
+def _open_recovery_position_request_ci(request, state, now):
+    from copy import deepcopy
+    from dataclasses import replace
+    from decimal import Decimal as D
+
+    from pipmind.contracts import stamp
+    from pipmind.reconciliation import ProtectiveOrder
+    from pipmind.safety import Conversion, Exposure
+    from pipmind.safety.admission import (
+        PositionMark,
+        ReservationMark,
+        checkpoint_digest,
+        decode_request,
+        encode_request,
+    )
+    from pipmind.safety.session import advance
+
+    when = stamp(now)
+    conversion = Conversion("USD", "USD", D("1"), when)
+    positions, protections, updates, marks, exposures = [], [], [], [], []
+    for identity, side, size, stop in (
+        ("open-long", "buy", D("100"), D("1.09")),
+        ("open-short", "sell", D("60"), D("1.11")),
+    ):
+        opposite = "sell" if side == "buy" else "buy"
+        protection_request = {
+            "schema_version": 1,
+            "client_order_id": "stop-" + identity,
+            "action": "modify",
+            "instrument": "EUR/USD",
+            "side": opposite,
+            "size": size,
+            "stop": stop,
+        }
+        positions.append(
+            {"instrument": "EUR/USD", "side": side, "size": size, "average_price": D("1.1")}
+        )
+        protections.append(ProtectiveOrder(identity, "broker-" + identity, protection_request))
+        updates.append(
+            {
+                "schema_version": 1,
+                "client_order_id": protection_request["client_order_id"],
+                "broker_order_id": "broker-" + identity,
+                "status": "working",
+                "instrument": "EUR/USD",
+                "side": opposite,
+                "size": size,
+                "filled_size": D("0"),
+                "ts": when,
+            }
+        )
+        marks.append(PositionMark(identity, D("1.1"), D("1.1002"), when, D("1")))
+        exposures.append(
+            Exposure(
+                identity,
+                "EUR/USD",
+                side,
+                size,
+                D("1.1") if side == "buy" else D("1.1002"),
+                stop,
+                when,
+                conversion,
+            )
+        )
+    observed = replace(
+        request.evidence.observed,
+        account={**request.evidence.observed.account, "as_of": when},
+        positions={"schema_version": 1, "as_of": when, "positions": positions},
+        position_ids=("open-long", "open-short"),
+        account_complete=True,
+        positions_complete=True,
+        order_updates=tuple(updates),
+        orders_as_of=when,
+        orders_complete=True,
+        protective_orders=tuple(protections),
+        protections_as_of=when,
+        protections_complete=True,
+    )
+    evidence = replace(
+        request.evidence,
+        expected=deepcopy(observed),
+        observed=observed,
+        protective_obligations=tuple(protections),
+        position_marks=tuple(marks),
+    )
+    facts = replace(
+        request.facts,
+        as_of=when,
+        exposures=tuple(exposures),
+        proposal=replace(request.facts.proposal, as_of=when, conversion=conversion),
+    )
+    proposal = replace(
+        request,
+        order={**request.order, "client_order_id": "open-position-proposal"},
+        facts=facts,
+        evidence=evidence,
+        reservation_marks=(
+            ReservationMark(
+                "open-position-proposal", D("1.1"), D("1.1002"), when, conversion, D("40")
+            ),
+        ),
+    )
+    observation = replace(
+        state.latest,
+        observation_id="open-position-source",
+        as_of=when,
+        received_at=when,
+        equity=observed.account["equity"],
+        cash_flow_ends_at=when,
+        account_evidence_id=checkpoint_digest(evidence, facts),
+    )
+    updated, _ = advance(state, observation, now=now)
+    proposal = replace(
+        proposal,
+        expected_session_revision=updated.revision,
+        expected_observation_sha256=updated.latest_sha256,
+    )
+    assert encode_request(decode_request(encode_request(proposal))) == encode_request(proposal)
+    return proposal, updated
+
+
+def test_recovery_sql_open_long_short_handover_preserves_obligations_and_original_attribution(mind):
+    from dataclasses import replace
+    from datetime import UTC
+
+    import pytest
+
+    from pipmind.safety.admission import encode_request
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+
+    with _authority_case_ci(mind) as (_, _, external, external_pin, _):  # noqa: F821
+        flow, gateway, attribution, recovery, grant, base, _, _, book = _recovery_gateway_sql_ci(  # noqa: F821
+            mind, external, external_pin
+        )
+        sessions = gateway.admission.sessions
+        with mind.transaction() as cur:
+            cur.execute("SELECT SYSUTCDATETIME()")
+            now = cur.fetchone()[0].replace(tzinfo=UTC)
+        request, updated = _open_recovery_position_request_ci(base, sessions.read(), now)
+        sessions.observe(updated.latest, now=now)
+        assert sessions.read() == updated
+        raw_request = encode_request(request)
+        first = _confirm_recovery_sql_ci(flow, grant, request, "positions-A")  # noqa: F821
+        active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+        wrapper = RecoveryAwareDryGateway(
+            flow.authority, active, gateway, recovery, attribution, first
+        )
+        accepted = wrapper.accept(grant, request)
+        assert accepted["gateway_receipt"]["outcome"] == "dry_accepted"
+        original_link = attribution.lookup("accept", request.order["client_order_id"])
+        assert original_link.assignment == first
+        before = (
+            gateway.admission.snapshot(),
+            gateway.controls.read(),
+            sessions.read(),
+            mind.head(),
+        )
+        assert len(before[0][0]) == 1
+
+        flow.authority.fence(
+            "open-position-handover",
+            "owner",
+            active.revision,
+            active.epoch,
+            active.application_incarnation,
+            "Explicit replacement retaining both protected open positions and pending risk",
+        )
+        held = flow.authority.read()
+        rebind_held(flow.authority, held, mind.connect, active.epoch)
+        leases = SqlLeaseStore(
+            mind.connect, flow.leases.binding, held.epoch, incarnation=held.application_incarnation
+        )
+        new_grant = leases.acquire("open-position-replacement", ttl_seconds=300)
+        admission = SqlAdmissionStore(mind.connect, leases, sessions, book)
+        next_gateway = SqlSafetyGateway(
+            admission,
+            gateway.controls,
+            gateway._symbols,
+            base_units_per_size=gateway._unit_factors,
+        )
+        next_flow = DryRecoveryCoordinator(flow.authority, held, leases, recovery)
+        second = _confirm_recovery_sql_ci(next_flow, new_grant, request, "positions-B")  # noqa: F821
+        assert second.generation == first.generation + 1
+        # Supplementary broker identity loss is incomplete evidence, never a
+        # reason to drop the remaining position, flatten, or activate anyway.
+        missing = replace(
+            request,
+            evidence=replace(
+                request.evidence,
+                observed=replace(request.evidence.observed, position_ids=("open-long",)),
+            ),
+        )
+        with pytest.raises(LeaseRefused, match="^recovery_obligations_changed$"):
+            next_flow.activate_dry(next_gateway, attribution, new_grant, second, missing)
+        assert flow.authority.read() == held
+        result = next_flow.activate_dry(next_gateway, attribution, new_grant, second, request)
+        assert result["authority"].mode == "active"
+        assert result["engine_resumed"] is result["dispatch_authorized"] is False
+        replacement = RecoveryAwareDryGateway(
+            flow.authority, result["authority"], next_gateway, recovery, attribution, second
+        )
+        assert replacement.accept(new_grant, request) == accepted
+        assert attribution.lookup("accept", request.order["client_order_id"]) == original_link
+        assert (
+            admission.snapshot(),
+            gateway.controls.read(),
+            sessions.read(),
+            mind.head(),
+        ) == before
+        assert encode_request(request) == raw_request
+        assert request.evidence.observed.position_ids == ("open-long", "open-short")
+        assert tuple(row["side"] for row in request.evidence.observed.positions["positions"]) == (
+            "buy",
+            "sell",
+        )
+        assert len(request.evidence.observed.protective_orders) == 2 and recovery.read().held

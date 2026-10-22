@@ -124,7 +124,14 @@ class SqlSafetyGateway:
     is performed by construction or by any method.
     """
 
-    def __init__(self, admission, controls, symbols, *, base_units_per_size):
+    def __init__(
+        self, admission, controls, symbols, *, base_units_per_size, before=None, after=None
+    ):
+        if (before is None) != (after is None) or (
+            before is not None and (not callable(before) or not callable(after))
+        ):
+            raise IntegrationRefused("invalid_integration_hooks")
+        self._before, self._after = before, after
         if (
             type(admission) is not SqlAdmissionStore
             or type(controls) is not SqlControlStore
@@ -477,7 +484,17 @@ class SqlSafetyGateway:
                     raise IntegrationUnavailable("integration_facts_expired")
             return result
 
-        result = self.admission.leases.compare_and_act(grant, operation)
+        def composed(cur):
+            # Trusted SQL-only hooks run on this SAME lease cursor. The before
+            # hook may acquire earlier session/control/recovery locks, never a
+            # later connection or nested lease callback. Neither hook commits.
+            context = self._before(cur, grant) if self._before is not None else None
+            result = operation(cur)
+            if result is not _CONFLICT and self._after is not None:
+                return self._after(cur, context, result)
+            return result
+
+        result = self.admission.leases.compare_and_act(grant, composed)
         if result is _CONFLICT:
             raise IntegrationRefused("conflicting_integration_request")
         return result
