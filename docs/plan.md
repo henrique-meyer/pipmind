@@ -1,5 +1,33 @@
 # Implementation plan
 
+## PIP-51 — Broker-read evidence producer for the safety boundary
+
+[PIP-51](https://nitro.atlassian.net/browse/PIP-51) first discovers and reuses
+existing broker capture, reconciliation and admission producers. If the missing
+work requires only fresh venue capture, record that gap rather than duplicate a
+framework. Otherwise implement a small standalone adapter for already-obtained
+read captures and explicit trusted request/account/query/receipt provenance.
+
+Preserve exact raw hashes, distinct position/order identities, Decimal quantities
+and supplied trusted unit mappings. Keep venue event time, observed scope and
+local capture time separate. Missing/capped pages, conflicting accounts, unknown
+fields, duplicate identities, stale/future/mixed clocks or unsupported protective
+links remain incomplete/refused. Never infer demo identity, full-book completeness,
+individual hedged protection, cash flows or policy values from absent fields.
+
+Synthetic provider-shaped positive controls and counterexamples must exercise the
+existing reconciliation/enforcement paths without shrinking orders or padding
+unrelated facts. Retain source immutability and deterministic replay. Primary
+provider documentation supports field interpretation; it does not qualify actual
+account compatibility or establish capture provenance.
+
+No broker/provider/model/hosted calls, default runtime/HTTP wiring, PIP-17 changes,
+transport, outcome resolution, reservation release, recovery activation, numeric
+owner defaults, resources/capacity or hosted/landing/runtime-state changes.
+PIP-49/PIP-50 CI, merges and exact backups retain publication priority; disjoint
+offline discovery/implementation may proceed while those checks run. Actual
+source/venue, S0/authority and operational M4/M5/M6 gates remain separate.
+
 ## PIP-48 — Durable command and unresolved-attempt journal
 
 Code deliverable: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an
