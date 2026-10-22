@@ -9799,3 +9799,21 @@ def test_command_catalog_sql_restricted_owner_module_exact_schema_and_rollback(m
             f"DROP DATABASE [{name}]; END"
         )
         admin.close()
+
+
+def test_sql_azure_identity_candidate_refuses_reference_platform(mind):
+    from pipmind.safety.azure_identity_sql import (
+        AzureDatabaseIdentity,
+        AzureIdentityRefused,
+        read_expected_identity,
+    )
+
+    with mind.transaction() as cur:
+        cur.execute("SELECT CONVERT(int, SERVERPROPERTY('EngineEdition')), DB_NAME()")
+        edition, database = cur.fetchone()
+        assert edition in (1, 2, 3, 4, 8)
+        pin = AzureDatabaseIdentity("synthetic-server", database, "synthetic-physical-pin")
+        # The real SQL Server cursor must refuse its observed edition before
+        # querying an Azure-only column, not manufacture a supported S0 result.
+        with pytest.raises(AzureIdentityRefused, match="^azure_identity_unsupported$"):
+            read_expected_identity(cur, pin)
