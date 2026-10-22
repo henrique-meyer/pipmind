@@ -13,6 +13,13 @@ from pipmind.safety.lease_sql import LeaseRefused, _binding
 from pipmind.safety.session import SessionBinding, SessionRefused, account_key, validate_binding
 
 TABLE_VERSION = "safety-operational-tables-v1"
+TABLE_VERSION_COMMANDS = "safety-operational-tables-v2"
+COMMAND_TABLES = (
+    "dbo.pm_safety_command_accounts_v1",
+    "dbo.pm_safety_command_intents_v1",
+    "dbo.pm_safety_command_attempts_v1",
+    "dbo.pm_safety_command_unknown_v1",
+)
 MAX_INVENTORY_BYTES = 65536
 PAGE_ROWS = 64
 CHUNK_BYTES = 65536
@@ -64,9 +71,34 @@ class TableDigest:
     sha256: str
 
     def __post_init__(self):
-        _need(type(self.name) is str and self.name in COVERED_TABLES)
+        _need(type(self.name) is str and self.name in COVERED_TABLES + COMMAND_TABLES)
         _need(type(self.count) is int and 0 <= self.count <= 9223372036854775807)
         _need(_hash(self.sha256))
+
+
+@dataclass(frozen=True, slots=True)
+class CommandCounts:
+    commands: int
+    refused: int
+    unattempted: int
+    attempted: int
+    unknown: int
+
+    def __post_init__(self):
+        _need(
+            all(
+                type(value) is int and 0 <= value <= 9223372036854775807
+                for value in (
+                    self.commands,
+                    self.refused,
+                    self.unattempted,
+                    self.attempted,
+                    self.unknown,
+                )
+            )
+            and self.commands == self.refused + self.unattempted + self.attempted
+            and self.unknown <= self.attempted
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +108,7 @@ class Inventory:
     table_version: str
     tables: tuple[TableDigest, ...]
     sha256: str
+    command_counts: CommandCounts | None = None
 
     def __post_init__(self):
         try:
@@ -85,15 +118,40 @@ class Inventory:
         _need(
             _id(self.resource)
             and type(self.table_version) is str
-            and self.table_version == TABLE_VERSION
+            and self.table_version in (TABLE_VERSION, TABLE_VERSION_COMMANDS)
+        )
+        commands = self.table_version == TABLE_VERSION_COMMANDS
+        _need(
+            (commands and type(self.command_counts) is CommandCounts)
+            or (not commands and self.command_counts is None)
         )
         _need(
             type(self.tables) is tuple
             and all(type(row) is TableDigest for row in self.tables)
-            and tuple(row.name for row in self.tables) == COVERED_TABLES
+            and tuple(row.name for row in self.tables)
+            == COVERED_TABLES + (COMMAND_TABLES if commands else ())
             and _hash(self.sha256)
         )
-        _need(self.sha256 == _inventory_hash(self.binding, self.resource, self.tables))
+        if commands:
+            self.command_counts.__post_init__()
+            accounts, intents, attempts, unknown = self.tables[-4:]
+            _need(
+                accounts.count <= 1
+                and (self.command_counts.commands == 0 or accounts.count == 1)
+                and intents.count == self.command_counts.commands
+                and attempts.count == self.command_counts.attempted
+                and unknown.count == self.command_counts.unknown
+            )
+        _need(
+            self.sha256
+            == _inventory_hash(
+                self.binding,
+                self.resource,
+                self.tables,
+                table_version=self.table_version,
+                command_counts=self.command_counts,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,9 +318,15 @@ _SCHEMA = (
 COVERED_TABLES = tuple(name for name, _ in _SCHEMA)
 
 
-def _payload(binding, resource, tables):
-    return {
-        "schema_version": 1,
+def _payload(binding, resource, tables, *, table_version=TABLE_VERSION, command_counts=None):
+    _need(type(table_version) is str and table_version in (TABLE_VERSION, TABLE_VERSION_COMMANDS))
+    commands = table_version == TABLE_VERSION_COMMANDS
+    _need(
+        (commands and type(command_counts) is CommandCounts)
+        or (not commands and command_counts is None)
+    )
+    value = {
+        "schema_version": 2 if commands else 1,
         "kind": "safety-operational-inventory",
         "binding": {
             "account_id": binding.account_id,
@@ -270,19 +334,48 @@ def _payload(binding, resource, tables):
             "currency": binding.currency,
         },
         "resource": resource,
-        "table_version": TABLE_VERSION,
+        "table_version": TABLE_VERSION_COMMANDS if commands else TABLE_VERSION,
         "tables": [{"name": row.name, "count": row.count, "sha256": row.sha256} for row in tables],
     }
+    if commands:
+        _need(type(command_counts) is CommandCounts)
+        command_counts.__post_init__()
+        value["command_counts"] = {
+            key: getattr(command_counts, key)
+            for key in ("commands", "refused", "unattempted", "attempted", "unknown")
+        }
+    return value
 
 
-def _inventory_hash(binding, resource, tables):
-    return hashlib.sha256(_json(_payload(binding, resource, tables)).encode()).hexdigest()
+def _inventory_hash(binding, resource, tables, *, table_version=TABLE_VERSION, command_counts=None):
+    return hashlib.sha256(
+        _json(
+            _payload(
+                binding,
+                resource,
+                tables,
+                table_version=table_version,
+                command_counts=command_counts,
+            )
+        ).encode()
+    ).hexdigest()
 
 
 def encode_inventory(value):
     _need(type(value) is Inventory)
     value.__post_init__()
-    raw = _json({**_payload(value.binding, value.resource, value.tables), "sha256": value.sha256})
+    raw = _json(
+        {
+            **_payload(
+                value.binding,
+                value.resource,
+                value.tables,
+                table_version=value.table_version,
+                command_counts=value.command_counts,
+            ),
+            "sha256": value.sha256,
+        }
+    )
     _need(len(raw.encode()) <= MAX_INVENTORY_BYTES)
     return raw
 
@@ -292,6 +385,9 @@ def decode_inventory(raw):
     try:
         _need(len(raw.encode()) <= MAX_INVENTORY_BYTES)
         value = loads(raw)
+        _need(type(value) is dict and type(value.get("schema_version")) is int)
+        version = value["schema_version"]
+        _need(version in (1, 2))
         _need(
             type(value) is dict
             and set(value)
@@ -304,25 +400,40 @@ def decode_inventory(raw):
                 "tables",
                 "sha256",
             }
+            | ({"command_counts"} if version == 2 else set())
         )
         _need(
             type(value["schema_version"]) is int
-            and value["schema_version"] == 1
+            and value["schema_version"] == version
             and value["kind"] == "safety-operational-inventory"
+            and value["table_version"]
+            == (TABLE_VERSION_COMMANDS if version == 2 else TABLE_VERSION)
         )
         _need(
             type(value["binding"]) is dict
             and set(value["binding"]) == {"account_id", "environment", "currency"}
         )
-        _need(type(value["tables"]) is list and len(value["tables"]) == len(COVERED_TABLES))
+        _need(
+            type(value["tables"]) is list
+            and len(value["tables"]) == len(COVERED_TABLES) + (4 if version == 2 else 0)
+        )
         for row in value["tables"]:
             _need(type(row) is dict and set(row) == {"name", "count", "sha256"})
+        command_counts = None
+        if version == 2:
+            _need(
+                type(value["command_counts"]) is dict
+                and set(value["command_counts"])
+                == {"commands", "refused", "unattempted", "attempted", "unknown"}
+            )
+            command_counts = CommandCounts(**value["command_counts"])
         result = Inventory(
             SessionBinding(**value["binding"]),
             value["resource"],
             value["table_version"],
             tuple(TableDigest(**row) for row in value["tables"]),
             value["sha256"],
+            command_counts,
         )
         _need(encode_inventory(result) == raw)
         return result
@@ -566,6 +677,51 @@ def capture_in_transaction(cur, binding, lease_binding):
             tables,
             _inventory_hash(binding, lease_binding.resource, tables),
         )
+        encode_inventory(result)
+        return result
+    except CheckpointUnavailable:
+        raise
+    except Exception:
+        raise CheckpointUnavailable("safety_inventory_unavailable") from None
+
+
+def complete_required_locks(binding, lease_binding):
+    """Explicit complete-profile lock set, including when command schema is absent."""
+    return required_locks(binding, lease_binding) + (
+        "pipmind-safety-command-journal-v1:" + account_key(binding),
+    )
+
+
+def capture_complete_in_transaction(cur, binding, lease_binding):
+    """Declare legacy absence or capture all command obligations; never truncate."""
+    resources = complete_required_locks(binding, lease_binding)
+    try:
+        from pipmind.safety.command_checkpoint_sql import capture_command_tables_in_transaction
+
+        _locks(cur, resources)
+        legacy = capture_in_transaction(cur, binding, lease_binding)
+        commands = capture_command_tables_in_transaction(cur, binding, lease_binding)
+        if commands is None:
+            result = legacy
+        else:
+            tables, counts = commands
+            _need(type(tables) is tuple and type(counts) is CommandCounts)
+            combined = legacy.tables + tables
+            result = Inventory(
+                binding,
+                lease_binding.resource,
+                TABLE_VERSION_COMMANDS,
+                combined,
+                _inventory_hash(
+                    binding,
+                    lease_binding.resource,
+                    combined,
+                    table_version=TABLE_VERSION_COMMANDS,
+                    command_counts=counts,
+                ),
+                counts,
+            )
+        _locks(cur, resources)
         encode_inventory(result)
         return result
     except CheckpointUnavailable:

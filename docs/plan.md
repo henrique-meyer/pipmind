@@ -22,6 +22,11 @@ implementation untouched. This code task adds no hosted call, deployment,
 resource/capacity/runtime-state or landing change. PIP-47 S0/independent authority,
 PIP-30 venue qualification and operational M4/M5/M6 remain separate gates.
 
+The reference complete scan requires actual `dbo` execution context because SQL
+metadata can hide command tables from a limited principal. Reject unverifiable
+visibility; never grant hosted privileges to make a reference test pass. A
+least-privileged authoritative catalog boundary remains explicit PIP-47 work.
+
 ## PIP-48 — Durable command and unresolved-attempt journal
 
 Code deliverable: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an

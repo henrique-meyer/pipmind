@@ -94,11 +94,12 @@ Complete native application-database backup/restore must retain these additional
 tables and original scopes together with mind, feeds, risk reservations, controls,
 recovery and attribution. The earlier 15-table safety inventory has its declared
 scope; it is not silently extended into a command-journal/full-database export.
-The current recovery coordinator's inventory does **not** verify these new
-unresolved command obligations. Native backup preservation alone does not close
-that gap or permit actual recovery/dispatch. Later transport/recovery integration
-must explicitly consume the complete command obligations and extend/qualify the
-operational checkpoint protocol; dropping them from history is not a workaround.
+PIP-50 adds an explicit 19-table complete recovery profile with exact command
+history and unresolved counts, described in [command recovery](safety-command-recovery.md).
+The coordinator remains held for recorded unattempted commands or any immutable
+attempt/unknown outcome. Native backup preservation alone never resolves those
+obligations or permits actual dispatch. Future transport still needs verified
+venue resolution and final send checks; dropping history is not a workaround.
 Restored historical lookup does not activate its old owner. Preserve native-pin,
 independent source/target barriers and explicit fresh recovery requirements.
 

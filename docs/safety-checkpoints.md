@@ -1,10 +1,21 @@
 # Safety operational inventory
 
-`pipmind.safety.checkpoint_sql` attests the complete retained safety-table state
-for an explicit `SessionBinding` and exact `LeaseBinding`. It opens no connection,
+`pipmind.safety.checkpoint_sql` captures exact retained table state within a
+declared profile for an explicit `SessionBinding` and exact `LeaseBinding`. It opens no connection,
 creates no schema, changes no state, and grants no operational authority. It does
 not export a mind, create a backup, restore a trader, release reservations, reset
 controls, or prove the provenance of broker facts.
+
+The existing `capture_in_transaction` / `required_locks` APIs remain the exact
+15-table v1 profile below. They do not include command-journal obligations.
+Recovery uses `capture_complete_in_transaction` / `complete_required_locks`,
+which add the command-journal lock and select a supported 19-table v2 profile
+when its command schema exists. A verified wholly absent command schema retains
+v1 compatibility; partial, unsupported or unverifiable schema refuses. Current
+complete capture requires actual `dbo` execution context to establish catalog
+visibility. No permission is granted or impersonation performed by the adapter.
+See [command recovery](safety-command-recovery.md) for counts, held activation,
+visibility limits and separate least-privileged hosted qualification.
 
 The caller supplies an existing SQL transaction and already owns exclusive
 transaction application locks in this order:

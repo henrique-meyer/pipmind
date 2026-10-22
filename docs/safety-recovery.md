@@ -63,7 +63,7 @@ sidecar to the same backed-up checkpoint. Quiesce relevant writes or otherwise
 establish that consistent relationship; do not combine a convenient inventory
 from one time with a backup from another. Restored comparison refuses a mismatch.
 
-The inventory covers precisely the 15 legacy safety tables declared in
+The legacy inventory covers precisely the 15 safety tables declared in
 [the inventory guide](safety-checkpoints.md): the exact lease resource, all account
 sessions/observations, admission history and referenced books, reservations/count
 floors, controls/overrides/suggestions/dispositions, and dry integration state/history.
@@ -72,6 +72,14 @@ It excludes mind/feed tables and new recovery/assignment/attribution metadata;
 the complete native backup still preserves those. Separate exact assignment,
 plan, attribution and native-incarnation checks remain necessary. A 15-table
 digest cannot certify a full saved mind or replace a database backup.
+
+PIP-50 makes the coordinator use explicit complete-profile capture. With an
+authoritative catalog context, a wholly absent command schema preserves the
+legacy profile; all four supported command tables select the 19-table v2 profile.
+Partial, unsupported or hidden/unverifiable schemas refuse capture. The v2
+digest also binds complete command counts and validates canonical history and
+references. See [command recovery](safety-command-recovery.md) for the strict
+reference visibility requirement and the separate hosted qualification gate.
 
 ## Explicit owner procedure
 
@@ -146,6 +154,13 @@ owner or establish the provenance of a market snapshot.
    `activate_dry(gateway, attribution, grant, assignment, request)`. The exact
    observed obligation identities must match the confirmed plan. Its
    recovery-aware wrapper validates the current assignment and native ownership,
+   then checks the complete current command inventory in that same transaction.
+   Recorded unattempted commands and attempt/unknown outcomes keep recovery held;
+   refused-only audit history does not. There is no automatic resolution or
+   reservation release. The external guard normalizes an inner callback refusal
+   to `AuthorityUnavailable("authority_operation_failed")`; inspect the retained
+   inventory and hold, rather than treating that error as settlement evidence.
+   With no unresolved commands, the wrapper
    runs full fresh positive safety reconciliation and records immutable
    attribution in the application transaction. Only after that transaction is
    acknowledged does the held external guard stage activation for the strictly
