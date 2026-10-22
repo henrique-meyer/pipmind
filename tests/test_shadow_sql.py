@@ -8846,3 +8846,138 @@ def test_command_journal_sql_complete_history_crosses_native_keyset_page(mind):
         assert [encode_command(row.command) for row in journal.iter_history()] == [
             encode_command(row) for row in original
         ]
+
+
+"""Root appends this self-contained test to the mandatory disposable SQL suite."""
+
+
+def test_sql_safety_profile_actual_stores_reopen_and_counterexamples(mind):
+    import hashlib
+    import json
+    import time
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from pipmind.safety.admission import (
+        decode_receipt,
+        decode_request,
+        encode_receipt,
+        encode_request,
+    )
+    from pipmind.safety.eval_evidence import (
+        canonical_json,
+        fingerprint,
+        grade_case,
+        sanitized_report,
+    )
+    from pipmind.safety.eval_runner_sql import DisposableSQLScope, run_sql_profile
+    from pipmind.safety.eval_scenarios import SOURCE_PATH, captured_order, load_scenarios
+
+    with mind.transaction() as cur:
+        cur.execute("SELECT DB_NAME()")
+        database = cur.fetchone()[0]
+    specs = load_scenarios()
+    started = time.monotonic()
+    evidence = run_sql_profile(mind.connect, scope=DisposableSQLScope(uuid4().hex, database, True))
+    elapsed = time.monotonic() - started
+    for spec, case in zip(specs, evidence, strict=True):
+        assert grade_case(spec, case) == (), spec.case_id
+    report = sanitized_report(
+        specs, evidence, dataset_sha256=hashlib.sha256(SOURCE_PATH.read_bytes()).hexdigest()
+    )
+    assert report["passed"] is True
+    assert report["consistency_only"] is True
+    assert report["sql_execution_attested"] is False
+    assert report["starter_baseline"] == {"passing": 14, "deferred": 16}
+    assert sum(row["observations"] for row in report["cases"]) == 13
+
+    # Mutations below operate on the actual returned/reopened SQL evidence,
+    # never on manufactured successful store results or additional SQL calls.
+    for spec, case in zip(specs, evidence, strict=True):
+        target = case.observations[-1]
+        if target.receipt_kind == "admission":
+            receipt = decode_receipt(target.returned_body)
+            receipt["assessment"] = replace(receipt["assessment"], code="invalid_source_facts")
+            body = encode_receipt(receipt)
+            changed = replace(target, returned_body=body, stored_body=body, reopened_body=body)
+            expected = "specific_refusal"
+        elif target.exception_code is not None:
+            changed = replace(target, exception_code="lease_store_busy")
+            expected = "ownership_refusal"
+        else:
+            receipt = json.loads(target.returned_body)
+            receipt["code"] = "reconciliation_required"
+            body = canonical_json(receipt)
+            changed = replace(target, returned_body=body, stored_body=body, reopened_body=body)
+            expected = "specific_refusal"
+        assert expected in grade_case(
+            spec, replace(case, observations=case.observations[:-1] + (changed,))
+        )
+        positive = replace(case.observations[0], reopened_body=None)
+        assert "durable_receipt" in grade_case(
+            spec, replace(case, observations=(positive,) + case.observations[1:])
+        )
+        positive = replace(case.observations[0], reservation_body=None)
+        assert "assessment_integrity" in grade_case(
+            spec, replace(case, observations=(positive,) + case.observations[1:])
+        )
+        if positive.receipt_kind == "gateway":
+            positive = replace(case.observations[0], admission_receipt_body=None)
+            assert "assessment_integrity" in grade_case(
+                spec, replace(case, observations=(positive,) + case.observations[1:])
+            )
+
+        tables = tuple(
+            replace(row, count=row.count + 1, sha256="a" * 64)
+            if row.name == "dbo.pm_safety_admission_reservations_v1"
+            else row
+            for row in target.after.tables
+        )
+        after = replace(target.after, tables=tables)
+        changed = replace(target, after=after, reopened=after)
+        expected = "stale_owner_write" if spec.case_id == "S07" else "unintended_reservation"
+        assert expected in grade_case(
+            spec, replace(case, observations=case.observations[:-1] + (changed,))
+        )
+
+    # Rehashing an impermissibly shrunk source order cannot disguise fixture drift.
+    case, spec = evidence[2], specs[2]
+    target = case.observations[-1]
+    request = decode_request(target.request_body)
+    request.order["size"] /= 100
+    raw = encode_request(request)
+    receipt = decode_receipt(target.returned_body)
+    receipt["request_sha256"] = fingerprint(raw)
+    body = encode_receipt(receipt)
+    changed = replace(
+        target,
+        request_body=raw,
+        order_body=captured_order(raw),
+        returned_body=body,
+        stored_body=body,
+        reopened_body=body,
+    )
+    assert "order_integrity" in grade_case(
+        spec, replace(case, observations=(case.observations[0], changed))
+    )
+
+    case, spec = evidence[1], specs[1]
+    target = case.observations[-1]
+    receipt = decode_receipt(target.returned_body)
+    receipt["assessment"] = replace(receipt["assessment"], reconciliation_findings=())
+    body = encode_receipt(receipt)
+    changed = replace(target, returned_body=body, stored_body=body, reopened_body=body)
+    assert "stale_account_proof" in grade_case(
+        spec, replace(case, observations=(case.observations[0], changed))
+    )
+
+    case, spec = evidence[3], specs[3]
+    changed = replace(case.observations[-1], setup_receipts=(), reopened_setup_receipts=())
+    assert "loss_latch_proof" in grade_case(
+        spec, replace(case, observations=(case.observations[0], changed))
+    )
+    # This bounded allowlist is the only emitted material; raw receipts stay private.
+    print(
+        "SQL_SAFETY_PROFILE "
+        + canonical_json({"elapsed_seconds": round(elapsed, 3), "report": report})
+    )
