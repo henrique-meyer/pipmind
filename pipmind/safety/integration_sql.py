@@ -24,7 +24,7 @@ _DDL = (
     f"""IF OBJECT_ID('{_ACCOUNTS}','U') IS NULL CREATE TABLE {_ACCOUNTS} (
     account_key char(64) {_BIN} NOT NULL PRIMARY KEY,
     account_id nvarchar(128) {_BIN} NOT NULL,environment varchar(4) {_BIN} NOT NULL,
-    currency char(3) {_BIN} NOT NULL,scope nvarchar(4096) NULL,
+    currency char(3) {_BIN} NOT NULL,scope nvarchar(max) NULL,
     scope_sha256 char(64) NULL,hold_code varchar(64) NOT NULL)""",
     f"""IF OBJECT_ID('{_JOURNAL}','U') IS NULL CREATE TABLE {_JOURNAL} (
     account_key char(64) {_BIN} NOT NULL REFERENCES {_ACCOUNTS}(account_key),
@@ -187,7 +187,8 @@ class SqlSafetyGateway:
     def _account(self, cur):
         _lock(cur, self._resource)
         cur.execute(
-            f"SELECT account_id,environment,currency,scope,scope_sha256,hold_code "
+            "SELECT account_id,environment,currency,"
+            "CASE WHEN DATALENGTH(scope)<=8192 THEN scope END,scope_sha256,hold_code "
             f"FROM {_ACCOUNTS} WITH(UPDLOCK,HOLDLOCK) WHERE account_key=%s",
             (self._key,),
         )
