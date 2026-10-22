@@ -7164,8 +7164,8 @@ def test_recovery_flow_sql_checkpoint_change_refuses_confirmation_without_reset(
         assert flow.authority.read() == flow.expected
 
 
-def _recovery_saved_mind_ci(store):
-    bundle = validate_bundle(export_experience(store, MOMENT))
+def _recovery_saved_mind_ci(store, moment=MOMENT):
+    bundle = validate_bundle(export_experience(store, moment))
     # A new export deliberately has a fresh export_id and ZIP entry timestamps.
     # Compare every retained file byte, all other manifest fields and exact SQL
     # head/record state instead of treating the archive container as history.
@@ -9175,7 +9175,8 @@ def test_command_recovery_sql_native_restore_complete_profile_and_fail_closed_mu
             assert len(reservations[0]) == 1
             original_assignment = recovery.read()
             original_links = _p50_extra_ci(connect, recovery.binding)
-            original_mind = _recovery_saved_mind_ci(source)  # noqa: F821
+            export_clock = utc("2026-10-21T00:00:00Z")
+            original_mind = _recovery_saved_mind_ci(source, export_clock)  # noqa: F821
             cur.execute(
                 f"BACKUP DATABASE [{source_name}] TO DISK=N'{backup_path}' "
                 "WITH INIT,COPY_ONLY,CHECKSUM"
@@ -9215,7 +9216,9 @@ def test_command_recovery_sql_native_restore_complete_profile_and_fail_closed_mu
             assert restored.recovery.read() == original_assignment
             assert _p50_extra_ci(restored_connect, recovery.binding) == original_links
             assert (
-                _recovery_saved_mind_ci(SqlMind(restored_connect, source.trader))  # noqa: F821
+                _recovery_saved_mind_ci(  # noqa: F821
+                    SqlMind(restored_connect, source.trader), export_clock
+                )
                 == original_mind
             )
 
