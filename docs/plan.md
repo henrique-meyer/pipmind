@@ -32,6 +32,33 @@ PIP-49/PIP-50 CI, merges and exact backups retain publication priority; disjoint
 offline discovery/implementation may proceed while those checks run. Actual
 source/venue, S0/authority and operational M4/M5/M6 gates remain separate.
 
+## PIP-50 — Complete command-obligation recovery checkpoints
+
+[PIP-50](https://nitro.atlassian.net/browse/PIP-50) extends the isolated PIP-29
+recovery boundary to the command account/intents/attempts/unknown history added
+by PIP-48. Declare explicit supported inventory profiles and compatibility;
+partial or unsupported schemas and incomplete command evidence fail closed.
+Preserve exact bodies, hashes, causation, original assignment/owner attribution,
+reservations and dependencies across checkpoint, native backup and reopen.
+
+Recovery activation must remain held for unresolved command obligations until a
+separately verified resolution path exists. Do not infer settlement from a
+successful backup, absent venue rows or restored leases; do not fabricate
+terminal outcomes, release reservations or activate order transport. Existing
+legacy no-command cases keep precisely scoped compatibility, without describing
+an inventory that omits command tables as complete command recovery.
+
+Require actual disposable SQL preservation, mismatch, held-activation and
+rollback/reopen cases. Keep normative contracts, default runtime and PIP-17
+implementation untouched. This code task adds no hosted call, deployment,
+resource/capacity/runtime-state or landing change. PIP-47 S0/independent authority,
+PIP-30 venue qualification and operational M4/M5/M6 remain separate gates.
+
+The reference complete scan requires actual `dbo` execution context because SQL
+metadata can hide command tables from a limited principal. Reject unverifiable
+visibility; never grant hosted privileges to make a reference test pass. A
+least-privileged authoritative catalog boundary remains explicit PIP-47 work.
+
 ## PIP-49 — SQL enforcement evaluation subprofile
 
 Code deliverable: [PIP-49](https://nitro.atlassian.net/browse/PIP-49) connects

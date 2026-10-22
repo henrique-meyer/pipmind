@@ -12,9 +12,13 @@ from pipmind.safety.authority_sql import SqlAuthorityStore
 from pipmind.safety.checkpoint_sql import (
     Inventory,
     NativeBackupReference,
-    capture_in_transaction,
     encode_inventory,
-    required_locks,
+)
+from pipmind.safety.checkpoint_sql import (
+    capture_complete_in_transaction as capture_in_transaction,
+)
+from pipmind.safety.checkpoint_sql import (
+    complete_required_locks as required_locks,
 )
 from pipmind.safety.incarnation import encode_incarnation
 from pipmind.safety.integration_sql import SqlSafetyGateway, _lock
@@ -316,7 +320,19 @@ class RecoveryAwareDryGateway:
             # Acquire earlier locks before the gateway obtains integration/admission.
             for resource in required_locks(recovery.binding, leases.binding)[:4]:
                 _lock(cur, resource)
-            return _current(cur, recovery, expected, assignment)
+            current = _current(cur, recovery, expected, assignment)
+            if _held:
+                # Recheck the complete current command history in the same SQL
+                # transaction as reconciliation, while the external HELD guard
+                # spans its acknowledged commit and subsequent activation.
+                _all_locks(cur, recovery, leases)
+                inventory = capture_in_transaction(cur, recovery.binding, leases.binding)
+                counts = inventory.command_counts
+                _need(
+                    counts is None or counts.unattempted + counts.attempted == 0,
+                    "recovery_command_obligations_pending",
+                )
+            return current
 
         def after(cur, current, result):
             link = attribution.record_in_transaction(cur, current, result)

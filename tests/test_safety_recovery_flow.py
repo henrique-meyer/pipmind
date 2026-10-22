@@ -20,7 +20,9 @@ from pipmind.safety.checkpoint_sql import (
     NativeBackupReference,
     TableDigest,
     _inventory_hash,
-    required_locks,
+)
+from pipmind.safety.checkpoint_sql import (
+    complete_required_locks as required_locks,
 )
 from pipmind.safety.integration_sql import SqlSafetyGateway
 from pipmind.safety.lease_sql import LeaseCommitUnknown, LeaseRefused, SqlLeaseStore
@@ -203,6 +205,94 @@ def test_capture_uses_all_ordered_locks_and_full_inventory(context):
         required_locks(c["recovery"].binding, c["leases"].binding)
     )
     assert c["events"][-2:] == ["main_ack", "guard_exit"]
+
+
+def _command_inventory(c, values):
+    from pipmind.safety.checkpoint_sql import (
+        COMMAND_TABLES,
+        TABLE_VERSION_COMMANDS,
+        CommandCounts,
+    )
+
+    counts = CommandCounts(*values)
+    command_tables = tuple(
+        TableDigest(name, count, sha256(f"{name}:{count}".encode()).hexdigest())
+        for name, count in zip(
+            COMMAND_TABLES,
+            (int(counts.commands > 0), counts.commands, counts.attempted, counts.unknown),
+            strict=True,
+        )
+    )
+    old = c["inventory"]
+    tables = old.tables + command_tables
+    return Inventory(
+        old.binding,
+        old.resource,
+        TABLE_VERSION_COMMANDS,
+        tables,
+        _inventory_hash(
+            old.binding,
+            old.resource,
+            tables,
+            table_version=TABLE_VERSION_COMMANDS,
+            command_counts=counts,
+        ),
+        counts,
+    )
+
+
+@pytest.mark.parametrize("counts", [(1, 0, 1, 0, 0), (1, 0, 0, 1, 0), (1, 0, 0, 1, 1)])
+def test_current_command_obligations_refuse_before_reconcile_or_activation(
+    context, monkeypatch, counts
+):
+    c = context
+    inventory = _command_inventory(c, counts)
+    monkeypatch.setattr(recovery_flow, "capture_in_transaction", lambda *args: inventory)
+    fake_reconcile(c, monkeypatch)
+
+    def forbidden_attribution(*args):
+        pytest.fail("pending command must fail before any attribution write")
+
+    monkeypatch.setattr(SqlAttributionStore, "record_in_transaction", forbidden_attribution)
+    with pytest.raises(LeaseRefused, match="^recovery_command_obligations_pending$"):
+        coordinator(c).activate_dry(
+            c["gateway"], c["attribution"], "grant", c["assignment"], c["request"]
+        )
+    assert c["events"].count("main_ack") == 1  # The earlier obligations read only.
+    assert not any(type(event) is tuple and event[0] == "activate" for event in c["events"])
+
+
+@pytest.mark.parametrize("counts", [(0, 0, 0, 0, 0), (1, 1, 0, 0, 0)])
+def test_empty_or_refused_only_complete_command_profile_can_activate_dry(
+    context, monkeypatch, counts
+):
+    c = context
+    inventory = _command_inventory(c, counts)
+    monkeypatch.setattr(recovery_flow, "capture_in_transaction", lambda *args: inventory)
+    fake_reconcile(c, monkeypatch)
+    result = coordinator(c).activate_dry(
+        c["gateway"], c["attribution"], "grant", c["assignment"], c["request"]
+    )
+    assert result["authority"].mode == "active"
+    assert result["dispatch_authorized"] is False
+
+
+def test_incomplete_command_profile_cannot_activate_or_write_attribution(context, monkeypatch):
+    from pipmind.safety.checkpoint_sql import CheckpointUnavailable
+
+    c = context
+    fake_reconcile(c, monkeypatch)
+
+    def incomplete(*args):
+        raise CheckpointUnavailable("safety_inventory_unavailable")
+
+    monkeypatch.setattr(recovery_flow, "capture_in_transaction", incomplete)
+    with pytest.raises(CheckpointUnavailable, match="^safety_inventory_unavailable$"):
+        coordinator(c).activate_dry(
+            c["gateway"], c["attribution"], "grant", c["assignment"], c["request"]
+        )
+    assert c["events"].count("main_ack") == 1
+    assert not any(type(event) is tuple and event[0] == "activate" for event in c["events"])
 
 
 def test_prepare_binds_inventory_native_incarnation_and_exact_owner_obligations(
