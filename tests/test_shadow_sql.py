@@ -7268,6 +7268,7 @@ def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
                 )
             inventory = flow.capture(grant)
             exact_mind = _recovery_saved_mind_ci(source)
+            exact_runtime = source.runtime("feed_status")
             exact_assignment = recovery.read()
             cur.execute(
                 f"BACKUP DATABASE [{source_name}] TO DISK=N'{backup_path}' "
@@ -7430,7 +7431,8 @@ def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
                 flow.capture(grant)
             # Also prove an in-place database rewind changes native identity,
             # not merely a restore under a different database name.
-            source.set_runtime("after-backup-tail", {"exact": "retained until native rewind"})
+            source.set_runtime("feed_status", {"exact": "retained until native rewind"})
+            assert source.runtime("feed_status") != exact_runtime
             original_pin = flow.leases.incarnation
             cur.execute(f"ALTER DATABASE [{source_name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
             cur.execute(
@@ -7449,7 +7451,7 @@ def test_recovery_native_restore_exact_history_and_stale_pin_refusal(mind):
             with pytest.raises(LeaseRefused, match="^lease_incarnation_mismatch$"):
                 flow.leases.compare_and_act(grant, lambda cursor: None)
             assert _recovery_saved_mind_ci(source) == exact_mind
-            assert source.runtime("after-backup-tail") is None
+            assert source.runtime("feed_status") == exact_runtime
     finally:
         for name in reversed(names):
             cur.execute(
@@ -7803,3 +7805,231 @@ def test_recovery_sql_target_barrier_does_not_substitute_for_missing_original_so
         cur.execute(f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
         cur.execute(f"DROP DATABASE [{name}]")
         admin.close()
+
+
+"""Focused root-integrated SQL proof; explicit synthetic facts, no venue calls."""
+
+
+def _open_recovery_position_request_ci(request, state, now):
+    from copy import deepcopy
+    from dataclasses import replace
+    from decimal import Decimal as D
+
+    from pipmind.contracts import stamp
+    from pipmind.reconciliation import ProtectiveOrder
+    from pipmind.safety import Conversion, Exposure
+    from pipmind.safety.admission import (
+        PositionMark,
+        ReservationMark,
+        checkpoint_digest,
+        decode_request,
+        encode_request,
+    )
+    from pipmind.safety.session import advance
+
+    when = stamp(now)
+    conversion = Conversion("USD", "USD", D("1"), when)
+    positions, protections, updates, marks, exposures = [], [], [], [], []
+    for identity, side, size, stop in (
+        ("open-long", "buy", D("100"), D("1.09")),
+        ("open-short", "sell", D("60"), D("1.11")),
+    ):
+        opposite = "sell" if side == "buy" else "buy"
+        protection_request = {
+            "schema_version": 1,
+            "client_order_id": "stop-" + identity,
+            "action": "modify",
+            "instrument": "EUR/USD",
+            "side": opposite,
+            "size": size,
+            "stop": stop,
+        }
+        positions.append(
+            {"instrument": "EUR/USD", "side": side, "size": size, "average_price": D("1.1")}
+        )
+        protections.append(ProtectiveOrder(identity, "broker-" + identity, protection_request))
+        updates.append(
+            {
+                "schema_version": 1,
+                "client_order_id": protection_request["client_order_id"],
+                "broker_order_id": "broker-" + identity,
+                "status": "working",
+                "instrument": "EUR/USD",
+                "side": opposite,
+                "size": size,
+                "filled_size": D("0"),
+                "ts": when,
+            }
+        )
+        marks.append(PositionMark(identity, D("1.1"), D("1.1002"), when, D("1")))
+        exposures.append(
+            Exposure(
+                identity,
+                "EUR/USD",
+                side,
+                size,
+                D("1.1") if side == "buy" else D("1.1002"),
+                stop,
+                when,
+                conversion,
+            )
+        )
+    observed = replace(
+        request.evidence.observed,
+        account={**request.evidence.observed.account, "as_of": when},
+        positions={"schema_version": 1, "as_of": when, "positions": positions},
+        position_ids=("open-long", "open-short"),
+        account_complete=True,
+        positions_complete=True,
+        order_updates=tuple(updates),
+        orders_as_of=when,
+        orders_complete=True,
+        protective_orders=tuple(protections),
+        protections_as_of=when,
+        protections_complete=True,
+    )
+    evidence = replace(
+        request.evidence,
+        expected=deepcopy(observed),
+        observed=observed,
+        protective_obligations=tuple(protections),
+        position_marks=tuple(marks),
+    )
+    facts = replace(
+        request.facts,
+        as_of=when,
+        exposures=tuple(exposures),
+        proposal=replace(request.facts.proposal, as_of=when, conversion=conversion),
+    )
+    proposal = replace(
+        request,
+        order={**request.order, "client_order_id": "open-position-proposal"},
+        facts=facts,
+        evidence=evidence,
+        reservation_marks=(
+            ReservationMark(
+                "open-position-proposal", D("1.1"), D("1.1002"), when, conversion, D("40")
+            ),
+        ),
+    )
+    observation = replace(
+        state.latest,
+        observation_id="open-position-source",
+        as_of=when,
+        received_at=when,
+        equity=observed.account["equity"],
+        cash_flow_ends_at=when,
+        account_evidence_id=checkpoint_digest(evidence, facts),
+    )
+    updated, _ = advance(state, observation, now=now)
+    proposal = replace(
+        proposal,
+        expected_session_revision=updated.revision,
+        expected_observation_sha256=updated.latest_sha256,
+    )
+    assert encode_request(decode_request(encode_request(proposal))) == encode_request(proposal)
+    return proposal, updated
+
+
+def test_recovery_sql_open_long_short_handover_preserves_obligations_and_original_attribution(mind):
+    from dataclasses import replace
+    from datetime import UTC
+
+    import pytest
+
+    from pipmind.safety.admission import encode_request
+    from pipmind.safety.admission_sql import SqlAdmissionStore
+    from pipmind.safety.integration_sql import SqlSafetyGateway
+    from pipmind.safety.lease_sql import LeaseRefused, SqlLeaseStore
+    from pipmind.safety.recovery_flow import (
+        DryRecoveryCoordinator,
+        RecoveryAwareDryGateway,
+        rebind_held,
+    )
+
+    with _authority_case_ci(mind) as (_, _, external, external_pin, _):  # noqa: F821
+        flow, gateway, attribution, recovery, grant, base, _, _, book = _recovery_gateway_sql_ci(  # noqa: F821
+            mind, external, external_pin
+        )
+        sessions = gateway.admission.sessions
+        with mind.transaction() as cur:
+            cur.execute("SELECT SYSUTCDATETIME()")
+            now = cur.fetchone()[0].replace(tzinfo=UTC)
+        request, updated = _open_recovery_position_request_ci(base, sessions.read(), now)
+        sessions.observe(updated.latest, now=now)
+        assert sessions.read() == updated
+        raw_request = encode_request(request)
+        first = _confirm_recovery_sql_ci(flow, grant, request, "positions-A")  # noqa: F821
+        active = flow.activate_dry(gateway, attribution, grant, first, request)["authority"]
+        wrapper = RecoveryAwareDryGateway(
+            flow.authority, active, gateway, recovery, attribution, first
+        )
+        accepted = wrapper.accept(grant, request)
+        assert accepted["gateway_receipt"]["outcome"] == "dry_accepted"
+        original_link = attribution.lookup("accept", request.order["client_order_id"])
+        assert original_link.assignment == first
+        before = (
+            gateway.admission.snapshot(),
+            gateway.controls.read(),
+            sessions.read(),
+            mind.head(),
+        )
+        assert len(before[0][0]) == 1
+
+        flow.authority.fence(
+            "open-position-handover",
+            "owner",
+            active.revision,
+            active.epoch,
+            active.application_incarnation,
+            "Explicit replacement retaining both protected open positions and pending risk",
+        )
+        held = flow.authority.read()
+        rebind_held(flow.authority, held, mind.connect, active.epoch)
+        leases = SqlLeaseStore(
+            mind.connect, flow.leases.binding, held.epoch, incarnation=held.application_incarnation
+        )
+        new_grant = leases.acquire("open-position-replacement", ttl_seconds=300)
+        admission = SqlAdmissionStore(mind.connect, leases, sessions, book)
+        next_gateway = SqlSafetyGateway(
+            admission,
+            gateway.controls,
+            gateway._symbols,
+            base_units_per_size=gateway._unit_factors,
+        )
+        next_flow = DryRecoveryCoordinator(flow.authority, held, leases, recovery)
+        second = _confirm_recovery_sql_ci(next_flow, new_grant, request, "positions-B")  # noqa: F821
+        assert second.generation == first.generation + 1
+        # Supplementary broker identity loss is incomplete evidence, never a
+        # reason to drop the remaining position, flatten, or activate anyway.
+        missing = replace(
+            request,
+            evidence=replace(
+                request.evidence,
+                observed=replace(request.evidence.observed, position_ids=("open-long",)),
+            ),
+        )
+        with pytest.raises(LeaseRefused, match="^recovery_obligations_changed$"):
+            next_flow.activate_dry(next_gateway, attribution, new_grant, second, missing)
+        assert flow.authority.read() == held
+        result = next_flow.activate_dry(next_gateway, attribution, new_grant, second, request)
+        assert result["authority"].mode == "active"
+        assert result["engine_resumed"] is result["dispatch_authorized"] is False
+        replacement = RecoveryAwareDryGateway(
+            flow.authority, result["authority"], next_gateway, recovery, attribution, second
+        )
+        assert replacement.accept(new_grant, request) == accepted
+        assert attribution.lookup("accept", request.order["client_order_id"]) == original_link
+        assert (
+            admission.snapshot(),
+            gateway.controls.read(),
+            sessions.read(),
+            mind.head(),
+        ) == before
+        assert encode_request(request) == raw_request
+        assert request.evidence.observed.position_ids == ("open-long", "open-short")
+        assert tuple(row["side"] for row in request.evidence.observed.positions["positions"]) == (
+            "buy",
+            "sell",
+        )
+        assert len(request.evidence.observed.protective_orders) == 2 and recovery.read().held
