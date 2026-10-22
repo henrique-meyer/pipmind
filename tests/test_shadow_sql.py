@@ -9396,6 +9396,7 @@ def test_command_recovery_sql_native_restore_complete_profile_and_fail_closed_mu
             )
         admin.close()
 
+
 """Root appends this self-contained test to the mandatory disposable SQL suite."""
 
 
