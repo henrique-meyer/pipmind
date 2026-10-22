@@ -1,5 +1,38 @@
 # Implementation plan
 
+## PIP-48 — Durable command and unresolved-attempt journal
+
+In Progress: [PIP-48](https://nitro.atlassian.net/browse/PIP-48) supplies an
+isolated offline SQL command/attempt journal beneath PIP-30. Retain exact
+canonical OrderRequest bodies, scope, original assignment and causal provenance;
+distinguish local recorded/refused facts from venue acceptance. Exact-ID replay
+preserves original attribution and conflicting content refuses. Record at most
+one immutable attempt-intent marker under the trusted same-cursor boundary;
+restart, lost acknowledgements and handover retain unresolved obligations.
+
+No sender, worker, transport, runtime route, retry/reset/resend, simulated venue
+outcome or reservation release is added. Every result is an audit fact with
+dispatch disabled. Document which current ownership/assignment/control evidence
+the implementation actually checks; never invent risk admission or treat saved
+receipts as fresh authority. Future final dispatch and broker reconciliation
+remain separate protocols.
+
+Separate pure contracts, SQL storage and focused tests/guide may proceed in
+parallel after agreeing one contract. Root integrates mandatory disposable SQL
+checks for collisions, competing attempts, stale ownership, rollback/disconnect,
+commit uncertainty, original attribution and complete native backup/restore.
+Preserve complete history and dependencies with bounded per-record memory.
+PIP-17 files and existing normative order/update/fill schemas are excluded.
+Hosted operation, PIP-47 S0 recovery qualification, M4 acceptance, actual PIP-30
+execution and owner risk/order permission remain separately gated. The hosted
+app, capacity, configuration, landing and runtime controls stay unchanged.
+
+PIP-29's current fifteen-table operational inventory does not include these new
+journal tables. Complete native backups must preserve them, but the existing
+recovery coordinator cannot certify their unresolved obligations. Extend and
+qualify that checkpoint/obligation integration before actual transport or hosted
+recovery activation; no old inventory digest substitutes for command history.
+
 ## PIP-29 — Original-trader recovery and handover (2026-10-21)
 
 Code deliverable: isolated dry recovery and confirmed account-assignment
