@@ -91,6 +91,7 @@ class FeedStore:
             db.execute("PRAGMA user_version=1")
             if self.state("delivery:source_id", db=db) is None:
                 self.save("delivery:source_id", str(uuid4()), db=db)
+        self.binding = binding
 
     def source_id(self):
         return self.state("delivery:source_id")
@@ -273,6 +274,7 @@ class FeedStore:
         if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 500:
             raise FeedError("invalid_event_page")
         with self.transaction() as db:
+            self._check_read_profile(db)
             frame = {
                 "events": self.events(after, limit, db=db),
                 "coverage": self.state("canonical:quality", {"status": "unverified"}, db=db),
@@ -284,21 +286,38 @@ class FeedStore:
                 frame["calendar"] = self.state("calendar:data", db=db)
             return frame
 
-    def status(self):
+    def status(self, *, db=None):
+        if db is None:
+            with self.transaction() as connection:
+                return self.status(db=connection)
+        return {
+            "events": dict(db.execute("SELECT producer,COUNT(*) FROM events GROUP BY producer")),
+            "alerts": [
+                {"producer": p, "code": c, "ts": ts}
+                for p, c, ts in db.execute(
+                    "SELECT producer,code,ts FROM alerts ORDER BY sequence DESC LIMIT 100"
+                )
+            ],
+            "quarantined": db.execute(
+                "SELECT COUNT(*) FROM inbox WHERE status='quarantined'"
+            ).fetchone()[0],
+        }
+
+    def _check_read_profile(self, db):
+        if dict(db.execute("SELECT key,value FROM metadata")) != self.binding:
+            raise FeedError("feed_store_profile_changed")
+
+    def status_frame(self):
+        """Same coherent status frame as hosted SQL; never consume feed data."""
         with self.transaction() as db:
+            self._check_read_profile(db)
             return {
-                "events": dict(
-                    db.execute("SELECT producer,COUNT(*) FROM events GROUP BY producer")
-                ),
-                "alerts": [
-                    {"producer": p, "code": c, "ts": ts}
-                    for p, c, ts in db.execute(
-                        "SELECT producer,code,ts FROM alerts ORDER BY sequence DESC LIMIT 100"
-                    )
-                ],
-                "quarantined": db.execute(
-                    "SELECT COUNT(*) FROM inbox WHERE status='quarantined'"
-                ).fetchone()[0],
+                "source_id": self.state("delivery:source_id", db=db),
+                **self.status(db=db),
+                "worker_heartbeats": {
+                    name: self.state("worker:" + name, db=db)
+                    for name in ("macro", "news", "social")
+                },
             }
 
     def coverage_snapshot(self, keys):

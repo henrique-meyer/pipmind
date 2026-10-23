@@ -122,12 +122,8 @@ def create_app(store, token, *, secret="", supervisor=None, now=None, configurat
     @app.get("/status")
     def status():
         return {
-            "source_id": store.source_id(),
-            **store.status(),
+            **store.status_frame(),
             "workers": supervisor.status() if supervisor else {},
-            "worker_heartbeats": {
-                name: store.state("worker:" + name) for name in ("macro", "news", "social")
-            },
         }
 
     @app.get("/coverage")
