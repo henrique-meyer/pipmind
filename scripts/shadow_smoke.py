@@ -307,6 +307,7 @@ def main():
                     "pytest",
                     "tests/test_shadow_sql.py",
                     "tests/test_safety_recovery_managed_sql.py",
+                    "tests/test_feed_read_frames_sql.py",
                     "-q",
                 ],
                 capture_output=True,

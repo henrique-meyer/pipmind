@@ -1050,13 +1050,14 @@ def test_sql_feed_inbox_outbox_cursor_atomicity_and_reprocessing(mind):
     connections = []
     connect = reopened.connect
 
-    def counted():
+    def counted(**options):
         connections.append(True)
-        return connect()
+        return connect(**options)
 
     reopened.connect = counted
     frame = reopened.handoff(0, 100, include_calendar=True)
-    assert len(connections) == 1
+    # Capability inspection and the coherent snapshot use distinct sessions.
+    assert len(connections) == 2
     reopened.connect = connect
     assert frame == {
         "events": rows,

@@ -1,5 +1,15 @@
 ## PIP-20 — Hosted throughput qualification
 
+The initial resumed fixed capture includes a feed-status read failure. Replace
+the five separately locked status reads with one coherent, profile-checked frame,
+and use already-enabled SQL snapshot reads for status and handoff. Retain the
+existing coordinated lock when snapshots are disabled; keep all writer/cursor
+transactions, history, counts, authentication, failure semantics and readiness
+limits. Do not change database options, timeouts, pooling or capacity. Require
+offline and actual disposable-SQL concurrency/profile/fallback checks before a
+reviewed backend release and fresh fixed measurement. Preserve the failed window;
+the actual blocking session and sustained net drain remain unproven.
+
 In Progress: [PIP-20](https://nitro.atlassian.net/browse/PIP-20) now has an owner-authorized
 hosted qualification window. Begin with fresh actual revision, backlog, hold and
 configuration evidence. Qualify the selected reviewed merged backend release

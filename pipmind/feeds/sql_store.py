@@ -15,7 +15,7 @@ from pipmind.feeds.store import (
     merge_state,
 )
 from pipmind.shadow.common import ShadowError
-from pipmind.shadow.sql import connector, transaction
+from pipmind.shadow.sql import connector, stream_transaction, transaction
 
 DDL = (
     "IF OBJECT_ID('pf_meta') IS NULL CREATE TABLE pf_meta("
@@ -94,6 +94,27 @@ class SqlFeedStore:
         with self.transaction() as db:
             db.execute("SELECT v FROM pf_meta WHERE k='source'")
             return db.fetchone()[0]
+
+    @contextmanager
+    def read_frame(self):
+        """Read one committed version without joining writer lock contention.
+
+        Use snapshot isolation only when already enabled. The SQL helper retains
+        the existing coordinated lock when disabled; a failed snapshot never
+        falls back to another version or changes database options.
+        """
+        try:
+            with stream_transaction(self.connect, "pipmind-feed-store") as (db, _):
+                if self.profile is not None and bound_profile(db) != self.profile:
+                    raise ShadowError("feed_store_profile_changed")
+                yield db
+        except ShadowError as error:
+            code = (
+                "feed_store_profile_changed"
+                if str(error) == "feed_store_profile_changed"
+                else "feed_store_unavailable"
+            )
+            raise FeedError(code) from None
 
     def state(self, key, default=None, *, db=None):
         if db is None:
@@ -296,7 +317,9 @@ class SqlFeedStore:
 
     def handoff(self, after=0, limit=100, *, include_calendar=False):
         """One profile-checked read frame; never advance the consumer cursor."""
-        with self.transaction() as db:
+        if type(after) is not int or after < 0 or type(limit) is not int or not 1 <= limit <= 500:
+            raise FeedError("invalid_event_page")
+        with self.read_frame() as db:
             page = self.events(after, limit, db=db)
             quality = self.state("canonical:quality", {"status": "unverified"}, db=db)
             db.execute("SELECT COUNT(*) FROM pf_inbox WHERE status='quarantined'")
@@ -305,14 +328,30 @@ class SqlFeedStore:
                 frame["calendar"] = self.state("calendar:data", db=db)
             return frame
 
-    def status(self):
-        with self.transaction() as db:
-            db.execute("SELECT producer,COUNT(*) FROM pf_events GROUP BY producer")
-            counts = dict(db.fetchall())
-            db.execute("SELECT TOP(100) producer,code,ts FROM pf_alerts ORDER BY seq DESC")
-            alerts = [{"producer": p, "code": c, "ts": ts} for p, c, ts in db.fetchall()]
-            db.execute("SELECT COUNT(*) FROM pf_inbox WHERE status='quarantined'")
-            return {"events": counts, "alerts": alerts, "quarantined": db.fetchone()[0]}
+    def status(self, *, db=None):
+        if db is None:
+            with self.transaction() as connection:
+                return self.status(db=connection)
+        db.execute("SELECT producer,COUNT(*) FROM pf_events GROUP BY producer")
+        counts = dict(db.fetchall())
+        db.execute("SELECT TOP(100) producer,code,ts FROM pf_alerts ORDER BY seq DESC")
+        alerts = [{"producer": p, "code": c, "ts": ts} for p, c, ts in db.fetchall()]
+        db.execute("SELECT COUNT(*) FROM pf_inbox WHERE status='quarantined'")
+        return {"events": counts, "alerts": alerts, "quarantined": db.fetchone()[0]}
+
+    def status_frame(self):
+        """Existing private status fields from one profile-checked SQL version."""
+        with self.read_frame() as db:
+            db.execute("SELECT v FROM pf_meta WHERE k='source'")
+            source = db.fetchone()[0]
+            return {
+                "source_id": source,
+                **self.status(db=db),
+                "worker_heartbeats": {
+                    name: self.state("worker:" + name, db=db)
+                    for name in ("macro", "news", "social")
+                },
+            }
 
     def coverage_snapshot(self, keys):
         """Same bounded, profile-checked coverage frame as the development store."""
