@@ -61,7 +61,12 @@ class ShadowEngine:
             audit["response"] = deepcopy(correction)
             if "replacements" in correction:
                 self.contracts.validate("memory-repair-patch", correction)
-                audit["patch_budget"] = repair_budget(original["working_memory"])
+                audit["patch_budget"] = repair_budget(
+                    original["working_memory"],
+                    before=context["working_memory"],
+                    dispositions=original.get("memory_dispositions"),
+                    event_ref=event_id(event),
+                )
                 correction = expand_repair_patch(
                     original, correction, event_id(event), before=context["working_memory"]
                 )

@@ -1,3 +1,18 @@
+## PIP-62 - Bounded related-entry working-memory repair
+
+Delivered: [PIP-62](https://nitro.atlassian.net/browse/PIP-62) supports PIP-20
+by allowing an eligible scoped repair to rebalance the actual related entries
+changed by one decision, while unrelated entries remain exact. Bound the new
+stable same-key update set to two entries sharing current-event evidence; keep
+existing fallback and genuine total/count/topology pressure behavior. Preserve
+all selected meaning with explicit scope: dated/attributed facts stay in views,
+active prerequisites stay in waiting conditions. Preserve claim category,
+including inflation outlook versus actual CPI. All existing byte/count/prompt/
+call/output/time limits and complete history/dependencies remain unchanged.
+Azure structured-output length enforcement is not assumed. Required offline and
+actual SQL tests plus fresh isolated model/semantic and guarded owner-control
+checks precede hosted use; code delivery alone qualifies no clean run or FX day.
+
 ## PIP-61 - Coherent shadow status frame
 
 Delivered: [PIP-61](https://nitro.atlassian.net/browse/PIP-61).
