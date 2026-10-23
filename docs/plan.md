@@ -13,6 +13,38 @@ Azure structured-output length enforcement is not assumed. Required offline and
 actual SQL tests plus fresh isolated model/semantic and guarded owner-control
 checks precede hosted use; code delivery alone qualifies no clean run or FX day.
 
+## PIP-61 - Coherent shadow status frame
+
+Delivered: [PIP-61](https://nitro.atlassian.net/browse/PIP-61).
+Read existing shadow status and qualification ACTIVE in one coherent locked SQL
+frame, avoiding a redundant connection/lock cycle while preserving status shape,
+authentication, worker fields, legacy store.status behavior and fallback. No
+cache, isolation/timeout/owner-control/history/DDL/model/hosting change. Required
+offline and actual disposable SQL checks precede merge; PIP-20 separately
+measures any hosted effect and qualification.
+
+## PIP-59 - SQL session setup regression guards
+
+Delivered: [PIP-59](https://nitro.atlassian.net/browse/PIP-59) preserves the
+existing parameter-free session setup followed by parameterized application-lock
+acquisition. Actual SQL validation rejected combining them: the driver's dynamic
+SQL batch restores its SET options on return. Keep SERIALIZABLE, XACT_ABORT and
+NOCOUNT effective for the subsequent work; do not interpolate resource names.
+Offline and actual SQL regressions verify session settings, exact lock/resource,
+contention/release and rollback/commit/disposal. The rejected optimization remains
+recorded; no throughput improvement or hosted change is claimed.
+
+## PIP-60 - Bounded recorder failure diagnostics
+
+Delivered: [PIP-60](https://nitro.atlassian.net/browse/PIP-60).
+Add bounded fixed-stage/code/timing recorder diagnostics carried into the next
+ordinary sample with its existing INSERT, plus sanitized existing logging. Keep
+legacy errors/readiness/capture gap/last_error semantics and uncertain-commit
+refusal unchanged. No extra SQL/provider/model/broker call, immediate retry,
+old-sample edit or new resource. Bound queue and report overflow explicitly;
+required offline and actual disposable SQL checks precede merge. PIP-20 owns
+fresh hosted attribution and qualification; no cause or clean day is inferred.
+
 ## PIP-58 — Bounded official publisher structured association links
 
 Delivered: [PIP-58](https://nitro.atlassian.net/browse/PIP-58) supports PIP-22
