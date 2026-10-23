@@ -1,6 +1,6 @@
 ## PIP-62 - Bounded related-entry working-memory repair
 
-In Progress: [PIP-62](https://nitro.atlassian.net/browse/PIP-62) supports PIP-20
+Delivered: [PIP-62](https://nitro.atlassian.net/browse/PIP-62) supports PIP-20
 by allowing an eligible scoped repair to rebalance the actual related entries
 changed by one decision, while unrelated entries remain exact. Bound the new
 stable same-key update set to two entries sharing current-event evidence; keep
