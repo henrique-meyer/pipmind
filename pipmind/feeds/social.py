@@ -2,10 +2,11 @@
 
 import re
 import unicodedata
+from html.parser import HTMLParser
 from urllib.parse import urlencode, urlsplit
 
 from pipmind.contracts import loads, stamp, utc
-from pipmind.feeds.common import FeedError, instant, json_body, markup
+from pipmind.feeds.common import MAX_BODY, FeedError, instant, json_body, markup, url
 from pipmind.feeds.macro import calendar_date
 from pipmind.feeds.news import parse_feed
 
@@ -87,30 +88,209 @@ def holder_lookup(reads, recipe):
         raise FeedError("holder_parse_failed") from None
 
 
-def official_account(reads, role, handle):
-    """An exact outgoing link on an owner-configured official HTTPS page."""
+MAX_IDENTITY_SCRIPTS = 64
+MAX_JSONLD_SCRIPTS = 8
+MAX_JSONLD_SCRIPT_BYTES = 65536
+MAX_JSONLD_TOTAL_BYTES = 131072
+MAX_JSONLD_DEPTH = 8
+MAX_JSONLD_CONTAINERS = 64
+MAX_SAME_AS_LINKS = 32
+
+
+class _IdentityScripts(HTMLParser):
+    """Capture bounded inert JSON-LD text only; never execute or resolve it."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.scripts, self.total, self.count = [], 0, 0
+        self.active, self.chunks, self.size = False, [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "script":
+            return
+        self.count += 1
+        if self.count > MAX_IDENTITY_SCRIPTS:
+            raise ValueError
+        kinds = [value for key, value in attrs if key == "type"]
+        selected = any(
+            isinstance(value, str) and value.strip().lower() == "application/ld+json"
+            for value in kinds
+        )
+        if not selected:
+            return
+        if len(kinds) != 1 or any(key == "src" for key, _ in attrs):
+            raise ValueError
+        if len(self.scripts) >= MAX_JSONLD_SCRIPTS:
+            raise ValueError
+        self.active, self.chunks, self.size = True, [], 0
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag == "script" and self.active:
+            raise ValueError
+
+    def handle_data(self, data):
+        if not self.active:
+            return
+        size = len(data.encode("utf-8"))
+        self.size += size
+        self.total += size
+        if self.size > MAX_JSONLD_SCRIPT_BYTES or self.total > MAX_JSONLD_TOTAL_BYTES:
+            raise ValueError
+        self.chunks.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self.active:
+            self.scripts.append("".join(self.chunks))
+            self.active, self.chunks = False, []
+
+
+def _identity_json(text):
+    """Bound container depth/count before the strict duplicate-key JSON decoder."""
+    depth = containers = 0
+    quoted = escaped = False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            depth += 1
+            containers += 1
+            if depth > MAX_JSONLD_DEPTH or containers > MAX_JSONLD_CONTAINERS:
+                raise ValueError
+        elif char in "]}":
+            depth -= 1
+    return loads(text)
+
+
+def _account_link(link, handle, *, strict=False):
+    try:
+        p = urlsplit(link)
+        return bool(
+            p.scheme == "https"
+            and p.hostname in {"x.com", "twitter.com", "www.x.com", "www.twitter.com"}
+            and p.path.strip("/").casefold() == handle.casefold()
+            and not p.username
+            and not p.password
+            and p.port in (None, 443)
+            and (
+                not strict
+                or (
+                    len(link) <= 4096
+                    and not re.search(r"[\s\\\x00-\x1f]", link)
+                    and p.path.casefold()
+                    in {"/" + handle.casefold(), "/" + handle.casefold() + "/"}
+                    and not p.query
+                    and not p.fragment
+                )
+            )
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _publisher_origin(value):
+    parts = urlsplit(url(value))
+    return parts.scheme, parts.hostname, parts.port or 443
+
+
+def _structured_association(text, target, handle):
+    parser = _IdentityScripts()
+    parser.feed(text)
+    parser.close()
+    if parser.active:
+        return False
+    candidates = []
+    for raw in parser.scripts:
+        document = _identity_json(raw)
+        if not isinstance(document, dict):
+            continue  # Arrays/graphs never nominate accounts.
+        kind = document.get("@type")
+        if kind not in ("Organization", "NewsMediaOrganization"):
+            continue
+        if document.get("@context") not in (
+            "https://schema.org",
+            "https://schema.org/",
+            "http://schema.org",
+            "http://schema.org/",
+        ):
+            return False
+        if "@graph" in document:
+            return False
+        publisher = document.get("url")
+        if not isinstance(publisher, str) or _publisher_origin(publisher) != _publisher_origin(
+            target
+        ):
+            return False
+        canonical = urlsplit(publisher)
+        if canonical.path not in ("", "/") or canonical.query or canonical.fragment:
+            return False
+        if (
+            not isinstance(document.get("name"), str)
+            or not document["name"].strip()
+            or len(document["name"]) > 120
+        ):
+            return False
+        if "@id" in document:
+            identifier = document["@id"]
+            if not isinstance(identifier, str) or len(identifier) > 4096:
+                return False
+            identity_url = urlsplit(identifier)
+            if (
+                _publisher_origin(identifier.split("#", 1)[0]) != _publisher_origin(target)
+                or identity_url.path not in ("", "/")
+                or identity_url.query
+            ):
+                return False
+        links = document.get("sameAs")
+        links = [links] if isinstance(links, str) else links
+        if not isinstance(links, list) or not 1 <= len(links) <= MAX_SAME_AS_LINKS:
+            return False
+        if any(not isinstance(link, str) or len(link) > 4096 for link in links):
+            return False
+        # Multiple publisher objects or multiple different X identities are
+        # ambiguous, even if one happens to match the requested handle.
+        x_links = []
+        for link in links:
+            parsed = urlsplit(link)
+            if parsed.hostname in {"x.com", "twitter.com", "www.x.com", "www.twitter.com"}:
+                x_links.append(link)
+        if any(not _account_link(link, handle, strict=True) for link in x_links):
+            return False
+        candidates.append(any(_account_link(link, handle, strict=True) for link in links))
+    return len(candidates) == 1 and candidates[0]
+
+
+def official_association(reads, role, handle, *, institutional=False):
+    """One official-page GET; distinguish anchor from narrow organization proof."""
     target = role.get("official_profile_url") or role.get("profile_url")
     if not target:
-        return False
+        return None
     try:
         response = reads.get(target)
-        if response.status != 200:
-            return False
-        _, links = markup(response.body.decode("utf-8"))
+        if response.status != 200 or len(response.body) > MAX_BODY:
+            return None
+        text = response.body.decode("utf-8")
+        _, links = markup(text)
         for link in links:
-            p = urlsplit(link)
-            if (
-                p.scheme == "https"
-                and p.hostname in {"x.com", "twitter.com", "www.x.com", "www.twitter.com"}
-                and p.path.strip("/").casefold() == handle.casefold()
-                and not p.username
-                and not p.password
-                and p.port in (None, 443)
-            ):
-                return True
-    except (FeedError, UnicodeError, ValueError):
+            if _account_link(link, handle):
+                return "official_profile_link"
+        if institutional and _structured_association(text, target, handle):
+            return "official_organization_same_as"
+    except (FeedError, UnicodeError, ValueError, RecursionError):
         pass
-    return False
+    return None
+
+
+def official_account(reads, role, handle, *, institutional=False):
+    """Boolean compatibility wrapper; organization proof is institutional-only."""
+    return bool(official_association(reads, role, handle, institutional=institutional))
 
 
 def verified(user, holder, role, *, institutional=False, officially_linked=False):
@@ -226,9 +406,17 @@ class Social:
                         )
                     )
                 )
-                linked = (
-                    official_account(self.reads, role, account["handle"]) if needs_link else False
+                association = (
+                    official_association(
+                        self.reads,
+                        role,
+                        account["handle"],
+                        institutional=account["kind"] == "institutional",
+                    )
+                    if needs_link
+                    else None
                 )
+                linked = bool(association)
                 if not verified(
                     user,
                     holder,
@@ -240,9 +428,7 @@ class Social:
                     self.store.alert("social", "account_identity_unverified", now)
                 else:
                     account["user_id"], account["unverified"] = user["id"], False
-                    account["identity_evidence"] = (
-                        "official_profile_link" if linked else "api_fields"
-                    )
+                    account["identity_evidence"] = association or "api_fields"
             self.store.save(
                 "role:" + role["id"],
                 {"holder": holder, "accounts": accounts, "checked_at": stamp(now)},
