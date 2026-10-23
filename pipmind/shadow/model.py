@@ -12,8 +12,6 @@ from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
 from pipmind.shadow.maintenance import (
     MAX_BYTES,
-    MAX_ENTRIES,
-    MAX_TEXT_BYTES,
     POLICY,
     repair_budget,
     working_sizes,
@@ -22,8 +20,9 @@ from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
 from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
 PROMPT_VERSION = "shadow-context-v16"
-REPAIR_PROMPT_VERSION = "shadow-repair-v19"
+REPAIR_PROMPT_VERSION = "shadow-repair-v20"
 REPAIR_TEXT_MAX_CHARACTERS = 200
+REPAIR_PATCH_MAX_CHARACTERS = 280
 REPAIR_HEADROOM_INSTRUCTIONS = (
     f" Repair generation uses at most {REPAIR_TEXT_MAX_CHARACTERS} characters per entry"
     " as headroom, not a replacement for the hard 300 UTF-8 byte entry limit and"
@@ -31,6 +30,15 @@ REPAIR_HEADROOM_INSTRUCTIONS = (
     " Preserve every predicate, qualifier and dependency through explicit mappings;"
     " never clip text or omit meaning to meet a target. This guidance does not"
     " guarantee compliance; local validation still refuses an invalid correction."
+)
+PATCH_HEADROOM_INSTRUCTIONS = (
+    f" Scoped generation permits at most {REPAIR_PATCH_MAX_CHARACTERS} characters"
+    " within each supplied allocation. Use the available space to preserve ALL"
+    " dates, numbers, source statuses and unresolved prerequisites; prefer minimal"
+    " wording edits and standard abbreviations. Unselected entries are copied exactly."
+    " This generation ceiling never replaces the hard 300 UTF-8 byte entry and"
+    " 5000 serialized UTF-8 byte total limits. Characters can occupy multiple bytes;"
+    " local validation refuses invalid corrections, and length does not prove meaning."
 )
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
@@ -277,7 +285,7 @@ class FoundryModel:
             properties = replacements["items"]["properties"]
             properties["from"]["enum"] = repair["editable_keys"]
             properties["text"]["maxLength"] = min(
-                REPAIR_TEXT_MAX_CHARACTERS,
+                REPAIR_PATCH_MAX_CHARACTERS,
                 max(repair["patch_budget"]["max_json_text_bytes"].values()),
             )
         elif repair is not None:
@@ -338,7 +346,11 @@ class FoundryModel:
             + (TRIAGE_INSTRUCTIONS if phase == "triage" else "")
             + (
                 (PATCH_INSTRUCTIONS if repair.get("editable_keys") else REPAIR_INSTRUCTIONS)
-                + REPAIR_HEADROOM_INSTRUCTIONS
+                + (
+                    PATCH_HEADROOM_INSTRUCTIONS
+                    if repair.get("editable_keys")
+                    else REPAIR_HEADROOM_INSTRUCTIONS
+                )
                 if repair is not None
                 else ""
             )
@@ -510,19 +522,15 @@ class FoundryModel:
 
     async def repair_memory(self, event, context, candidate, store, moment):
         sizes = working_sizes(candidate["working_memory"])
-        # A full same-kind list also needs room to redistribute an overlong
-        # entry's dependencies. Fixed-topology patches can only rewrite that
-        # dense slot, whereas full consolidation must map every retained entry.
-        # Lossless spacing is still tried before this RPC by the engine; scoped
-        # patches remain appropriate for isolated overlong entries.
-        needs_consolidation = sizes["total_bytes"] > MAX_BYTES or any(
-            len(candidate["working_memory"][field]) >= MAX_ENTRIES
-            and any(
-                len(text.encode()) > MAX_TEXT_BYTES for text in candidate["working_memory"][field]
-            )
-            for field in ("views", "waiting_for")
+        # Saturation alone does not require changing unrelated state. A scoped
+        # replacement preserves fixed entries exactly even with eight entries.
+        # Genuine total pressure or invalid topology still needs consolidation;
+        # lossless spacing is attempted by the engine before this single RPC.
+        budget = (
+            repair_budget(candidate["working_memory"])
+            if sizes["total_bytes"] <= MAX_BYTES
+            else None
         )
-        budget = None if needs_consolidation else repair_budget(candidate["working_memory"])
         return await self._call(
             "memory_repair",
             event,
