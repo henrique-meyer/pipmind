@@ -280,6 +280,13 @@ class FoundryModel:
                 REPAIR_TEXT_MAX_CHARACTERS,
                 max(repair["patch_budget"]["max_json_text_bytes"].values()),
             )
+        elif repair is not None:
+            # Keep the visible inline constraint consistent with the copied
+            # referenced definition; neither changes the local audit contract.
+            schema = deepcopy(schema)
+            working = schema["properties"]["working_memory"]["allOf"][1]["properties"]
+            for field in ("views", "waiting_for"):
+                working[field]["items"]["maxLength"] = REPAIR_TEXT_MAX_CHARACTERS
         prompt = {
             "phase": phase,
             "now": stamp(moment),

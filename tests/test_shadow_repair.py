@@ -666,6 +666,12 @@ def test_total_correction_requests_full_consolidation_with_both_mapping_sets():
     assert "schema_definitions" in prompt
     for field in ("views", "waiting_for"):
         assert (
+            prompt["schema"]["properties"]["working_memory"]["allOf"][1]["properties"][field][
+                "items"
+            ]["maxLength"]
+            == 200
+        )
+        assert (
             prompt["schema_definitions"]["working-memory"]["properties"][field]["items"][
                 "maxLength"
             ]
