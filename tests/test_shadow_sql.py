@@ -1782,7 +1782,7 @@ def test_sql_batches_leave_peer_progress_possible_under_network_latency(mind, op
         def execute(self, sql, *args):
             time.sleep(0.1)  # Representative network latency, not a database benchmark.
             self.cursor.execute(sql, *args)
-            if enabled and sql.startswith("DECLARE @r"):
+            if enabled and "EXEC @r=sp_getapplock" in sql:
                 acquired.set()
             return self
 
@@ -3006,6 +3006,62 @@ def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind, 
     finally:
         control.execute(f"DROP DATABASE [{name}]")
         admin.close()
+
+
+def test_session_setup_applies_options_and_owns_exclusive_lock(mind):
+    from pipmind.shadow.sql import transaction
+
+    resource = "test-setup-batch-" + uuid4().hex
+    with transaction(mind.connect, resource) as cur:
+        cur.execute(
+            "SELECT @@OPTIONS,transaction_isolation_level,@@TRANCOUNT,"
+            "APPLOCK_MODE('public',%s,'Transaction') "
+            "FROM sys.dm_exec_sessions WHERE session_id=@@SPID",
+            (resource,),
+        )
+        observed = cur.fetchone()
+    # Keep test assertions outside the production transaction's exception
+    # normalization so a safety regression reports its actual bounded values.
+    assert observed is not None, "transaction options query returned no row"
+    options, isolation, count, mode = observed
+    assert options & 512, f"NOCOUNT not effective: {observed}"  # NOCOUNT
+    assert options & 16384, f"XACT_ABORT not effective: {observed}"  # XACT_ABORT
+    assert isolation == 4, f"SERIALIZABLE not effective: {observed}"
+    assert count >= 1 and mode == "Exclusive", f"transaction lock not owned: {observed}"
+
+
+def test_session_setup_lock_contention_refuses_then_releases(mind):
+    from pipmind.shadow.sql import transaction
+
+    resource = "test-batch-contention-" + uuid4().hex
+    with transaction(mind.connect, resource):
+        # A different transaction cannot obtain this same transaction-owned lock.
+        with pytest.raises(ShadowError, match="^shadow_store_busy$"):
+            with transaction(mind.connect, resource):
+                pytest.fail("contender must not receive an unlocked cursor")
+        # The failed contender is disposed; an unrelated resource still works.
+        with transaction(mind.connect, resource + "-independent") as cur:
+            cur.execute("SELECT 1")
+            assert cur.fetchone()[0] == 1
+    # Committing the owner releases the lock for a new fresh session.
+    with transaction(mind.connect, resource) as cur:
+        cur.execute("SELECT APPLOCK_MODE('public',%s,'Transaction')", (resource,))
+        assert cur.fetchone()[0] == "Exclusive"
+
+
+def test_session_setup_disposal_rolls_back_and_success_commits(mind):
+    from pipmind.shadow.sql import transaction
+
+    key = "batch-rollback-" + uuid4().hex
+    resource = "test-batch-rollback-" + uuid4().hex
+    with pytest.raises(ShadowError, match="^synthetic_batch_refusal$"):
+        with transaction(mind.connect, resource) as cur:
+            cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (mind.trader, key, "true"))
+            raise ShadowError("synthetic_batch_refusal")
+    assert mind.runtime(key) is None
+    with transaction(mind.connect, resource) as cur:
+        cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (mind.trader, key, "true"))
+    assert mind.runtime(key) is True
 
 
 def test_closed_sql_session_keeps_original_error_and_rolls_back_staged_data(mind):

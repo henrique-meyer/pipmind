@@ -1,3 +1,14 @@
+## PIP-59 - SQL session setup regression guards
+
+Delivered: [PIP-59](https://nitro.atlassian.net/browse/PIP-59) preserves the
+existing parameter-free session setup followed by parameterized application-lock
+acquisition. Actual SQL validation rejected combining them: the driver's dynamic
+SQL batch restores its SET options on return. Keep SERIALIZABLE, XACT_ABORT and
+NOCOUNT effective for the subsequent work; do not interpolate resource names.
+Offline and actual SQL regressions verify session settings, exact lock/resource,
+contention/release and rollback/commit/disposal. The rejected optimization remains
+recorded; no throughput improvement or hosted change is claimed.
+
 ## PIP-60 - Bounded recorder failure diagnostics
 
 Delivered: [PIP-60](https://nitro.atlassian.net/browse/PIP-60).
