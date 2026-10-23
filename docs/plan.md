@@ -1,3 +1,14 @@
+## PIP-63 - Recorder active-request snapshot read
+
+In Progress: [PIP-63](https://nitro.atlassian.net/browse/PIP-63) delivers the
+recorder read correction identified by PIP-20. Resolve the same native target and
+active request in an existing snapshot transaction when enabled, preserving the
+coordinated-lock fallback when disabled and propagating read/commit failures.
+Keep capture writer guards, diagnostics and every existing limit unchanged.
+Require explicitly enabled disposable SQL source-lock and concurrent close/rearm
+checks before merge. Code delivery does not qualify the next hosted window;
+PIP-20 retains release, actual evals, sustained drain and readiness verification.
+
 ## PIP-62 - Bounded related-entry working-memory repair
 
 Delivered: [PIP-62](https://nitro.atlassian.net/browse/PIP-62) supports PIP-20
@@ -30,7 +41,7 @@ multi-card and adversarial reconstruction/size tests, then repeat required actua
 SQL CI and fresh hosted validation before any guarded retry. An isolated model
 pass does not certify the next live candidate's prompt size or operational drain.
 
-In progress: add a separate conservative formatting fallback only for overlong
+Delivered: a separate conservative formatting fallback applies only to overlong
 selected related-repair entries. Preserve every lexical token and nonterminal
 punctuation mark, with exact removed-offset audit. Refuse ambiguous quotes, code,
 URLs and unsupported prose forms. Keep the existing formatter, fixed entries,
@@ -81,6 +92,16 @@ provider call, activates no source, changes no hosted configuration and does not
 qualify PIP-22's current account identity or coverage gates.
 
 ## PIP-20 — Hosted throughput qualification
+
+The latest retained fixed window drained inputs in both halves but failed the
+recorder active-request read with store-busy after five seconds. Correct only
+this demonstrated read path using already-enabled, target-checked SQL
+snapshot reads, retaining the existing coordinated-lock fallback when snapshots
+are disabled. Keep writer, arm/close and commit guards, history, dependencies,
+limits, capacity, configuration and landing unchanged. Require actual disposable
+SQL proof with a held writer lock, fallback refusal and concurrent arm/close
+guards before a reviewed release and a new fixed window; preserve the failed
+window and do not infer a full-day start or clearance estimate from its net drain.
 
 The initial resumed fixed capture includes a feed-status read failure. Replace
 the five separately locked status reads with one coherent, profile-checked frame,
