@@ -1,6 +1,6 @@
 ## PIP-57 — Explicit Azure managed-PITR dry recovery composition
 
-In Progress: [PIP-57](https://nitro.atlassian.net/browse/PIP-57) adds a distinct
+Delivered: [PIP-57](https://nitro.atlassian.net/browse/PIP-57) adds a distinct
 closed managed-PITR reference, separate from a native backup-file digest. Bind
 exact source/target physical identities, restore/completion chronology, complete
 source safety inventory and a separately retained full-history receipt. A
@@ -847,5 +847,16 @@ existing rolling alert window. This compares different source times, not a
 same-time mutable checkpoint or populated M5 safety recovery. Temporary target
 and exact-IP access were removed, original firewall rules restored, and original
 app configuration/capacity/ready revisions verified unchanged. Full recovery
-remains unqualified; PIP-57 and independent authority/barrier/provenance gates
-remain open. Private receipts and identifiers stay outside public source.
+remains unqualified. PIP-57 has delivered the managed-PITR/restricted dry
+composition, with offline and actual disposable SQL checks. Operational
+authority, source/target barriers and trusted provenance still require
+qualification. Private receipts and identifiers stay outside public source.
+
+
+PIP-47 deployment planning clarification: the proposed additional paid
+recovery-authority database is deferred. It is not required for M4 read-only
+shadow qualification or backlog processing. Existing database backups provide
+data recovery; a future controlled restoration must also prove that only the
+intended engine has authority before order execution. No alternative operational
+recovery procedure or additional infrastructure is approved by this clarification.
+The dry code delivery does not activate orders or qualify a full shadow day.
