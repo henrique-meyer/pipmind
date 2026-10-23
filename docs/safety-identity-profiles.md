@@ -58,3 +58,7 @@ This deliverable does not bootstrap safety state, redirect the demo, establish
 independent authority, acknowledge source/target barriers, restore a backup or
 authorize orders. Preserve exact pins and raw receipts in private configuration;
 never place their actual values in published examples or logs.
+
+See [managed-PITR dry recovery](safety-managed-restore.md) for the explicit PIP-57
+sidecar and restricted coordinator policy. Actual hosted qualification remains
+separate from these opt-in code paths.

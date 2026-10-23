@@ -1,6 +1,24 @@
+## PIP-57 — Explicit Azure managed-PITR dry recovery composition
+
+In Progress: [PIP-57](https://nitro.atlassian.net/browse/PIP-57) adds a distinct
+closed managed-PITR reference, separate from a native backup-file digest. Bind
+exact source/target physical identities, restore/completion chronology, complete
+source safety inventory and a separately retained full-history receipt. A
+sidecar or control-plane success alone proves neither restored contents nor
+execution authority. Reject malformed, mixed-profile or substituted evidence.
+
+Compose the fixed identity profiles and an explicit restricted command-catalog
+inventory policy through every dry coordinator operation. Preserve native
+canonical bytes/defaults, seven locks, complete history/dependencies, unknown
+commits and original source/target barrier acknowledgements. Test adversarial
+substitutions and native compatibility; actual disposable SQL must exercise the
+restricted coordinator and rollback. No runtime/default wiring, hosted operation,
+new resource/capacity, order transport or PIP-17 overlap. PIP-47 retains actual
+S0/populated-state, independent authority and operational recovery gates.
+
 ## PIP-56 — Explicit Azure identities in isolated safety composition
 
-In Progress: [PIP-56](https://nitro.atlassian.net/browse/PIP-56) extends the
+Delivered: [PIP-56](https://nitro.atlassian.net/browse/PIP-56) extends the
 existing PIP-52 Azure physical-pin profile through explicit safety lease guards,
 authority own/application/source/barrier records and immutable command scopes.
 Preserve exact native bytes, defaults, history and unknown-commit semantics;
@@ -817,3 +835,17 @@ working broker update; missing or partial fill coverage is unsupported/refused.
 Matching wanted/observed records alone cannot prove remaining full protection.
 Protective supplements use modify/close actions. An open order with its own stop
 remains an unsupported pending open even when labelled as position protection.
+
+### PIP-47 managed restore observation
+
+The approved disposable S0 PITR validation completed. Actual managed-identity
+checks distinguish the restored physical database from the original pin. Full
+same-build user-table fingerprints covered 13 tables and 836,019 restored rows;
+all retained outcomes, mind records, feed events, inputs and retrieval terms
+matched the later source. Differences were limited to mutable state and the
+existing rolling alert window. This compares different source times, not a
+same-time mutable checkpoint or populated M5 safety recovery. Temporary target
+and exact-IP access were removed, original firewall rules restored, and original
+app configuration/capacity/ready revisions verified unchanged. Full recovery
+remains unqualified; PIP-57 and independent authority/barrier/provenance gates
+remain open. Private receipts and identifiers stay outside public source.
