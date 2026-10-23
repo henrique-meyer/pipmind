@@ -1,4 +1,6 @@
-"""One setup/lock request keeps transaction safety and uncertain-commit behavior."""
+"""Session setup stays outside parameterized RPC scope; lock safety is unchanged."""
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,9 +22,9 @@ class Session:
             raise RuntimeError("synthetic cursor failure")
         return self
 
-    def execute(self, statement, parameters=()):
+    def execute(self, statement, parameters=None):
         self.calls.append((statement, parameters))
-        if self.fail == "execute":
+        if self.fail == "execute" or (self.fail == "lock_execute" and "sp_getapplock" in statement):
             raise RuntimeError("synthetic setup failure")
 
     def nextset(self):
@@ -57,17 +59,23 @@ class Session:
 
 @pytest.mark.parametrize("results", [0, 1, 3])
 @pytest.mark.parametrize("lock_result", [0, 1])
-def test_setup_and_parameterized_lock_use_one_request_before_yield(results, lock_result):
+def test_parameter_free_session_setup_precedes_exact_parameterized_lock(results, lock_result):
     session = Session(results=results, lock_result=lock_result)
     resource = "synthetic-resource'; SELECT 123; --"
     with transaction(lambda: session, resource) as cursor:
         assert cursor is session
         assert session.commits == session.closes == 0
-        assert len(session.calls) == 1
-        statement, parameters = session.calls[0]
-        assert statement.startswith(
-            "SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; "
+        assert len(session.calls) == 2
+        setup, setup_parameters = session.calls[0]
+        assert setup == (
+            "SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
         )
+        # pytds sends parameter-free text as a session batch. Parameters use
+        # sp_executesql, whose SET options are restored when that batch returns.
+        assert setup_parameters is None
+        assert "sp_getapplock" not in setup
+        statement, parameters = session.calls[1]
+        assert statement.startswith("DECLARE @r int;") and "SET " not in statement
         assert statement.count("sp_getapplock") == 1
         assert "@Resource=%s" in statement and parameters == (resource,)
         assert resource not in statement
@@ -83,10 +91,10 @@ def test_negative_application_lock_never_yields_or_commits(lock_result):
     with pytest.raises(ShadowError, match="^shadow_store_busy$"):
         with transaction(lambda: session):
             pytest.fail("must not expose an unlocked cursor")
-    assert len(session.calls) == 1 and session.commits == 0 and session.closes == 1
+    assert len(session.calls) == 2 and session.commits == 0 and session.closes == 1
 
 
-@pytest.mark.parametrize("failure", ["cursor", "execute", "nextset", "fetch"])
+@pytest.mark.parametrize("failure", ["cursor", "execute", "lock_execute", "nextset", "fetch"])
 def test_setup_failure_disposes_without_exposing_or_committing(failure):
     session = Session(results=1, fail=failure)
     with pytest.raises(ShadowError, match="^shadow_store_transaction_failed$"):
@@ -157,3 +165,48 @@ def test_acknowledged_commit_survives_cleanup_failure():
     with transaction(lambda: session):
         pass
     assert session.commits == session.closes == 1
+
+
+def test_pinned_driver_routes_combined_parameterized_setup_into_separate_rpc_scope():
+    from pytds import tds_base
+    from pytds.tds_session import _TdsSession
+
+    class RouteProbe:
+        def __init__(self):
+            self.routes = []
+
+        def _ensure_transaction(self):
+            pass
+
+        def _convert_params(self, named):
+            return [
+                SimpleNamespace(
+                    name=name, type=SimpleNamespace(get_declaration=lambda: "NVARCHAR(128)")
+                )
+                for name in named
+            ]
+
+        def make_param(self, name, value):
+            return name, value
+
+        def submit_rpc(self, procedure, params, flags):
+            self.routes.append(("rpc", procedure))
+
+        def submit_plain_query(self, query):
+            self.routes.append(("session_batch", None))
+
+        def begin_response(self):
+            pass
+
+        def find_result_or_done(self):
+            pass
+
+    setup = "SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+    safe = RouteProbe()
+    _TdsSession.execute(safe, setup)
+    assert safe.routes == [("session_batch", None)]
+    unsafe = RouteProbe()
+    _TdsSession.execute(unsafe, setup + "; SELECT %s", ("synthetic-resource",))
+    assert unsafe.routes == [("rpc", tds_base.SP_EXECUTESQL)]
+    # The actual SQL regression checks effective @@OPTIONS/isolation AFTER
+    # setup; this driver-routing proof alone is not SQL Server qualification.

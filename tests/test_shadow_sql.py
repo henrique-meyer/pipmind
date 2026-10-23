@@ -1782,7 +1782,7 @@ def test_sql_batches_leave_peer_progress_possible_under_network_latency(mind, op
         def execute(self, sql, *args):
             time.sleep(0.1)  # Representative network latency, not a database benchmark.
             self.cursor.execute(sql, *args)
-            if enabled and sql.startswith("DECLARE @r"):
+            if enabled and "EXEC @r=sp_getapplock" in sql:
                 acquired.set()
             return self
 
@@ -3008,7 +3008,7 @@ def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind, 
         admin.close()
 
 
-def test_batched_transaction_setup_applies_options_and_owns_exclusive_lock(mind):
+def test_session_setup_applies_options_and_owns_exclusive_lock(mind):
     from pipmind.shadow.sql import transaction
 
     resource = "test-setup-batch-" + uuid4().hex
@@ -3019,14 +3019,18 @@ def test_batched_transaction_setup_applies_options_and_owns_exclusive_lock(mind)
             "FROM sys.dm_exec_sessions WHERE session_id=@@SPID",
             (resource,),
         )
-        options, isolation, count, mode = cur.fetchone()
-        assert options & 512  # NOCOUNT
-        assert options & 16384  # XACT_ABORT
-        assert isolation == 4  # SERIALIZABLE
-        assert count >= 1 and mode == "Exclusive"
+        observed = cur.fetchone()
+    # Keep test assertions outside the production transaction's exception
+    # normalization so a safety regression reports its actual bounded values.
+    assert observed is not None, "transaction options query returned no row"
+    options, isolation, count, mode = observed
+    assert options & 512, f"NOCOUNT not effective: {observed}"  # NOCOUNT
+    assert options & 16384, f"XACT_ABORT not effective: {observed}"  # XACT_ABORT
+    assert isolation == 4, f"SERIALIZABLE not effective: {observed}"
+    assert count >= 1 and mode == "Exclusive", f"transaction lock not owned: {observed}"
 
 
-def test_batched_transaction_lock_contention_refuses_then_releases(mind):
+def test_session_setup_lock_contention_refuses_then_releases(mind):
     from pipmind.shadow.sql import transaction
 
     resource = "test-batch-contention-" + uuid4().hex
@@ -3045,7 +3049,7 @@ def test_batched_transaction_lock_contention_refuses_then_releases(mind):
         assert cur.fetchone()[0] == "Exclusive"
 
 
-def test_batched_transaction_disposal_rolls_back_and_success_commits(mind):
+def test_session_setup_disposal_rolls_back_and_success_commits(mind):
     from pipmind.shadow.sql import transaction
 
     key = "batch-rollback-" + uuid4().hex

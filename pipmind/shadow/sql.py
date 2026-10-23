@@ -137,7 +137,9 @@ def transaction(connect, resource="pipmind-shadow", *, passthrough=()):
         db = connect()
         cur = db.cursor()
         cur.execute(
-            "SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; "
+            "SET NOCOUNT ON; SET XACT_ABORT ON; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"
+        )
+        cur.execute(
             """DECLARE @r int; EXEC @r=sp_getapplock @Resource=%s,
                     @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=5000;
                     SELECT @r""",

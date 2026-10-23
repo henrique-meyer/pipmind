@@ -1,13 +1,13 @@
-## PIP-59 - One-batch SQL transaction setup
+## PIP-59 - SQL session setup regression guards
 
-Delivered: [PIP-59](https://nitro.atlassian.net/browse/PIP-59) combines the
-existing fixed session setup and application-lock acquisition in one SQL batch.
-Keep isolation, transaction-owned exclusive lock, resource binding, timeout,
-result navigation, commit/refusal/disposal and non-pooled sessions unchanged.
-Offline and actual disposable SQL checks must prove these behaviors before merge.
-There is no DDL, source/broker refresh cadence, model/history or hosting change.
-PIP-20 separately measures any actual hosted improvement; code delivery alone
-qualifies no throughput, recovery or full shadow day.
+Delivered: [PIP-59](https://nitro.atlassian.net/browse/PIP-59) preserves the
+existing parameter-free session setup followed by parameterized application-lock
+acquisition. Actual SQL validation rejected combining them: the driver's dynamic
+SQL batch restores its SET options on return. Keep SERIALIZABLE, XACT_ABORT and
+NOCOUNT effective for the subsequent work; do not interpolate resource names.
+Offline and actual SQL regressions verify session settings, exact lock/resource,
+contention/release and rollback/commit/disposal. The rejected optimization remains
+recorded; no throughput improvement or hosted change is claimed.
 
 ## PIP-20 — Hosted throughput qualification
 
