@@ -11,6 +11,7 @@ from pipmind.shadow.maintenance import (
     expand_repair_patch,
     punctuation_spacing,
     repair_budget,
+    selected_note_formatting,
     spacing_repair,
     transition,
     validate_working,
@@ -74,11 +75,13 @@ class ShadowEngine:
                 for row in audit["response"]["replacements"]:
                     applied = entries(correction["working_memory"])[row["from"]]
                     if row["text"] != applied:
+                        normalized, proof = selected_note_formatting(row["text"])
                         audit.setdefault("patch_spacing_normalizations", []).append(
                             {
                                 "key": row["from"],
                                 "before_bytes": len(row["text"].encode()),
                                 "after_bytes": len(applied.encode()),
+                                **(proof if proof and normalized == applied else {}),
                             }
                         )
                 edited = {row["from"] for row in audit["response"]["replacements"]}

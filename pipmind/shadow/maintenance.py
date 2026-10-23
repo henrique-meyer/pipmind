@@ -12,6 +12,7 @@ BUDGET_VERSION = "working-budget-v2"
 MAX_BYTES = 5000
 MAX_ENTRIES = 8
 MAX_TEXT_BYTES = 300
+SELECTED_NOTE_FORMAT_VERSION = "selected-note-format-v1"
 
 
 def punctuation_spacing(text):
@@ -20,6 +21,77 @@ def punctuation_spacing(text):
     ):
         return text
     return re.sub(r"([,;:]) (?=[A-Za-z])", r"\1", text)
+
+
+def selected_note_formatting(text):
+    """Prove at most two prose-format byte removals, or preserve the raw text.
+
+    The caller separately restricts this to overlong selected related repairs.
+    This deliberately recognizes only two complete condition phrases; unknown
+    abbreviations, dots, quotes, syntax and encodings are not formatting guesses.
+    """
+    raw = text.encode()
+    needed = len(raw) - MAX_TEXT_BYTES
+    month = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+    dated = month + r"(?:0?[1-9]|[12][0-9]|3[01])'[0-9]{2}"
+    if (
+        needed not in {1, 2}
+        or not re.fullmatch(r"[A-Za-z0-9 ,;:.?/%+\-']+", text)
+        or not re.match(dated + ":", text)
+        or re.search(r"https?://|www\.|[A-Za-z][A-Za-z0-9+.-]*://|(?<![A-Za-z0-9])/[A-Za-z]", text)
+        or re.search(
+            r"\b(?:select|insert|update|delete|drop|alter|exec|execute|eval|print|import|"
+            r"from|class|def|return|lambda|function|const|var|let|sudo|curl|wget|powershell|cmd)\b",
+            text,
+            re.IGNORECASE,
+        )
+    ):
+        return text, None
+    year_spans = [
+        m.span() for m in re.finditer(r"(?<![A-Za-z0-9])" + dated + r"(?![A-Za-z0-9])", text)
+    ]
+    if any(
+        character == "'" and not any(start <= i < end for start, end in year_spans)
+        for i, character in enumerate(text)
+    ):
+        return text, None
+    if not re.search(r"(?<![A-Za-z0-9_-])pre-interpretation\.$", text):
+        return text, None
+    boundaries = list(
+        re.finditer(r"(?<![A-Za-z0-9_-])pre-surprise\. (?=[A-Z][a-z]+(?:[ /:;-]|$))", text)
+    )
+    period_offsets = [m.start() + len("pre-surprise") for m in boundaries]
+    if len(boundaries) > 1 or [i for i, c in enumerate(text[:-1]) if c == "."] != period_offsets:
+        return text, None
+    if needed == 2 and len(boundaries) != 1:
+        return text, None
+    offsets = sorted([len(raw) - 1] + ([period_offsets[0] + 1] if needed == 2 else []))
+    applied = bytes(value for i, value in enumerate(raw) if i not in offsets)
+    rebuilt = bytearray(applied)
+    for offset in offsets:
+        rebuilt.insert(offset, raw[offset])
+    compact = applied.decode()
+
+    def tokens(value):
+        return re.findall(r"\w+|[^\w\s]", value)
+
+    def punctuation(value):
+        return re.findall(r"[^\w\s]", value)
+
+    if (
+        bytes(rebuilt) != raw
+        or tokens(text)[-1] != "."
+        or tokens(text)[:-1] != tokens(compact)
+        or punctuation(text)[:-1] != punctuation(compact)
+        or len(applied) > MAX_TEXT_BYTES
+    ):
+        return text, None
+    return compact, {
+        "method": SELECTED_NOTE_FORMAT_VERSION,
+        "removed_utf8_offsets": offsets,
+        "before_sha256": digest(text),
+        "after_sha256": digest(compact),
+    }
 
 
 def _related_repair_keys(working, before, dispositions, event_ref, mandatory):
@@ -143,6 +215,22 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
         after[field][int(key[1:])] = (
             punctuation_spacing(text) if len(text.encode()) > MAX_TEXT_BYTES else text
         )
+    if budget.get("related_edit_group"):
+        formatted = deepcopy(after)
+        changed = False
+        for key, row in edits.items():
+            field, index = ("views" if key[0] == "v" else "waiting_for"), int(key[1:])
+            if formatted[field][index] != row["text"]:
+                continue  # Never chain this new proof onto another normalization.
+            compact, proof = selected_note_formatting(row["text"])
+            if proof:
+                formatted[field][index], changed = compact, True
+        if (
+            changed
+            and len(encoded(formatted).encode()) <= MAX_BYTES
+            and all(len(text.encode()) <= MAX_TEXT_BYTES for text in entries(formatted).values())
+        ):
+            after = formatted
     proposed = entries(original)
     format_edits = {}
     if len(encoded(after).encode()) > MAX_BYTES:
