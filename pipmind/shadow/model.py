@@ -19,8 +19,8 @@ from pipmind.shadow.maintenance import (
 from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
 from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
-PROMPT_VERSION = "shadow-context-v16"
-REPAIR_PROMPT_VERSION = "shadow-repair-v20"
+PROMPT_VERSION = "shadow-context-v17"
+REPAIR_PROMPT_VERSION = "shadow-repair-v21"
 REPAIR_TEXT_MAX_CHARACTERS = 200
 REPAIR_PATCH_MAX_CHARACTERS = 280
 REPAIR_HEADROOM_INSTRUCTIONS = (
@@ -39,6 +39,13 @@ PATCH_HEADROOM_INSTRUCTIONS = (
     " This generation ceiling never replaces the hard 300 UTF-8 byte entry and"
     " 5000 serialized UTF-8 byte total limits. Characters can occupy multiple bytes;"
     " local validation refuses invalid corrections, and length does not prove meaning."
+)
+CLAIM_CATEGORY_INSTRUCTIONS = (
+    " Preserve claim category and dated attribution: an inflation OUTLOOK is not"
+    " an observed CPI actual; a forecast is not a measurement, and uncertainty"
+    " about a future policy action is not a commitment. Keep separate dates and"
+    " speakers associated with their own claims; do not transfer new verification"
+    " or a later claim to earlier evidence."
 )
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
@@ -138,7 +145,8 @@ PATCH_INSTRUCTIONS = (
     " replacements for EXACTLY the supplied editable_keys; no other entries or fields."
     " For each from key, return text, a short reason and supplied evidence_ids. The engine"
     " copies every other candidate entry, all theses and decision fields EXACTLY and derives"
-    " literal carry-forward mappings. Preserve ALL meaning of each replaced entry: dates,"
+    " literal carry-forward mappings. Except for the explicit related_edit_group rule"
+    " below, preserve ALL meaning of each replaced entry: dates,"
     " numbers, units/frequency/basis, prerequisites, uncertainty, contradictions and"
     " invalidation conditions. Do not resolve conditions, add facts or rely on omitted"
     " qualifiers. Write compact note fragments, not full prose: stay below the supplied"
@@ -163,6 +171,17 @@ PATCH_INSTRUCTIONS = (
     " room for complete meaning. A target miss never permits omitting a condition or qualifier."
     " Keep unknown/not-established qualifiers explicit: no established implication is"
     " not a claim of no implication. Missing evidence is never evidence of no effect."
+)
+RELATED_PATCH_INSTRUCTIONS = (
+    " For correction.patch_budget.related_edit_group=true ONLY, preserve ALL meaning"
+    " collectively within the two selected entries, rather than duplicating every"
+    " qualifier in each. Quantitative, dated and attributed facts stay in views;"
+    " active prerequisites stay in waiting_for. Factor ONLY duplicated verification"
+    " qualifiers with explicit named scope; never move a fact into a waiting condition"
+    " as a substitute for its view. Preserve EACH-item and FULL TEXT/context conditions,"
+    " source contradictions, no-confirmation-transfer rules and individual dates."
+    " All unselected entries, theses and decision fields remain EXACT. Same-event"
+    " evidence and structural mappings do not establish semantic equivalence."
 )
 
 
@@ -344,6 +363,7 @@ class FoundryModel:
         prefix = (
             instructions
             + (TRIAGE_INSTRUCTIONS if phase == "triage" else "")
+            + (CLAIM_CATEGORY_INSTRUCTIONS if phase != "triage" else "")
             + (
                 (PATCH_INSTRUCTIONS if repair.get("editable_keys") else REPAIR_INSTRUCTIONS)
                 + (
@@ -352,6 +372,11 @@ class FoundryModel:
                     else REPAIR_HEADROOM_INSTRUCTIONS
                 )
                 if repair is not None
+                else ""
+            )
+            + (
+                RELATED_PATCH_INSTRUCTIONS
+                if repair is not None and repair.get("patch_budget", {}).get("related_edit_group")
                 else ""
             )
             + (
@@ -527,7 +552,12 @@ class FoundryModel:
         # Genuine total pressure or invalid topology still needs consolidation;
         # lossless spacing is attempted by the engine before this single RPC.
         budget = (
-            repair_budget(candidate["working_memory"])
+            repair_budget(
+                candidate["working_memory"],
+                before=context.get("working_memory"),
+                dispositions=candidate.get("memory_dispositions"),
+                event_ref=event.get("message_id"),
+            )
             if sizes["total_bytes"] <= MAX_BYTES
             else None
         )

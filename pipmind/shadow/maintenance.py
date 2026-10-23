@@ -22,7 +22,45 @@ def punctuation_spacing(text):
     return re.sub(r"([,;:]) (?=[A-Za-z])", r"\1", text)
 
 
-def repair_budget(working):
+def _related_repair_keys(working, before, dispositions, event_ref, mandatory):
+    """Only two stable, explicitly updated entries may share correction scope."""
+    if not before or not event_ref or not isinstance(dispositions, list):
+        return None
+    if any(len(before[field]) != len(working[field]) for field in ("views", "waiting_for")):
+        return None
+    if before["position_theses"] != working["position_theses"]:
+        return None
+    old, proposed = entries(before), entries(working)
+    changed = [key for key, text in proposed.items() if text != old[key]]
+    if len(changed) != 2 or not set(mandatory) <= set(changed):
+        return None
+    # A moved literal is a topology edit, not an eligible stable-key update.
+    for key in changed:
+        field = "views" if key[0] == "v" else "waiting_for"
+        if proposed[key] in before[field]:
+            return None
+    rows = {}
+    for row in dispositions:
+        if not isinstance(row, dict) or not isinstance(row.get("from"), str) or row["from"] in rows:
+            return None
+        key = row.get("from")
+        if key not in old:
+            return None
+        rows[key] = row
+        if key in changed:
+            if (
+                row.get("to") != key
+                or row.get("disposition") != "updated"
+                or not isinstance(row.get("evidence_ids"), list)
+                or event_ref not in row["evidence_ids"]
+            ):
+                return None
+        elif row.get("disposition") != "retained" or row.get("to") != key:
+            return None
+    return changed if set(changed) <= rows.keys() else None
+
+
+def repair_budget(working, *, before=None, dispositions=None, event_ref=None):
     """Calculate a text-only repair; never clip state or alter its topology.
 
     JSON-escaped content bytes include quotes/backslashes that UTF-8 text size
@@ -57,7 +95,13 @@ def repair_budget(working):
         }
 
     if sizes["total_bytes"] <= MAX_BYTES:
-        return plan(mandatory, 220) if mandatory else None
+        if not mandatory:
+            return None
+        related = _related_repair_keys(working, before, dispositions, event_ref, mandatory)
+        budget = plan(related or mandatory, 220)
+        if related:
+            budget["related_edit_group"] = True
+        return budget
     ranked = sorted(content, key=lambda key: (-content[key], key))
     for cap in (220, 200, 180, 160, 120):
         selected = list(mandatory)
@@ -81,7 +125,13 @@ def repair_scope(working):
 def expand_repair_patch(candidate, patch, event_ref, *, before=None):
     """Expand only the named edits; preserve the decision's BEFORE mappings."""
     original = candidate["working_memory"]
-    scope = repair_scope(original)
+    budget = repair_budget(
+        original,
+        before=before,
+        dispositions=candidate.get("memory_dispositions"),
+        event_ref=event_ref,
+    )
+    scope = budget["editable_keys"] if budget else []
     rows = patch["replacements"]
     edits = {row["from"]: row for row in rows}
     if not scope or len(edits) != len(rows) or set(edits) != set(scope):

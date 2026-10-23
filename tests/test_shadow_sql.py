@@ -3176,6 +3176,80 @@ def test_qualification_slots_survive_restart_and_cannot_erase_a_capture_gap(
     assert mind.status()["outcomes"] == 0  # Capture never invents reasoning.
 
 
+@pytest.mark.parametrize("oversized", [False, True])
+def test_sql_related_repair_keeps_exact_fixed_entries_and_every_attempt(mind, oversized):
+    from test_shadow_repair_related import related_case
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import entries
+
+    context, candidate, patch = related_case()
+    before = context["working_memory"]
+    with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("related-before-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            encoded(before),
+        )
+        mind._write_working(cur, before, MOMENT)
+    activate_bounded(mind)
+    events, fixture = episode(mind)
+    event = events[0]
+    candidate["evidence_ids"] = [event["message_id"]]
+    for row in candidate["memory_dispositions"] + patch["replacements"]:
+        row["evidence_ids"] = [event["message_id"]]
+    if oversized:
+        patch["replacements"][0]["text"] = "x" * 306
+    repairs = []
+
+    class Model(FixtureModel):
+        async def repair_memory(self, *args):
+            repairs.append(deepcopy(args[2]))
+            return deepcopy(patch), {
+                "phase": "memory_repair",
+                "synthetic": True,
+                "input_tokens": 17,
+                "output_tokens": 23,
+            }
+
+    fixture.responses[event["message_id"]].update(
+        reply=deepcopy(candidate), triage={"wake": True, "summary": "Synthetic related update"}
+    )
+    original = {
+        meta["record_id"]: (meta, body)
+        for meta, body in mind.retained()[1]
+        if meta["part"] != "working_memory"
+    }
+    assert asyncio.run(
+        ShadowEngine(mind, Model(fixture.responses), clock=lambda: MOMENT).step()
+    ) is (not oversized)
+    assert repairs == [candidate]
+    records = {meta["record_id"]: (meta, body) for meta, body in mind.retained()[1]}
+    assert {key: records[key] for key in original} == original
+    if oversized:
+        result = loads(
+            next(
+                body for meta, body in reversed(list(records.values())) if meta["part"] == "journal"
+            )
+        )
+        assert mind.head()["paused"] and mind.head()["working"] == before
+        assert mind.pending() == event and mind.status()["outcomes"] == 0
+    else:
+        result = mind.outcome(event["message_id"])
+        assert not mind.head()["paused"] and mind.pending() is None
+        for key, text in entries(candidate["working_memory"]).items():
+            if key not in {"v6", "w5"}:
+                assert entries(mind.head()["working"])[key] == text
+        assert result["decision"]["reasoning"] == candidate["reasoning"]
+        assert mind.status()["outcomes"] == 1
+    audit = result["memory_repair"]
+    assert audit["candidate"] == candidate and audit["response"] == patch
+    assert audit["patch_budget"]["editable_keys"] == ["v6", "w5"]
+    assert audit["patch_budget"]["fixed_bytes"] == 4016
+    assert result["usage"][-1]["input_tokens"] == 17 and result["dispatches"] == 0
+    assert "expanded_response" in audit  # Even the invalid306-byte expansion remains exact.
+
+
 @pytest.mark.parametrize("build_changed", [False, True])
 def test_qualification_warmup_retains_read_failures_without_starting_the_day(
     mind, monkeypatch, build_changed
