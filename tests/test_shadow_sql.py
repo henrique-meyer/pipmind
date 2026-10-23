@@ -10461,7 +10461,7 @@ def test_sql_social_page_read_evidence_rolls_back_with_events_and_cursor(mind, m
     key = "x:read:" + user_id
     previous = store.state(key)
     cursor = store.state("x:cursor:" + user_id)
-    count = store.status()["events"]
+    counts = store.status()["events"]
     assert previous["last_success_at"] == stamp(MOMENT)
     clock[0] += timedelta(seconds=2)
     identifier = str(10**18 + int(uuid4().hex, 16) % (9 * 10**18))
@@ -10488,7 +10488,7 @@ def test_sql_social_page_read_evidence_rolls_back_with_events_and_cursor(mind, m
         patch.setattr(store, "save", fail_after_read_staged)
         with pytest.raises(FeedError, match="synthetic_read_evidence_write_failure"):
             social.poll(role, account)
-    assert store.status()["events"] == count
+    assert store.status()["events"] == counts
     assert store.state("x:cursor:" + user_id) == cursor
     current = store.state(key)
     assert current["last_success_at"] == previous["last_success_at"]
@@ -10497,7 +10497,8 @@ def test_sql_social_page_read_evidence_rolls_back_with_events_and_cursor(mind, m
     assert SqlFeedStore(mind.connect).state(key) == current
     clock[0] += timedelta(seconds=2)
     social.poll(role, account)
-    assert x.timeline.call_count == 3 and store.status()["events"] == count + 1
+    assert x.timeline.call_count == 3
+    assert store.status()["events"] == {**counts, "social": counts.get("social", 0) + 1}
     assert store.state("x:cursor:" + user_id)["since"] == identifier
     store.save("role:" + role["id"], {"accounts": [account]})
     cfg = configuration()
@@ -10539,7 +10540,7 @@ def test_sql_social_lost_page_ack_retains_exact_committed_evidence_without_rpc_r
     }
     transaction = store.transaction
     lost = [False]
-    count = store.status()["events"]
+    counts = store.status()["events"]
 
     @contextmanager
     def lose_page_ack():
@@ -10554,7 +10555,8 @@ def test_sql_social_lost_page_ack_retains_exact_committed_evidence_without_rpc_r
         patch.setattr(store, "transaction", lose_page_ack)
         with pytest.raises(FeedError, match="synthetic_lost_page_ack"):
             Social(store, Mock(), x, [], None, lambda: MOMENT).poll(role, account)
-    assert x.timeline.call_count == 1 and store.status()["events"] == count + 1
+    assert x.timeline.call_count == 1
+    assert store.status()["events"] == {**counts, "social": counts.get("social", 0) + 1}
     current = SqlFeedStore(mind.connect).state("x:read:" + user_id)
     assert current["last_success_at"] == stamp(MOMENT)
     assert current["last_error_at"] == stamp(MOMENT)
