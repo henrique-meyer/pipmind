@@ -19,6 +19,7 @@ from pipmind.shadow.maintenance import (
     working_sizes,
 )
 from pipmind.shadow.model import ModelFailure
+from pipmind.shadow.step_diagnostics import StepDiagnostics
 
 
 class ShadowEngine:
@@ -28,6 +29,7 @@ class ShadowEngine:
         self.store, self.model, self.clock, self.contracts = store, model, clock, Contracts()
         self.price_interval = price_interval
         self.observer = observer or (lambda phase, facts: None)
+        self._diagnostics = StepDiagnostics()
 
     async def _correct_memory(
         self, event, context, reply, result, moment, reason="working_memory_bound"
@@ -55,9 +57,10 @@ class ShadowEngine:
                     "method": "punctuation_spacing",
                 }
             else:
-                correction, usage = await self.model.repair_memory(
-                    deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
-                )
+                with self._diagnostics.operation("memory_repair"):
+                    correction, usage = await self.model.repair_memory(
+                        deepcopy(event), deepcopy(context), deepcopy(original), self.store, moment
+                    )
             result["usage"][-1] = usage
             audit["response"] = deepcopy(correction)
             if "replacements" in correction:
@@ -180,28 +183,36 @@ class ShadowEngine:
             raise ShadowError("working_memory_repair_failed") from None
 
     async def step(self):
+        with self._diagnostics.operation("step"):
+            return await self._step()
+
+    async def _step(self):
         moment = self.clock()
         if hasattr(self.store, "prepare_step"):
             self.observer("preparation", {})
-            prepared = self.store.prepare_step(moment)
+            with self._diagnostics.operation("prepare"):
+                prepared = self.store.prepare_step(moment)
             if prepared is None:
                 return False
             event, context, reconsideration = prepared
             self.observer("context", {"event": event})
         else:
-            if self.store.head()["paused"]:
-                return False
-            event = self.store.pending()
-            if not event:
-                return False
-            if validate_event(event, self.contracts) > moment:
-                raise ShadowError("future_shadow_input")
-            self.observer("context", {"event": event})
-            reconsideration = self.store.reconsideration(event)
-            query = event_query(reconsideration["original_input"] if reconsideration else event)
-            context = self.store.context(moment, query, history=False)
-            context["broker_snapshots"] = self.store.runtime("broker_snapshots", {})
-            context["feed_status"] = self.store.runtime("feed_status", {"coverage": "unverified"})
+            with self._diagnostics.operation("prepare"):
+                if self.store.head()["paused"]:
+                    return False
+                event = self.store.pending()
+                if not event:
+                    return False
+                if validate_event(event, self.contracts) > moment:
+                    raise ShadowError("future_shadow_input")
+                self.observer("context", {"event": event})
+                reconsideration = self.store.reconsideration(event)
+                query = event_query(reconsideration["original_input"] if reconsideration else event)
+                context = self.store.context(moment, query, history=False)
+                context["broker_snapshots"] = self.store.runtime("broker_snapshots", {})
+                context["feed_status"] = self.store.runtime(
+                    "feed_status", {"coverage": "unverified"}
+                )
         query = event_query(reconsideration["original_input"] if reconsideration else event)
         # Triage consumes only the current mind/facts. Defer SQL archive reads
         # until a decision needs them, keeping quiet inputs off the expensive path.
@@ -227,7 +238,8 @@ class ShadowEngine:
             result["runtime_updates"]["broker_snapshots"] = snapshots
             context["broker_snapshots"] = snapshots
             result["status"] = "snapshot_retained"
-            self.store.commit(event, context["revision"], result, moment)
+            with self._diagnostics.operation("commit"):
+                self.store.commit(event, context["revision"], result, moment)
             self.observer("committed", {})
             return True
         if event["kind"] == "PriceEvent":
@@ -252,7 +264,8 @@ class ShadowEngine:
             result["runtime_updates"][key] = aggregate
             if not due:
                 result["status"] = "price_coalesced"
-                self.store.commit(event, context["revision"], result, moment)
+                with self._diagnostics.operation("commit"):
+                    self.store.commit(event, context["revision"], result, moment)
                 self.observer("committed", {})
                 return True
         loading_evidence = False
@@ -263,9 +276,10 @@ class ShadowEngine:
                     raise ShadowError("working_memory_policy")
                 validate_working(context["working_memory"], moment)
             result["usage"].append({"phase": "triage", "attempted": True, "usage_unknown": True})
-            triage, usage = await self.model.triage(
-                deepcopy(event), deepcopy(context), self.store, moment
-            )
+            with self._diagnostics.operation("triage"):
+                triage, usage = await self.model.triage(
+                    deepcopy(event), deepcopy(context), self.store, moment
+                )
             self.contracts.validate("triage-result", triage)
             result.update(triage=triage)
             result["usage"][-1] = usage
@@ -276,7 +290,8 @@ class ShadowEngine:
             if triage["wake"] and not analysis:
                 self.observer("evidence", {"event": event})
                 loading_evidence = True
-                evidence = self.store.context(moment, query, revision=context["revision"])
+                with self._diagnostics.operation("evidence"):
+                    evidence = self.store.context(moment, query, revision=context["revision"])
                 loading_evidence = False
                 for key in ("recent_journal", "retrieved_memories"):
                     context[key] = evidence[key]
@@ -284,9 +299,10 @@ class ShadowEngine:
                 result["usage"].append(
                     {"phase": "decision", "attempted": True, "usage_unknown": True}
                 )
-                reply, usage = await self.model.decide(
-                    deepcopy(event), deepcopy(context), triage, self.store, moment
-                )
+                with self._diagnostics.operation("decision"):
+                    reply, usage = await self.model.decide(
+                        deepcopy(event), deepcopy(context), triage, self.store, moment
+                    )
                 result["usage"][-1] = usage
                 result["model_reply"] = deepcopy(reply)
                 self.contracts.validate("model-reply", reply)
@@ -348,20 +364,24 @@ class ShadowEngine:
             if code in {"shadow_context_size", "shadow_context_projection"} or code.startswith(
                 "working_memory_"
             ):
-                self.store.hold(event, context["revision"], result, moment, code)
+                with self._diagnostics.operation("hold"):
+                    self.store.hold(event, context["revision"], result, moment, code)
                 return False
             result.update(status="model_refused", reply=None, error="model_unavailable_or_invalid")
         try:
-            self.store.commit(event, context["revision"], result, moment)
+            with self._diagnostics.operation("commit"):
+                self.store.commit(event, context["revision"], result, moment)
         except ShadowError as error:
             if str(error).startswith("working_memory_"):
-                self.store.hold(event, context["revision"], result, moment, str(error))
+                with self._diagnostics.operation("hold"):
+                    self.store.hold(event, context["revision"], result, moment, str(error))
                 return False
             elif str(error) in {"unavailable_shadow_evidence", "future_shadow_memory"}:
                 # Journal a validated refusal, retaining the original input. No
                 # invalid memory is committed, and no fabricated hold is invented.
                 result.update(status="model_refused", reply=None, error=str(error))
-                self.store.commit(event, context["revision"], result, moment)
+                with self._diagnostics.operation("commit"):
+                    self.store.commit(event, context["revision"], result, moment)
             else:
                 raise
         self.observer("committed", {})

@@ -1,6 +1,19 @@
+## PIP-65 - Bounded engine failure and stage diagnostics
+
+In Progress: [PIP-65](https://nitro.atlassian.net/browse/PIP-65) preserves fixed
+engine stages and safe refusal codes before the outer worker catch erases them,
+plus bounded monotonic operation timing/count aggregates for throughput profiling.
+Keep public step API, exceptions/cancellation, calls, commits, retries, history and
+all limits unchanged. Diagnostics contain no raw error/context/identity data, are
+rate/size bounded and cannot change processing when logging fails. Service-side
+source/clock/worker paths remain explicitly unmeasured to avoid PIP-17 overlap.
+Required review, focused safety checks and full offline/actual SQL CI precede
+merge. This delivery cannot retrospectively diagnose or qualify the failed v5
+window and changes no hosted resource, configuration or runtime state.
+
 ## PIP-64 - Durable per-account timeline read evidence
 
-In Progress: [PIP-64](https://nitro.atlassian.net/browse/PIP-64) records actual
+Delivered: [PIP-64](https://nitro.atlassian.net/browse/PIP-64) records actual
 page-read success and failures for existing selected numeric X accounts, including
 empty and incomplete pagination. Commit success with the existing page/cursor
 transaction, preserve prior success on failure, and expose bounded account facts
@@ -873,7 +886,7 @@ does not close its separate hosted qualification or operational activation gates
 | P0 | [PIP-32](https://nitro.atlassian.net/browse/PIP-32) | Make shadow release resume atomic against source revision and holds | M4 | Done |
 | P0 | [PIP-20](https://nitro.atlassian.net/browse/PIP-20) | Qualify the processing-throughput correction on the selected release | M4 | In Progress |
 | P1 | [PIP-23](https://nitro.atlassian.net/browse/PIP-23) | Repeat current-prompt model evals and bounded-state growth checks | M4 | To Do |
-| P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | To Do |
+| P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | In Progress |
 | P1 | [PIP-22](https://nitro.atlassian.net/browse/PIP-22) | Verify broader read-only social roles before activating recipes | M4 | To Do |
 | P1 | [PIP-24](https://nitro.atlassian.net/browse/PIP-24) | Calibrate reasoning and memory fidelity with owner-scored samples | M4 | To Do |
 | P1 | [PIP-25](https://nitro.atlassian.net/browse/PIP-25) | Capture one complete timely open-FX shadow day with independent zero-order evidence | M4 | To Do |
