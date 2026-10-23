@@ -15,6 +15,65 @@ def name(value):
     return " ".join(re.sub(r"[^\w ]", " ", unicodedata.normalize("NFKC", value)).casefold().split())
 
 
+READ_ERRORS = {"timeline_read_failed", "timeline_page_invalid", "timeline_commit_unconfirmed"}
+
+
+def read_observation(value, user_id):
+    """Validate only bounded durable page-read facts, never post-publication health."""
+    empty = {
+        "version": 1,
+        "user_id": user_id,
+        "last_success_at": None,
+        "last_error_at": None,
+        "last_error_code": None,
+        "page": None,
+        "complete_history_proven": False,
+    }
+    if value is None:
+        return empty
+    try:
+        if (
+            not isinstance(value, dict)
+            or set(value) != set(empty)
+            or type(value["version"]) is not int
+            or value["version"] != 1
+            or value["user_id"] != user_id
+            or value["complete_history_proven"] is not False
+        ):
+            raise ValueError
+        for field in ("last_success_at", "last_error_at"):
+            if value[field] is not None:
+                if not isinstance(value[field], str) or len(value[field]) > 40:
+                    raise ValueError
+                instant(value[field])
+        if (value["last_error_at"] is None) != (value["last_error_code"] is None):
+            raise ValueError
+        if value["last_error_code"] is not None and value["last_error_code"] not in READ_ERRORS:
+            raise ValueError
+        page = value["page"]
+        if value["last_success_at"] is None:
+            if page is not None:
+                raise ValueError
+        elif (
+            not isinstance(page, dict)
+            or set(page)
+            != {"received_at", "post_count", "traversal", "has_more", "continuation_pending"}
+            or page["received_at"] != value["last_success_at"]
+            or type(page["post_count"]) is not int
+            or not 0 <= page["post_count"] <= 100
+            or page["traversal"] not in {"initial_seed", "partial", "complete"}
+            or type(page["has_more"]) is not bool
+            or type(page["continuation_pending"]) is not bool
+            or page["continuation_pending"] != (page["traversal"] == "partial")
+            or (page["traversal"] == "partial" and not page["has_more"])
+            or (page["traversal"] == "complete" and page["has_more"])
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        raise FeedError("invalid_x_read_evidence") from None
+    return dict(value)
+
+
 class XReads:
     def __init__(self, reads, token, *, store=None, now=None):
         if not token:
@@ -471,9 +530,36 @@ class Social:
         return True
 
     def poll(self, role, account):
-        now, user_id = self.now(), account.get("user_id")
-        if not user_id:
+        user_id = account.get("user_id")
+        if not isinstance(user_id, str) or not re.fullmatch(r"[0-9]{1,19}", user_id):
             raise FeedError("x_account_not_resolved")
+        attempt = {"started": False, "error": "timeline_read_failed"}
+        try:
+            self._poll_pages(role, account, attempt)
+        except (FeedError, KeyError, TypeError, ValueError) as error:
+            if attempt["started"] and str(error) != "x_rate_limited":
+                # Preserve the original refusal, including unknown page commits.
+                # If SQL itself is unavailable, no durable failure is invented.
+                try:
+                    with self.store.transaction() as db:
+                        previous = read_observation(
+                            self.store.state("x:read:" + user_id, db=db), user_id
+                        )
+                        self.store.save(
+                            "x:read:" + user_id,
+                            {
+                                **previous,
+                                "last_error_at": stamp(self.now()),
+                                "last_error_code": attempt["error"],
+                            },
+                            db=db,
+                        )
+                except (FeedError, KeyError, TypeError, ValueError):
+                    pass
+            raise
+
+    def _poll_pages(self, role, account, attempt):
+        now, user_id = self.now(), account["user_id"]
         key = "x:cursor:" + user_id
         progress = self.store.state(key, {"since": None, "next": None, "newest": None, "seen": []})
         if progress["since"] is None and progress["newest"]:
@@ -495,8 +581,29 @@ class Social:
                 progress = {"since": progress["newest"], "next": None, "newest": None, "seen": []}
                 self.store.save(key, progress, db=db)
         for _ in range(5):  # Continue remaining pages on the next tick, without advancing since_id.
+            attempt.update(started=True, error="timeline_read_failed")
             page = self.x.timeline(user_id, since=progress["since"], token=progress["next"])
-            if page.get("errors") or not isinstance(page.get("data", []), list):
+            attempt["error"] = "timeline_page_invalid"
+            if (
+                not isinstance(page, dict)
+                or page.get("errors")
+                or not isinstance(page.get("meta", {}), dict)
+            ):
+                raise FeedError("partial_x_response")
+            metadata = page.get("meta", {})
+            data = page.get("data", [])
+            if (
+                not isinstance(data, list)
+                or len(data) > 100
+                or ("data" not in page and metadata.get("result_count") != 0)
+                or (
+                    "result_count" in metadata
+                    and (
+                        type(metadata["result_count"]) is not int
+                        or metadata["result_count"] != len(data)
+                    )
+                )
+            ):
                 raise FeedError("partial_x_response")
             payloads, newest, latest = (
                 [],
@@ -533,6 +640,9 @@ class Social:
                     }
                 )
             token = page.get("meta", {}).get("next_token")
+            if token is not None and (not isinstance(token, str) or not 1 <= len(token) <= 4096):
+                raise FeedError("partial_x_response")
+            received_at = stamp(self.now())
             initial = progress["since"] is None
             if token and (token in progress["seen"] or len(progress["seen"]) >= 1000):
                 raise FeedError("x_pagination_loop")
@@ -546,7 +656,9 @@ class Social:
                     "seen": [],
                 }
             )
+            attempt["error"] = "timeline_commit_unconfirmed"
             with self.store.transaction() as db:
+                previous = read_observation(self.store.state("x:read:" + user_id, db=db), user_id)
                 if initial:
                     self.store.save(
                         "x:initial_history:" + user_id,
@@ -564,6 +676,25 @@ class Social:
                 )
                 self.store.save(key, progress, db=db)
                 self.store.save("x:last_post:" + user_id, latest, db=db)
+                self.store.save(
+                    "x:read:" + user_id,
+                    {
+                        **previous,
+                        "last_success_at": received_at,
+                        "page": {
+                            "received_at": received_at,
+                            "post_count": len(page.get("data", [])),
+                            "traversal": "initial_seed"
+                            if initial
+                            else "partial"
+                            if token
+                            else "complete",
+                            "has_more": bool(token),
+                            "continuation_pending": bool(token and not initial),
+                        },
+                    },
+                    db=db,
+                )
             if initial or not token:
                 break
 

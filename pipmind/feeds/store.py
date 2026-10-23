@@ -1,6 +1,7 @@
 """Durable isolated development inbox/outbox. Hosted SQL is a separate M4 adapter."""
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from functools import cache
@@ -13,6 +14,7 @@ from pipmind.feeds.common import FeedError, identity
 KINDS = {"macro": "ReleaseEvent", "news": "NewsEvent", "social": "PostEvent"}
 COVERAGE_STATE_BYTES = 65536
 COVERAGE_TOTAL_BYTES = 1048576
+COVERAGE_ACCOUNTS = 100
 
 
 def coverage_keys(keys):
@@ -25,20 +27,41 @@ def coverage_keys(keys):
     return sorted(set(keys))
 
 
-def coverage_states(rows):
-    """Bound admitted UTF-8 JSON for decoding; unavailable is never healthy."""
-    states, unavailable, size = {}, [], 0
+def coverage_account_keys(states, requested):
+    """Derive numeric-account keys only from admitted role rows in this frame."""
+    candidates = set()
+    for key, value in states.items():
+        if key.startswith("role:") and isinstance(value, dict):
+            accounts = value.get("accounts")
+            if isinstance(accounts, list):
+                for account in accounts[:COVERAGE_ACCOUNTS]:
+                    user_id = account.get("user_id") if isinstance(account, dict) else None
+                    if isinstance(user_id, str) and re.fullmatch(r"[0-9]{1,19}", user_id):
+                        candidates.add("x:read:" + user_id)
+    extra = sorted(candidates.difference(requested))
+    room = 512 - len(requested)
+    return extra[:room], extra[room:]
+
+
+def coverage_state_frame(rows, prior=None):
+    """Share one unchanged byte budget across dependent reads of the same frame."""
+    result, size = prior if prior is not None else ({"states": {}, "unavailable_keys": []}, 0)
     for key, raw in rows:
         length = len(raw.encode()) if isinstance(raw, str) else COVERAGE_STATE_BYTES + 1
         if length > COVERAGE_STATE_BYTES or size + length > COVERAGE_TOTAL_BYTES:
-            unavailable.append(key)
+            result["unavailable_keys"].append(key)
             continue
         size += length
         try:
-            states[key] = loads(raw)
+            result["states"][key] = loads(raw)
         except (ValueError, RecursionError):
-            unavailable.append(key)
-    return {"states": states, "unavailable_keys": unavailable}
+            result["unavailable_keys"].append(key)
+    return result, size
+
+
+def coverage_states(rows):
+    """Bound admitted UTF-8 JSON for decoding; unavailable is never healthy."""
+    return coverage_state_frame(rows)[0]
 
 
 @cache
@@ -329,7 +352,17 @@ class FeedStore:
                 "FROM state WHERE key IN (" + ",".join("?" for _ in keys) + ") ORDER BY key",
                 [COVERAGE_STATE_BYTES, *keys],
             )
-            result = coverage_states(rows)
+            frame = coverage_state_frame(rows)
+            extra, omitted = coverage_account_keys(frame[0]["states"], keys)
+            frame[0]["unavailable_keys"].extend(omitted)
+            if extra:
+                rows = db.execute(
+                    "SELECT key,CASE WHEN length(CAST(value AS BLOB))<=? THEN value END "
+                    "FROM state WHERE key IN (" + ",".join("?" for _ in extra) + ") ORDER BY key",
+                    [COVERAGE_STATE_BYTES, *extra],
+                )
+                frame = coverage_state_frame(rows, frame)
+            result = frame[0]
             result["quarantined_by_producer"] = dict(
                 db.execute(
                     "SELECT producer,COUNT(*) FROM inbox WHERE status='quarantined' "
