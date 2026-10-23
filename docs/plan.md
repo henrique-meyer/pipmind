@@ -1,6 +1,16 @@
+## PIP-64 - Durable per-account timeline read evidence
+
+In Progress: [PIP-64](https://nitro.atlassian.net/browse/PIP-64) records actual
+page-read success and failures for existing selected numeric X accounts, including
+empty and incomplete pagination. Commit success with the existing page/cursor
+transaction, preserve prior success on failure, and expose bounded account facts
+without inferring role health or complete history. Required offline and actual
+SQL atomicity tests precede merge. No new reads, activation or hosted changes;
+PIP-21/PIP-22 retain actual source and identity/role qualification.
+
 ## PIP-63 - Recorder active-request snapshot read
 
-In Progress: [PIP-63](https://nitro.atlassian.net/browse/PIP-63) delivers the
+Delivered: [PIP-63](https://nitro.atlassian.net/browse/PIP-63) delivers the
 recorder read correction identified by PIP-20. Resolve the same native target and
 active request in an existing snapshot transaction when enabled, preserving the
 coordinated-lock fallback when disabled and propagating read/commit failures.

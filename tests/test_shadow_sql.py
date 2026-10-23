@@ -10434,3 +10434,130 @@ def test_restricted_command_checkpoint_sql_exact_profiles_and_rollback(mind):
             f"DROP DATABASE [{name}]; END"
         )
         admin.close()
+
+
+def test_sql_social_page_read_evidence_rolls_back_with_events_and_cursor(mind, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from pipmind.contracts import stamp
+    from pipmind.feeds.common import FeedError
+    from pipmind.feeds.coverage import project
+    from pipmind.feeds.fixtures import configuration
+    from pipmind.feeds.social import Social
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    store = SqlFeedStore(mind.connect)
+    user_id = str(10**18 + int(uuid4().hex, 16) % (9 * 10**18))
+    role = {"id": "read-" + uuid4().hex, "priority": 1, "accounts": []}
+    account = {"user_id": user_id, "handle": "ExampleBank"}
+    role["accounts"] = [account]
+    clock = [MOMENT]
+    x = Mock()
+    x.timeline.return_value = {"data": []}
+    social = Social(store, Mock(), x, [], SimpleNamespace(rows=lambda: []), lambda: clock[0])
+    prior_mind = mind.retained()
+    social.poll(role, account)
+    key = "x:read:" + user_id
+    previous = store.state(key)
+    cursor = store.state("x:cursor:" + user_id)
+    count = store.status()["events"]
+    assert previous["last_success_at"] == stamp(MOMENT)
+    clock[0] += timedelta(seconds=2)
+    identifier = str(10**18 + int(uuid4().hex, 16) % (9 * 10**18))
+    x.timeline.return_value = {
+        "data": [
+            {
+                "id": identifier,
+                "author_id": user_id,
+                "created_at": stamp(MOMENT - timedelta(seconds=1)),
+                "text": "Synthetic retained post",
+            }
+        ]
+    }
+    save = store.save
+    failed = [False]
+
+    def fail_after_read_staged(state_key, value, *, db=None):
+        save(state_key, value, db=db)
+        if state_key == key and value["last_success_at"] == stamp(clock[0]) and not failed[0]:
+            failed[0] = True
+            raise FeedError("synthetic_read_evidence_write_failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "save", fail_after_read_staged)
+        with pytest.raises(FeedError, match="synthetic_read_evidence_write_failure"):
+            social.poll(role, account)
+    assert store.status()["events"] == count
+    assert store.state("x:cursor:" + user_id) == cursor
+    current = store.state(key)
+    assert current["last_success_at"] == previous["last_success_at"]
+    assert current["page"] == previous["page"]
+    assert current["last_error_code"] == "timeline_commit_unconfirmed"
+    assert SqlFeedStore(mind.connect).state(key) == current
+    clock[0] += timedelta(seconds=2)
+    social.poll(role, account)
+    assert x.timeline.call_count == 3 and store.status()["events"] == count + 1
+    assert store.state("x:cursor:" + user_id)["since"] == identifier
+    store.save("role:" + role["id"], {"accounts": [account]})
+    cfg = configuration()
+    cfg["macro"], cfg["roles"] = [], [role]
+    row = project(SqlFeedStore(mind.connect), cfg, clock[0])["sources"][0]
+    assert row["read"]["state"] == "unknown"
+    assert row["account_reads"][0]["user_id"] == user_id
+    assert row["account_reads"][0]["read"]["state"] == "successful_read"
+    assert row["account_reads"][0]["read"]["last_error_at"] == current["last_error_at"]
+    assert mind.retained() == prior_mind
+
+
+def test_sql_social_lost_page_ack_retains_exact_committed_evidence_without_rpc_retry(
+    mind, monkeypatch
+):
+    from contextlib import contextmanager
+    from unittest.mock import Mock
+
+    from pipmind.contracts import stamp
+    from pipmind.feeds.common import FeedError
+    from pipmind.feeds.social import Social
+    from pipmind.feeds.sql_store import SqlFeedStore
+
+    store = SqlFeedStore(mind.connect)
+    user_id = str(10**18 + int(uuid4().hex, 16) % (9 * 10**18))
+    identifier = str(10**18 + int(uuid4().hex, 16) % (9 * 10**18))
+    account = {"user_id": user_id, "handle": "ExampleBank"}
+    role = {"id": "ack-" + uuid4().hex}
+    x = Mock()
+    x.timeline.return_value = {
+        "data": [
+            {
+                "id": identifier,
+                "author_id": user_id,
+                "created_at": stamp(MOMENT - timedelta(seconds=1)),
+                "text": "Synthetic committed post",
+            }
+        ]
+    }
+    transaction = store.transaction
+    lost = [False]
+    count = store.status()["events"]
+
+    @contextmanager
+    def lose_page_ack():
+        with transaction() as cursor:
+            yield cursor
+            value = store.state("x:read:" + user_id, db=cursor)
+        if value is not None and value["last_success_at"] is not None and not lost[0]:
+            lost[0] = True
+            raise FeedError("synthetic_lost_page_ack")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "transaction", lose_page_ack)
+        with pytest.raises(FeedError, match="synthetic_lost_page_ack"):
+            Social(store, Mock(), x, [], None, lambda: MOMENT).poll(role, account)
+    assert x.timeline.call_count == 1 and store.status()["events"] == count + 1
+    current = SqlFeedStore(mind.connect).state("x:read:" + user_id)
+    assert current["last_success_at"] == stamp(MOMENT)
+    assert current["last_error_at"] == stamp(MOMENT)
+    assert current["last_error_code"] == "timeline_commit_unconfirmed"
+    assert current["page"]["traversal"] == "initial_seed"
+    assert store.state("x:cursor:" + user_id)["since"] == identifier

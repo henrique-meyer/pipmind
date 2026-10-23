@@ -9,8 +9,9 @@ from pipmind.feeds.store import (
     COVERAGE_STATE_BYTES,
     KINDS,
     contracts,
+    coverage_account_keys,
     coverage_keys,
-    coverage_states,
+    coverage_state_frame,
     encoded,
     merge_state,
 )
@@ -367,9 +368,20 @@ class SqlFeedStore:
                     # shared exact UTF-8 guard while consuming rows incrementally.
                     (2 * COVERAGE_STATE_BYTES, *keys),
                 )
-                result = coverage_states(iter(db.fetchone, None))
+                frame = coverage_state_frame(iter(db.fetchone, None))
             else:
-                result = coverage_states([])
+                frame = coverage_state_frame([])
+            extra, omitted = coverage_account_keys(frame[0]["states"], keys)
+            frame[0]["unavailable_keys"].extend(omitted)
+            if extra:
+                db.execute(
+                    "SELECT k,CASE WHEN DATALENGTH(v)<=%s THEN v END FROM pf_state WHERE k IN ("
+                    + ",".join("%s" for _ in extra)
+                    + ") ORDER BY k",
+                    (2 * COVERAGE_STATE_BYTES, *extra),
+                )
+                frame = coverage_state_frame(iter(db.fetchone, None), frame)
+            result = frame[0]
             db.execute(
                 "SELECT producer,COUNT(*) FROM pf_inbox WHERE status='quarantined' "
                 "GROUP BY producer"

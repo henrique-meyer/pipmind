@@ -22,6 +22,33 @@ python -m pipmind.feeds reconfigure --previous-config .data/config/previous.json
 
 First deploy the profile-fencing implementation with the previous recipe. The owner operation checks the exact previous binding, records both recipes privately, atomically changes the binding and preserves every source ID, input, event and cursor. The active binding uses the existing writable state table; original metadata stays immutable and runtime SQL permissions do not expand. Old workers then refuse access. Deploy the replacement recipe through the existing secret/Bicep workflow, with an explicit recipe revision environment value to force a rollout when changing only a secret, and verify new workers, handoff and retained checkpoints. Never reset the store to accept new configuration. Changing/removing existing mappings requires a separately reviewed migration; this additive path refuses it.
 
+
+## Existing-account timeline read evidence
+
+Each resolved numeric X account retains `x:read:<user-id>` page observations.
+A valid empty page is a successful read. The receipt timestamp, page post count
+and traversal scope commit with that page's events and cursor; post publication
+time is separate. `initial_seed` retains the original latest-page limitation,
+`partial` means pagination remains pending after an admitted page, and `complete`
+means only the current traversal from its live anchor finished. None proves
+complete historical coverage. A page failure keeps the prior successful page
+and cursor; malformed/rolled-back pages cannot record success. An uncertain
+commit acknowledgement is reported as `timeline_commit_unconfirmed`, retains
+whatever actually committed, and never triggers an automatic replacement read.
+An existing rate-limit backoff that prevents a request does not invent another
+account read failure. Storage outages can also prevent failure evidence from
+being retained; absence remains unknown.
+
+The authenticated private `/coverage` projection includes bounded per-account
+facts from the same feed-store read frame as resolved role identity. It admits
+at most 100 accounts per role and preserves the existing 512-key, 64-KiB-value,
+1-MiB-total-state and 256-KiB-response bounds. Overflow/unavailable or malformed
+facts remain explicit unknowns. Legacy accounts without these observations also
+remain unknown. The role's own read state remains unknown: one successful
+account/page, a recent post or a healthy worker cannot establish role-wide
+health, current identity/control, source completeness or a qualified FX day.
+This code records existing reads; it activates no source, recipe or extra call.
+
 ## Run and validate offline
 
 ```sh

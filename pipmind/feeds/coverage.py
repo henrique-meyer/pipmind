@@ -5,7 +5,13 @@ from math import isfinite
 
 from pipmind.contracts import stamp, utc
 from pipmind.feeds.common import FeedError, identity
-from pipmind.feeds.store import COVERAGE_STATE_BYTES, COVERAGE_TOTAL_BYTES, encoded
+from pipmind.feeds.social import read_observation
+from pipmind.feeds.store import (
+    COVERAGE_ACCOUNTS,
+    COVERAGE_STATE_BYTES,
+    COVERAGE_TOTAL_BYTES,
+    encoded,
+)
 
 MAX_PAGE = 100
 MAX_RESPONSE_BYTES = 262144
@@ -121,7 +127,46 @@ def news_row(recipe, state):
     }
 
 
-def social_row(recipe, state):
+def account_read(account, state, unavailable, now):
+    user_id = account.get("user_id")
+    valid_id = (
+        isinstance(user_id, str)
+        and user_id.isascii()
+        and user_id.isdigit()
+        and 1 <= len(user_id) <= 19
+    )
+    key = "x:read:" + user_id if valid_id else None
+    raw = state.get(key) if key else None
+    observation = None
+    if raw is not None and key not in unavailable:
+        try:
+            observation = read_observation(raw, user_id)
+        except FeedError:
+            pass
+    known = observation is not None
+    read = read_state(
+        observation["last_success_at"] if known else None,
+        observation["last_error_at"] if known else None,
+        unknown=not known,
+    )
+    anomaly = any(
+        now is not None and instant(read[field]) is not None and instant(read[field]) > now
+        for field in ("last_success_at", "last_error_at")
+    )
+    if anomaly:
+        read["state"] = "unknown"
+    return {
+        "user_id": user_id if valid_id else None,
+        "read": read,
+        "latest_error_code": observation["last_error_code"] if known else None,
+        "last_page": observation["page"] if known else None,
+        "complete_history_proven": False,
+        "timestamp_anomaly": anomaly,
+        "state_availability": "bounded_unavailable" if key in unavailable else "available",
+    }
+
+
+def social_row(recipe, state, unavailable=(), now=None):
     sid = recipe["id"]
     role, primary = mapping(state.get("role:" + sid)), mapping(state.get("primary:status:" + sid))
     accounts = role.get("accounts")
@@ -133,7 +178,18 @@ def social_row(recipe, state):
     return {
         "source_id": sid,
         "read": read_state(None, None, unknown=True),
-        "success_scope": "timeline_poll_timestamps_not_recorded",
+        "success_scope": "per_account_page_reads_only_not_role_health",
+        "account_reads": [
+            account_read(account, state, unavailable, now)
+            for account in (known_accounts or [])[:COVERAGE_ACCOUNTS]
+        ],
+        "account_read_bounds": {
+            "total_retained_accounts": len(known_accounts) if known_accounts is not None else None,
+            "maximum_returned": COVERAGE_ACCOUNTS,
+            "all_accounts_returned": len(known_accounts) <= COVERAGE_ACCOUNTS
+            if known_accounts is not None
+            else False,
+        },
         "identity": {
             "checked_at": timestamp(role.get("checked_at")),
             "configured_accounts": len(recipe["accounts"]),
@@ -185,12 +241,27 @@ def project(store, configuration, now, *, offset=0, limit=100):
     state, unavailable = snapshot["states"], set(snapshot["unavailable_keys"])
     rows = []
     for channel, index, recipe in selected:
-        row = {
-            "channel": channel,
-            "recipe_index": index,
-            **{"macro": macro_row, "news": news_row, "social": social_row}[channel](recipe, state),
-        }
+        facts = (
+            social_row(recipe, state, unavailable, now)
+            if channel == "social"
+            else {
+                "macro": macro_row,
+                "news": news_row,
+            }[channel](recipe, state)
+        )
+        row = {"channel": channel, "recipe_index": index, **facts}
         missing = bool(unavailable.intersection(source_keys(channel, recipe)))
+        if channel == "social":
+            missing = (
+                missing
+                or (
+                    row["account_read_bounds"]["total_retained_accounts"] is not None
+                    and not row["account_read_bounds"]["all_accounts_returned"]
+                )
+                or any(
+                    a["state_availability"] == "bounded_unavailable" for a in row["account_reads"]
+                )
+            )
         anomaly = any(
             instant(row["read"][key]) is not None and instant(row["read"][key]) > now
             for key in ("last_success_at", "last_error_at")
