@@ -13,6 +13,14 @@ Azure structured-output length enforcement is not assumed. Required offline and
 actual SQL tests plus fresh isolated model/semantic and guarded owner-control
 checks precede hosted use; code delivery alone qualifies no clean run or FX day.
 
+Follow-up: restore the explicit source claim category for EACH dated selected
+claim when existing note shorthand is ambiguous; copying inherited ambiguity
+does not qualify a semantic pass. For eligible related correction only, include
+already supplied compact source cards cited by selected entries, excluding the
+current event already present. No new retrieval, SQL, tools or model calls; retain
+card bounds and fail before RPC at the existing prompt guard. Preserve uncertainty
+when source evidence is absent. Retain exact unrelated state and all limits.
+
 ## PIP-61 - Coherent shadow status frame
 
 Delivered: [PIP-61](https://nitro.atlassian.net/browse/PIP-61).

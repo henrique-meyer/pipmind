@@ -19,8 +19,8 @@ from pipmind.shadow.maintenance import (
 from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
 from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
-PROMPT_VERSION = "shadow-context-v17"
-REPAIR_PROMPT_VERSION = "shadow-repair-v21"
+PROMPT_VERSION = "shadow-context-v18"
+REPAIR_PROMPT_VERSION = "shadow-repair-v22"
 REPAIR_TEXT_MAX_CHARACTERS = 200
 REPAIR_PATCH_MAX_CHARACTERS = 280
 REPAIR_HEADROOM_INSTRUCTIONS = (
@@ -46,6 +46,12 @@ CLAIM_CATEGORY_INSTRUCTIONS = (
     " about a future policy action is not a commitment. Keep separate dates and"
     " speakers associated with their own claims; do not transfer new verification"
     " or a later claim to earlier evidence."
+    " For EACH dated or attributed claim being edited, if BEFORE/candidate shorthand"
+    " is vague but supplied retained source evidence explicitly establishes its category,"
+    " retain or restore that category for THAT claim rather than inheriting the ambiguity."
+    " An adjacent dated claim's category does not label an earlier claim. When source"
+    " evidence is missing, partial or contradictory, preserve uncertainty; never guess"
+    " a category, infer an actual measurement or transfer a policy commitment."
 )
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
@@ -191,6 +197,38 @@ class ModelFailure(ShadowError):
         self.trace = trace
 
 
+def related_repair_evidence(context, repair, current_event):
+    """Carry only already-supplied cited cards; never fetch or reproject evidence."""
+    selected = set(repair["editable_keys"])
+    references = {
+        ref
+        for row in repair["candidate"].get("memory_dispositions", [])
+        if row["to"] in selected
+        for ref in row["evidence_ids"]
+    } - {current_event}
+    cards, seen = [], {}
+    remaining = 8000  # Same existing selected-evidence budget as phase_context.
+    for row in context.get("retrieved_memories", []):
+        identifier = row.get("metadata", {}).get("record_id")
+        if identifier not in references:
+            continue
+        if identifier in seen:
+            if row != seen[identifier]:
+                raise ShadowError("shadow_context_projection")
+            continue
+        # Supplied cards are already compact. Do not truncate, relabel partial
+        # content, silently omit an overbound cited card, or read its source.
+        if not isinstance(row.get("body"), str) or len(row["body"]) > 2400:
+            raise ShadowError("shadow_context_size")
+        size = len(encoded(row).encode())
+        if size > remaining:
+            raise ShadowError("shadow_context_size")
+        cards.append(deepcopy(row))
+        seen[identifier] = row
+        remaining -= size
+    return cards
+
+
 class FoundryModel:
     def __init__(
         self,
@@ -243,6 +281,10 @@ class FoundryModel:
         projected_at = perf_counter()
         try:
             selected = phase_context(context, "triage" if repair is not None else phase)
+            if repair is not None and repair.get("patch_budget", {}).get("related_edit_group"):
+                selected["related_source_evidence"] = related_repair_evidence(
+                    context, repair, event["message_id"]
+                )
         except Exception as error:
             raise ModelFailure(
                 {
