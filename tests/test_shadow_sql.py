@@ -10564,6 +10564,7 @@ def test_sql_social_lost_page_ack_retains_exact_committed_evidence_without_rpc_r
     assert current["page"]["traversal"] == "initial_seed"
     assert store.state("x:cursor:" + user_id)["since"] == identifier
 
+
 def test_decision_evidence_budget_complete_audit_and_input_completion_persist_in_sql(
     mind, monkeypatch
 ):
@@ -10581,9 +10582,7 @@ def test_decision_evidence_budget_complete_audit_and_input_completion_persist_in
     # The selected synthetic rows really exist in SQL. Only selection is fixed
     # here; the real engine/compiler/budgeter and SqlMind commit remain in use.
     for row in evidence["retrieved_memories"]:
-        row["metadata"] = metadata(
-            row["metadata"]["record_id"], "memory", stamp(NOW), mind.trader
-        )
+        row["metadata"] = metadata(row["metadata"]["record_id"], "memory", stamp(NOW), mind.trader)
     with mind.transaction() as cur:
         for row in evidence["retrieved_memories"]:
             mind._insert(cur, row["metadata"], row["body"])
