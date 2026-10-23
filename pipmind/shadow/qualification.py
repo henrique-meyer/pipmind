@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from pipmind.contracts import loads, stamp, utc
 from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.service import NoRedirect
+from pipmind.shadow.sql import stream_transaction
 
 ACTIVE = "qualification:active"
 DIAGNOSTIC_CODES = frozenset(
@@ -26,6 +27,17 @@ DIAGNOSTIC_CODES = frozenset(
     }
 )
 LOGGER = logging.getLogger(__name__)
+
+
+def _active_spec(store):
+    """Read a committed capture hint; the existing writer rechecks it under lock."""
+    if not hasattr(store, "connect"):
+        return store.runtime(ACTIVE)
+    with stream_transaction(store.connect, "shadow:" + store.trader) as (cursor, _):
+        # Resolve the same target mind inside the read frame. An unsupported or
+        # mismatched target must refuse, never downgrade a failed snapshot.
+        store._head(cursor)
+        return store._runtime(cursor, ACTIVE)
 
 
 def open_fx_window(start):
@@ -253,7 +265,7 @@ class Recorder:
     def _capture(self, moment):
         live_clock = moment is None
         moment = moment or now()
-        spec = self.store.runtime(ACTIVE)
+        spec = _active_spec(self.store)
         if not spec or spec["state"] not in {"warming", "running"}:
             return
         self._run = spec["id"] if re.fullmatch(r"[a-z0-9-]{1,40}", spec["id"]) else None
