@@ -1,3 +1,21 @@
+## PIP-20 — Hosted throughput qualification
+
+In Progress: [PIP-20](https://nitro.atlassian.net/browse/PIP-20) now has an owner-authorized
+hosted qualification window. Begin with fresh actual revision, backlog, hold and
+configuration evidence. Qualify the selected reviewed merged backend release
+through the existing workflow, preserving allocation, identity/networking,
+landing, complete source prefixes and dependencies. Use fresh queues and dynamic
+pause/supersession controls; inspect any new hold before retrying.
+
+Verify six retained isolated model decisions and at least twenty minutes of
+durable-minute processing, with positive net drain in both halves, no hold/error
+and sample gaps at most 180 seconds before estimating clearance. Report arrivals
+and completions separately. Keep readiness at most 100 pending / 300 seconds lag,
+all existing memory/prompt/model/call/output/export bounds and 15-second stale
+flags. No history skipping, SQL pooling, mutable-state parallelism, new resource,
+capacity/quota/provider change, broker login, orders, X write or PIP-17 overlap.
+PIP-47 operational recovery remains separate from this read-only M4 stream.
+
 ## PIP-57 — Explicit Azure managed-PITR dry recovery composition
 
 Delivered: [PIP-57](https://nitro.atlassian.net/browse/PIP-57) adds a distinct
@@ -711,7 +729,7 @@ does not close its separate hosted qualification or operational activation gates
 | Priority | Work item | Scope | Milestone | Status |
 | --- | --- | --- | --- | --- |
 | P0 | [PIP-32](https://nitro.atlassian.net/browse/PIP-32) | Make shadow release resume atomic against source revision and holds | M4 | Done |
-| P0 | [PIP-20](https://nitro.atlassian.net/browse/PIP-20) | Qualify the processing-throughput correction on the selected release | M4 | To Do |
+| P0 | [PIP-20](https://nitro.atlassian.net/browse/PIP-20) | Qualify the processing-throughput correction on the selected release | M4 | In Progress |
 | P1 | [PIP-23](https://nitro.atlassian.net/browse/PIP-23) | Repeat current-prompt model evals and bounded-state growth checks | M4 | To Do |
 | P1 | [PIP-21](https://nitro.atlassian.net/browse/PIP-21) | Close or explicitly document source freshness, outage/backfill and callback gaps | M4 | To Do |
 | P1 | [PIP-22](https://nitro.atlassian.net/browse/PIP-22) | Verify broader read-only social roles before activating recipes | M4 | To Do |
