@@ -1,6 +1,6 @@
 """Private, bounded observations of saved feed checkpoints; never fetches sources."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from math import isfinite
 
 from pipmind.contracts import stamp, utc
@@ -16,6 +16,7 @@ from pipmind.feeds.store import (
 MAX_PAGE = 100
 MAX_RESPONSE_BYTES = 262144
 PRODUCERS = ("macro", "news", "social")
+MAX_QUALITY_COUNT = 1_000_000
 
 
 def mapping(value):
@@ -69,6 +70,84 @@ def source_keys(channel, recipe):
     return ["role:" + sid, "role:check:" + sid, "primary:status:" + sid, "primary:poll:" + sid]
 
 
+def reported_bool(value):
+    return value if type(value) is bool else None
+
+
+def reported_count(value, maximum=MAX_QUALITY_COUNT):
+    return value if type(value) is int and 0 <= value <= maximum else None
+
+
+def reported_date(value):
+    if type(value) is str and len(value) == 10 and value.isascii():
+        try:
+            if date.fromisoformat(value).isoformat() == value:
+                return value
+        except ValueError:
+            pass
+    return None
+
+
+def reported_timestamp(value):
+    # These checkpoints persist UTC ISO strings, not epoch numbers. Preserve
+    # existing read-state compatibility separately from this stricter metadata.
+    return timestamp(value) if type(value) is str else None
+
+
+def macro_provenance(quality, bootstrap, status, bootstrap_status):
+    facts = mapping(quality.get("quality"))
+    return {
+        "canonical_page": {
+            "status": status,
+            "captured_at": reported_timestamp(quality.get("checked_at")),
+            "stored_complete_history_claim": reported_bool(quality.get("complete_history_proven")),
+            "window_bounds": {"start_date": None, "end_date": None, "status": "not_retained"},
+            "provider_quality": {
+                "attribution": "provider_reported_not_independently_verified",
+                "quality_scope": "full_result"
+                if facts.get("quality_scope") == "full_result"
+                else None,
+                "latest_available_date": reported_date(facts.get("latest_available_date")),
+                **{
+                    field: reported_bool(facts.get(field))
+                    for field in (
+                        "requested_window_has_data",
+                        "page_includes_latest_available",
+                        "is_stale",
+                        "point_in_time_safe",
+                        "source_monitoring_complete",
+                        "known_source_gap",
+                    )
+                },
+                **{
+                    field: reported_count(facts.get(field))
+                    for field in (
+                        "row_count",
+                        "data_lag_days",
+                        "stale_after_days",
+                        "unverified_vintage_count",
+                        "unknown_publication_time_count",
+                        "announcement_datetime_count",
+                        "missing_announcement_datetime_count",
+                        "assumed_release_time_count",
+                        "bounded_release_time_count",
+                        "unbounded_release_time_count",
+                    )
+                },
+            },
+        },
+        "latest_seed": {
+            "status": bootstrap_status,
+            "captured_at": reported_timestamp(bootstrap.get("captured_at")),
+            "normalized_rows": reported_count(bootstrap.get("rows"), 500),
+            "stored_complete_history_claim": reported_bool(
+                bootstrap.get("complete_history_proven")
+            ),
+            "scope": "one_time_latest_seed_not_current_freshness",
+        },
+    }
+
+
 def macro_row(recipe, state):
     series = recipe["currency"] + ":" + recipe["indicator"]
     quality = mapping(mapping(state.get("canonical:quality")).get(series))
@@ -97,6 +176,7 @@ def macro_row(recipe, state):
         "success_scope": "canonical_page_only",
         "live_delivery_status": "unknown",
         "backfill": {"window_status": status, "latest_bootstrap_status": bootstrap_status},
+        **macro_provenance(quality, bootstrap, status, bootstrap_status),
         "retry_not_before_at": None,
     }
 
