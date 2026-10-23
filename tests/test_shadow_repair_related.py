@@ -16,7 +16,7 @@ from pipmind.shadow.maintenance import (
     validate_working,
     working_sizes,
 )
-from pipmind.shadow.model import FoundryModel
+from pipmind.shadow.model import FoundryModel, ModelFailure
 
 EVENT = "synthetic-p62-input"
 MOMENT = utc("2031-11-05T12:00:00Z")
@@ -334,3 +334,137 @@ def test_normal_decision_gets_claim_precision_without_collective_repair_permissi
     )
     assert "an inflation OUTLOOK is not an observed CPI actual" in captured["instructions"]
     assert "related_edit_group=true ONLY" not in captured["instructions"]
+
+
+def source_card(identifier, headline, *, partial=False):
+    return {
+        "metadata": {"record_id": identifier, "part": "memory", "ts": "2031-11-04T12:00:00Z"},
+        "body": encoded({"kind": "NewsEvent", "payload": {"headline": headline}}),
+        "partial": partial,
+    }
+
+
+def case_with_ambiguous_older_claim():
+    context, candidate, patch = related_case()
+    older = "synthetic-older-outlook"
+    vague = "Nov04:price pressures worse;Nov05:inflation outlook worse;unverified headlines."
+    context["working_memory"]["views"][6] = sized(vague, 298)
+    candidate["working_memory"]["views"][6] = sized(vague, 311)
+    candidate["evidence_ids"].append(older)
+    candidate["memory_dispositions"][0]["evidence_ids"].append(older)
+    card = source_card(older, "Nov04 bank official: inflation OUTLOOK worse; no current CPI actual")
+    context["retrieved_memories"] = [
+        card,
+        source_card("synthetic-unrelated", "Unrelated historical source must not enter correction"),
+        source_card(EVENT, "Current event already appears separately"),
+    ]
+    context["recent_journal"] = [
+        source_card(older, "Journal text must not be injected through this evidence path")
+    ]
+    return context, candidate, patch, card
+
+
+def test_each_dated_claim_restoration_receives_only_its_exact_cited_supplied_card():
+    context, candidate, patch, card = case_with_ambiguous_older_claim()
+    original = deepcopy((context, candidate, patch))
+    captured = request_for(context, candidate, patch)
+    selected = captured["prompt"]["context"]["related_source_evidence"]
+    assert selected == [card]
+    assert (context, candidate, patch) == original
+    assert captured["prompt"]["correction"]["candidate"] == candidate
+    text = encoded(captured["prompt"])
+    assert "Unrelated historical source" not in text and "Journal text must not" not in text
+    assert "Current event already appears separately" not in text
+    for phrase in (
+        "For EACH dated or attributed claim being edited",
+        "if BEFORE/candidate shorthand is vague",
+        "supplied retained source evidence explicitly establishes its category",
+        "retain or restore that category for THAT claim",
+        "rather than inheriting the ambiguity",
+        "An adjacent dated claim's category does not label an earlier claim",
+        "evidence is missing, partial or contradictory, preserve uncertainty",
+        "never guess a category",
+    ):
+        assert phrase in captured["instructions"]
+
+
+def test_partial_card_is_carried_exactly_without_reprojection_or_verification_upgrade():
+    context, candidate, patch, card = case_with_ambiguous_older_claim()
+    card["partial"] = True
+    card["body"] = 'Partial source: "outlook"; unexplained remainder unavailable'
+    captured = request_for(context, candidate, patch)
+    assert captured["prompt"]["context"]["related_source_evidence"] == [card]
+    assert captured["prompt"]["context"]["related_source_evidence"][0]["partial"] is True
+
+
+def test_missing_supplied_source_does_not_fetch_or_fabricate_category_evidence():
+    context, candidate, patch, _ = case_with_ambiguous_older_claim()
+    context["retrieved_memories"] = []
+    captured = request_for(context, candidate, patch)
+    assert captured["prompt"]["context"]["related_source_evidence"] == []
+    assert "Nov04 bank official" not in encoded(captured["prompt"])
+    assert "never guess a category" in captured["instructions"] and captured["tools"] == []
+
+
+def test_ineligible_single_entry_repair_keeps_source_cards_out_of_compact_context():
+    context, candidate, patch, _ = case_with_ambiguous_older_claim()
+    candidate["memory_dispositions"][1]["evidence_ids"] = ["synthetic-old-event"]
+    patch["replacements"].pop()
+    captured = request_for(context, candidate, patch)
+    assert "related_source_evidence" not in captured["prompt"]["context"]
+
+
+@pytest.mark.parametrize("fault", ["card_size", "aggregate_size", "conflicting_duplicate"])
+def test_related_source_bounds_or_conflicts_refuse_before_any_rpc(fault):
+    context, candidate, patch, card = case_with_ambiguous_older_claim()
+    if fault == "card_size":
+        card["body"] = "x" * 2401
+    elif fault == "aggregate_size":
+        context["retrieved_memories"] = []
+        for index in range(4):
+            identifier = f"synthetic-cited-card-{index}"
+            candidate["memory_dispositions"][0]["evidence_ids"].append(identifier)
+            extra = source_card(identifier, "Synthetic source")
+            extra["body"] = "x" * 2400
+            context["retrieved_memories"].append(extra)
+    else:
+        other = deepcopy(card)
+        other["body"] += " conflicting content"
+        context["retrieved_memories"].append(other)
+    original = deepcopy((context, candidate, patch))
+    with pytest.raises(ModelFailure) as caught:
+        request_for(context, candidate, patch)
+    trace = caught.value.trace
+    assert trace["attempted"] is False and trace["usage_unknown"] is False
+    assert trace["failure_code"] == "shadow_context_projection" and not trace["tools"]
+    assert (context, candidate, patch) == original
+
+
+def test_related_card_cannot_push_total_prompt_past_guard_before_factory_or_rpc():
+    context, candidate, patch, card = case_with_ambiguous_older_claim()
+    context["playbook"] = {"version": "synthetic", "text": ""}
+    without_card = deepcopy(context)
+    without_card["retrieved_memories"] = []
+    base = request_for(without_card, candidate, patch)
+    base_bytes = len((base["instructions"] + encoded(base["prompt"])).encode())
+    padding = 27950 - base_bytes
+    assert padding > 0
+    context["playbook"]["text"] = "p" * padding
+    without_card["playbook"] = deepcopy(context["playbook"])
+    fits = request_for(without_card, candidate, patch)
+    assert len((fits["instructions"] + encoded(fits["prompt"])).encode()) == 27950
+    factory_calls = []
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kwargs: factory_calls.append(kwargs),
+    )
+    with pytest.raises(ModelFailure) as caught:
+        asyncio.run(model.repair_memory({"message_id": EVENT}, context, candidate, None, MOMENT))
+    trace = caught.value.trace
+    assert trace["attempted"] is False and trace["usage_unknown"] is False
+    assert trace["failure_code"] == "shadow_context_size" and trace["prompt_bytes"] > 28000
+    assert trace["request"]["message"]["context"]["related_source_evidence"] == [card]
+    assert factory_calls == []
