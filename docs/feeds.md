@@ -87,6 +87,30 @@ X has only two allowed GET endpoints: selected user lookups and selected-user ti
 
 Initial identity resolution and a Sunday 16:00–20:00 UTC closed-market maintenance window verify accounts and holder recipes. Primary/fallback parse failures alert and leave saved holder/account state intact. A confirmed new holder retires the old personal account while retaining institutions; official profile links may nominate the new personal handle, which must match the holder name, role description and suitable verified type, with no parody/protected flag. An X lookup failure after a confirmed holder change disables the former personal selection rather than continuing to read it. Accounts' dormancy is checked from successful timeline evidence and reevaluated weekly; errors cannot silently mark an account dormant or erase its holder.
 
+Official association normally uses an exact outgoing X/Twitter HTML anchor on
+the configured official page. Institutional accounts can also use one top-level
+Schema.org `Organization` or `NewsMediaOrganization` JSON-LD object: its canonical
+root URL must have the configured publisher's exact HTTPS origin, and its direct
+`sameAs` must name the exact account. Nested authors, graphs, remote contexts,
+multiple publisher objects and conflicting X identities do not qualify. Personal
+accounts keep their existing holder/profile-link path; a generic publisher object
+cannot nominate them. Saved identity evidence distinguishes
+`official_profile_link` from `official_organization_same_as`.
+
+The four known Schema.org context strings (`https://schema.org` or
+`http://schema.org`, each with an optional trailing slash) are inert vocabulary
+identifiers only. They are never fetched, and other contexts do not qualify.
+
+This parser makes no extra request and executes no script. Existing one-million-
+byte page bounds remain; structured proof additionally permits at most 64 script
+tags, eight JSON-LD scripts, 64 KiB per script / 128 KiB combined, depth eight,
+64 JSON containers and 32 direct `sameAs` links. Malformed/duplicate-key JSON,
+ambiguous or oversized evidence refuses structured proof. An existing valid
+HTML anchor retains its original behavior. Association alone never bypasses API
+profile, verified-kind, role, parody or protected-account checks, and does not
+prove present control, source accuracy, current availability or coverage. No new
+source or recipe is activated by this capability.
+
 Event-window accounts are read only five minutes before through thirty minutes after cached high-impact calendar times. Additional intervention/headline windows require explicit evidence/configuration work; no headline keyword heuristic is implemented. A configured free public RSS/Atom mirror can be the primary social source. An X `backup` account is eligible only after that source fails or exceeds its configured quiet interval; no primary mirror endpoint is guessed. Feed-provided mirror summaries require explicit `primary_allow_summary` permission. Provider reads have no local spending cutoff; choosing/authorizing a real list and confirming charges, terms, API fields, role recipes and mirror reliability remain owner/live-validation work.
 
 ## Storage and deployment boundary
