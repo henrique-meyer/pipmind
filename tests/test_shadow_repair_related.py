@@ -16,7 +16,7 @@ from pipmind.shadow.maintenance import (
     validate_working,
     working_sizes,
 )
-from pipmind.shadow.model import FoundryModel, ModelFailure
+from pipmind.shadow.model import FoundryModel, ModelFailure, expand_repair_candidate
 
 EVENT = "synthetic-p62-input"
 MOMENT = utc("2031-11-05T12:00:00Z")
@@ -371,7 +371,13 @@ def test_each_dated_claim_restoration_receives_only_its_exact_cited_supplied_car
     selected = captured["prompt"]["context"]["related_source_evidence"]
     assert selected == [card]
     assert (context, candidate, patch) == original
-    assert captured["prompt"]["correction"]["candidate"] == candidate
+    correction = captured["prompt"]["correction"]
+    assert captured["prompt"]["context"]["working_memory"] == context["working_memory"]
+    assert encoded(
+        expand_repair_candidate(
+            correction["candidate"], context["working_memory"], correction["editable_keys"]
+        )
+    ) == encoded(candidate)
     text = encoded(captured["prompt"])
     assert "Unrelated historical source" not in text and "Journal text must not" not in text
     assert "Current event already appears separately" not in text

@@ -744,7 +744,7 @@ def test_overlong_entry_stays_scoped_when_total_and_topology_fit(field, count, u
     assert captured["tools"] == []
     assert captured["options"]["max_tokens"] == 4096 and model.timeout == 90
     assert captured["options"]["reasoning"] == {"effort": "low"}
-    assert trace["prompt_version"] == "shadow-repair-v22"
+    assert trace["prompt_version"] == "shadow-repair-v23"
 
 
 def test_repair_generation_headroom_does_not_mutate_later_normal_requests_or_hard_limits():
