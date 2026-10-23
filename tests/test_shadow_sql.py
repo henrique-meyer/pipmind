@@ -3259,7 +3259,8 @@ def test_qualification_freshness_uses_read_completion_not_earlier_request_time(m
 
 
 @pytest.mark.parametrize("failed", [False, True])
-def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, failed):
+@pytest.mark.parametrize("overflow", ["total", "full_views", "full_waiting_for"])
+def test_sql_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, failed, overflow):
     from types import SimpleNamespace
 
     from pipmind.shadow.common import encoded
@@ -3271,6 +3272,11 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
         "waiting_for": [f"Verified prerequisite {i}: " + "b" * 150 for i in range(5)],
         "position_theses": [],
     }
+    if overflow != "total":
+        before.update(
+            views=[f"USD condition {i}: uncertainty remains" for i in range(8)],
+            waiting_for=[f"Verify prerequisite {i}: not yet established" for i in range(8)],
+        )
     with mind.transaction() as c:
         mind._insert(
             c,
@@ -3288,16 +3294,32 @@ def test_sql_total_overflow_uses_full_consolidation_and_preserves_every_attempt(
         memory_dispositions=[],
         working_memory=deepcopy(before),
     )
-    candidate["working_memory"]["waiting_for"].append("New prerequisite: " + "c" * 200)
-    assert (
-        working_sizes(before)["total_bytes"]
-        <= 5000
-        < working_sizes(candidate["working_memory"])["total_bytes"]
-    )
-    assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
+    if overflow == "total":
+        candidate["working_memory"]["waiting_for"].append("New prerequisite: " + "c" * 200)
+        assert (
+            working_sizes(before)["total_bytes"]
+            <= 5000
+            < working_sizes(candidate["working_memory"])["total_bytes"]
+        )
+        assert max(working_sizes(candidate["working_memory"])["entry_bytes"].values()) <= 300
+    else:
+        field = overflow.removeprefix("full_")
+        candidate["working_memory"][field][0] += "; New prerequisite: " + "c" * 280
+        assert working_sizes(candidate["working_memory"])["total_bytes"] < 5000
+        assert len(candidate["working_memory"][field]) == 8
+        assert len(candidate["working_memory"][field][0].encode()) > 300
+    prerequisite_ids = "0,1,2,3,4" if overflow == "total" else "0,1,2,3,4,5,6,7"
     after = {
-        "views": ["USD conditions 0,1,2,3,4,5,6,7 remain uncertain"],
-        "waiting_for": ["Verify prerequisites 0,1,2,3,4 and new prerequisite; none resolved"],
+        "views": [
+            "USD conditions 0,1,2,3,4,5,6,7 remain uncertain"
+            + ("; new prerequisite pending" if overflow == "full_views" else "")
+        ],
+        "waiting_for": [
+            "Verify prerequisites "
+            + prerequisite_ids
+            + (" and new prerequisite" if overflow != "full_views" else "")
+            + "; none resolved"
+        ],
         "position_theses": [],
     }
 
