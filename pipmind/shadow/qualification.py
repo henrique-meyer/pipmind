@@ -1,11 +1,14 @@
 """Durable, private full-session capture. This never certifies M4 or sends orders."""
 
 import asyncio
+import logging
 import os
 import re
 from datetime import timedelta
 from pathlib import Path
+from time import monotonic
 from urllib.request import Request, build_opener
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pipmind.contracts import loads, stamp, utc
@@ -13,6 +16,16 @@ from pipmind.shadow.common import ShadowError, encoded, now
 from pipmind.shadow.service import NoRedirect
 
 ACTIVE = "qualification:active"
+DIAGNOSTIC_CODES = frozenset(
+    {
+        "shadow_store_busy",
+        "sql_unavailable",
+        "shadow_store_transaction_failed",
+        "qualification_outcome_bound",
+        "qualification_sample_bound",
+    }
+)
+LOGGER = logging.getLogger(__name__)
 
 
 def open_fx_window(start):
@@ -166,32 +179,111 @@ class Recorder:
         self.store, self.gateway, self.state = store, gateway, state
         self.feed_state = feed_state
         self.last_error = None
+        self._diagnostics = []
+        self._overflow = {"count": 0, "first_at": None, "last_at": None}
+        self._process = uuid4().hex
+        self._attempt = 0
+        self._run = self._slot = None
+
+    def _stage(self, name):
+        self._phase, self._phase_started = name, monotonic()
+
+    def _diagnostic_snapshot(self):
+        return {
+            "version": 1,
+            "process": self._process,
+            "prior_unpersisted_errors": "unknown_before_process_start",
+            "records": [dict(row) for row in self._diagnostics],
+            "overflow": dict(self._overflow),
+        }
+
+    def _drop_diagnostic(self, at):
+        self._overflow["count"] += 1
+        self._overflow["first_at"] = self._overflow["first_at"] or at
+        self._overflow["last_at"] = at
+
+    def _diagnose(self, error, *, outcome="capture_failed"):
+        code = str(error) if isinstance(error, ShadowError) else None
+        if code not in DIAGNOSTIC_CODES:
+            code = (
+                "shadow_error_other"
+                if isinstance(error, ShadowError)
+                else "local_io_error"
+                if isinstance(error, OSError)
+                else "invalid_value"
+                if isinstance(error, (ValueError, TypeError, KeyError))
+                else "unknown_error"
+            )
+        build = os.environ.get("BUILD_SHA", "")
+        record = {
+            "at": stamp(now()),
+            "attempt": self._attempt,
+            "build": build if re.fullmatch(r"[a-fA-F0-9]{40}", build) else None,
+            "run": self._run,
+            "slot": self._slot,
+            "stage": self._phase,
+            "code": code,
+            "outcome": "commit_unconfirmed" if self._phase == "commit_ack" else outcome,
+            "stage_seconds": round(max(0, monotonic() - self._phase_started), 6),
+            "attempt_seconds": round(max(0, monotonic() - self._started), 6),
+        }
+        if len(self._diagnostics) < 16:
+            self._diagnostics.append(record)
+        else:
+            self._drop_diagnostic(record["at"])
+        while len(encoded(self._diagnostic_snapshot()).encode()) > 8192 and self._diagnostics:
+            self._drop_diagnostic(self._diagnostics.pop()["at"])
+        try:
+            # Fixed fields/codes only; never include exception text or traceback.
+            LOGGER.warning("qualification_capture_diagnostic %s", encoded(record))
+        except Exception:
+            pass  # A broken logging handler must not replace the capture failure.
 
     def capture(self, moment=None):
+        self._attempt += 1
+        self._started = monotonic()
+        self._run = self._slot = None
+        self._stage("active_read")
+        try:
+            return self._capture(moment)
+        except Exception as error:
+            self._diagnose(error)
+            raise
+
+    def _capture(self, moment):
         live_clock = moment is None
         moment = moment or now()
         spec = self.store.runtime(ACTIVE)
         if not spec or spec["state"] not in {"warming", "running"}:
             return
+        self._run = spec["id"] if re.fullmatch(r"[a-z0-9-]{1,40}", spec["id"]) else None
         slot = int(moment.timestamp()) // spec["interval"]
+        self._slot = slot
         if spec["last_slot"] is not None and slot <= spec["last_slot"]:
             return
         sample = {"at": stamp(moment), "build": os.environ.get("BUILD_SHA"), "errors": []}
         try:
+            self._stage("shadow_status_read")
             sample["shadow"] = self.state()
+            self._stage("gateway_state_read")
             sample["broker"] = read_gateway(self.gateway, "/state")
+            self._stage("gateway_evidence_read")
             sample["order_evidence"] = read_gateway(self.gateway, "/evidence")
             if self.feed_state:
+                self._stage("feed_status_read")
                 sample["feeds"] = self.feed_state()
         except Exception as error:
             sample["errors"].append(type(error).__name__)
+            self._diagnose(error, outcome="sample_read_failed")
         # A broker worker can refresh its snapshot while these GETs run. Use
         # receipt completion for freshness, never compare a new response with
         # the earlier request-start clock and label it future/stale.
         if live_clock:
             moment = now()
             slot = int(moment.timestamp()) // spec["interval"]
+            self._slot = slot
             sample["at"] = stamp(moment)
+        self._stage("quote_age_projection")
         sample["quote_ages"] = {}
         for price in sample.get("broker", {}).get("prices", []):
             try:
@@ -202,7 +294,9 @@ class Recorder:
                 }
             except (KeyError, TypeError, ValueError):
                 pass  # The readiness check retains invalid/missing quote failures.
+        self._stage("capture_tx_enter")
         with self.store.transaction() as c:
+            self._stage("active_recheck")
             current = self.store._runtime(c, ACTIVE)
             if (
                 current["id"] != spec["id"]
@@ -210,6 +304,7 @@ class Recorder:
                 or (current["last_slot"] is not None and slot <= current["last_slot"])
             ):
                 return
+            self._stage("pending_age_read")
             c.execute(
                 "SELECT MIN(JSON_VALUE(envelope,'$.available_at')) FROM pm_inputs "
                 "WHERE trader=%s AND status='pending'",
@@ -220,11 +315,13 @@ class Recorder:
                 max(0, (moment - utc(oldest)).total_seconds()) if oldest else 0
             )
             sample["model_calls"] = []
+            self._stage("outcome_watermark_read")
             c.execute(
                 "SELECT COALESCE(MAX(pk),0) FROM pm_outcomes WHERE trader=%s", (self.store.trader,)
             )
             maximum = c.fetchone()[0]
             if current["from_outcome"] is not None:
+                self._stage("outcome_usage_read")
                 c.execute(
                     "SELECT TOP(1001) pk,JSON_VALUE(result,'$.status'),"
                     "JSON_QUERY(result,'$.usage') "
@@ -240,6 +337,7 @@ class Recorder:
                     sample["model_calls"].append({"pk": pk, "status": status, "calls": calls})
                 if len(sample["model_calls"]) > 1000:
                     raise ShadowError("qualification_outcome_bound")
+            self._stage("local_metrics_read")
             sample["memory_bytes"] = next(
                 (
                     int(Path(p).read_text())
@@ -276,7 +374,9 @@ class Recorder:
                     pass  # Process metrics are optional outside Linux or during a restart.
             cpu = Path("/sys/fs/cgroup/cpuacct/cpuacct.usage")
             sample["cpu_usage_ns"] = int(cpu.read_text()) if cpu.exists() else None
+            self._stage("feed_runtime_read")
             sample["feed_status"] = self.store._runtime(c, "feed_status", {})
+            self._stage("readiness_eval")
             sample["readiness"] = healthy(sample, current, moment)
             if sample["errors"]:
                 sample["readiness"].append("sample_read_failed")
@@ -314,10 +414,13 @@ class Recorder:
                         "capture_failed" if current["failures"] else "captured_pending_review"
                     )
             key = "qualification:" + current["id"] + ":sample:" + str(slot)
+            sample["capture_diagnostics"] = self._diagnostic_snapshot()
+            self._stage("sample_encode")
             if len(encoded(sample).encode()) > 2_097_152:
                 raise ShadowError("qualification_sample_bound")
             # Slot insertion and cursor advance are one transaction. Overlapping
             # single-app revisions cannot overwrite samples or silently skip one.
+            self._stage("sample_insert")
             c.execute(
                 "INSERT pm_runtime VALUES(%s,%s,%s)", (self.store.trader, key, encoded(sample))
             )
@@ -328,8 +431,13 @@ class Recorder:
                 from_outcome=maximum,
                 last_readiness=sample["readiness"],
             )
+            self._stage("active_write")
             self.store._set_runtime(c, ACTIVE, current)
-            self.last_error = None
+            self._stage("commit_ack")
+        # Only an acknowledged commit makes the queued diagnostics durable.
+        self._diagnostics.clear()
+        self._overflow = {"count": 0, "first_at": None, "last_at": None}
+        self.last_error = None
 
     async def run(self):
         while True:

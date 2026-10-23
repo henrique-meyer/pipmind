@@ -1,3 +1,14 @@
+## PIP-60 - Bounded recorder failure diagnostics
+
+Delivered: [PIP-60](https://nitro.atlassian.net/browse/PIP-60).
+Add bounded fixed-stage/code/timing recorder diagnostics carried into the next
+ordinary sample with its existing INSERT, plus sanitized existing logging. Keep
+legacy errors/readiness/capture gap/last_error semantics and uncertain-commit
+refusal unchanged. No extra SQL/provider/model/broker call, immediate retry,
+old-sample edit or new resource. Bound queue and report overflow explicitly;
+required offline and actual disposable SQL checks precede merge. PIP-20 owns
+fresh hosted attribution and qualification; no cause or clean day is inferred.
+
 ## PIP-58 — Bounded official publisher structured association links
 
 Delivered: [PIP-58](https://nitro.atlassian.net/browse/PIP-58) supports PIP-22
