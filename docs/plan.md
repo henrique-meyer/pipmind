@@ -30,6 +30,13 @@ multi-card and adversarial reconstruction/size tests, then repeat required actua
 SQL CI and fresh hosted validation before any guarded retry. An isolated model
 pass does not certify the next live candidate's prompt size or operational drain.
 
+In progress: add a separate conservative formatting fallback only for overlong
+selected related-repair entries. Preserve every lexical token and nonterminal
+punctuation mark, with exact removed-offset audit. Refuse ambiguous quotes, code,
+URLs and unsupported prose forms. Keep the existing formatter, fixed entries,
+normal/full paths and every hard limit unchanged. A format proof never substitutes
+for actual SQL, model semantic review or a qualified hosted run.
+
 ## PIP-61 - Coherent shadow status frame
 
 Delivered: [PIP-61](https://nitro.atlassian.net/browse/PIP-61).

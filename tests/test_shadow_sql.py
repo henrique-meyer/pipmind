@@ -340,6 +340,90 @@ def test_sql_total_budget_patch_keeps_history_and_derives_only_literal_mappings(
     )
 
 
+def test_sql_selected_note_formatting_journals_raw_proof_and_applied_text_durably(mind):
+    """Actual disposable SQL and scripted engine calls; no hosted/model RPC."""
+    from test_shadow_selected_note_formatting import synthetic_case
+
+    from pipmind.shadow.common import encoded
+    from pipmind.shadow.maintenance import entries, validate_working
+
+    context, _candidate, _patch = synthetic_case()
+    before = context["working_memory"]
+    positions = {
+        "schema_version": 1,
+        "as_of": MOMENT.isoformat(),
+        "positions": [{"instrument": "EUR/USD", "side": "buy", "size": 1}],
+    }
+    mind.contracts.validate("position-snapshot", positions)
+    with mind.transaction() as cur:
+        mind._insert(
+            cur,
+            metadata("note-source-proof", "memory", "2026-10-01T00:00:00Z", mind.trader),
+            "Every synthetic prerequisite remains unresolved",
+        )
+        mind._write_working(cur, before, MOMENT)
+        cur.execute(
+            "INSERT pm_runtime VALUES(%s,%s,%s)",
+            (mind.trader, "broker_snapshots", encoded({"positions": positions})),
+        )
+    activate_bounded(mind)
+    events, baseline = episode(mind)
+    event = events[0]
+    _context, candidate, patch = synthetic_case(event["message_id"])
+    baseline.responses[event["message_id"]]["reply"] = deepcopy(candidate)
+    baseline.responses[event["message_id"]]["triage"]["wake"] = True
+
+    class ScriptedRepair(FixtureModel):
+        repair_calls = 0
+
+        async def repair_memory(self, *args):
+            self.repair_calls += 1
+            return deepcopy(patch), {"phase": "memory_repair", "synthetic": True}
+
+    model = ScriptedRepair(baseline.responses)
+    retained_before = {
+        meta["record_id"]: (meta, body)
+        for meta, body in mind.retained()[1]
+        if meta["part"] != "working_memory"
+    }
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: MOMENT).step())
+    assert model.repair_calls == 1
+    reopened = SqlMind(mind.connect, mind.trader)
+    journal = reopened.outcome(event["message_id"])
+    audit = journal["memory_repair"]
+    after = reopened.head()["working"]
+    assert journal["dispatches"] == 0 and audit["candidate"] == candidate
+    assert audit["response"] == patch and audit["expanded_response"]["working_memory"] == after
+    raw = patch["replacements"][1]["text"].encode()
+    applied = after["waiting_for"][0].encode()
+    assert len(raw) == 302 and len(applied) == 300
+    proof = audit["patch_spacing_normalizations"]
+    assert len(proof) == 1 and proof[0]["key"] == "w0"
+    row = proof[0]
+    assert row["method"] == "selected-note-format-v1"
+    assert row["before_bytes"] == 302 and row["after_bytes"] == 300
+    assert row["before_sha256"] == digest(raw) and row["after_sha256"] == digest(applied)
+    reconstructed = bytearray(applied)
+    for offset in row["removed_utf8_offsets"]:
+        reconstructed.insert(offset, raw[offset])
+    assert bytes(reconstructed) == raw
+    assert not audit.get("format_only_normalizations")
+    for key, text in entries(candidate["working_memory"]).items():
+        if key not in {"v0", "w0"}:
+            assert entries(after)[key] == text
+    assert after["views"][0] == patch["replacements"][0]["text"]
+    assert after["position_theses"] == before["position_theses"]
+    assert all(
+        journal["reply"][key] == value
+        for key, value in candidate.items()
+        if key not in {"working_memory", "memory_dispositions"}
+    )
+    validate_working(after, MOMENT)
+    retained_after = {meta["record_id"]: (meta, body) for meta, body in reopened.retained()[1]}
+    assert all(retained_after[key] == value for key, value in retained_before.items())
+    assert reopened.outcome(event["message_id"]) == journal
+
+
 def episode(mind):
     events = deepcopy(CASE["events"])
     mind.accept(
