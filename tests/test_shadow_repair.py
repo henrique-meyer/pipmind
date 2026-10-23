@@ -848,6 +848,49 @@ def test_scoped_generation_headroom_never_relaxes_supplied_allocation(allocation
     assert model.contracts.schemas == normative
 
 
+def test_valid_total_scoped_repair_never_formats_fixed_entries_to_hide_escaped_overflow():
+    context, candidate, _ = example()
+    working = {
+        "views": ["x" * 301] + [f"View{i}: " + "A; B; C; " * 18 for i in range(7)],
+        "waiting_for": [f"Wait{i}: " + "D; E; F; " * 18 for i in range(8)],
+        "position_theses": [
+            {"instrument": "EUR/USD", "thesis": "Synthetic", "as_of": "2026-01-01T00:00:00Z"}
+        ],
+    }
+    padding = 4990 - working_sizes(working)["total_bytes"]
+    assert padding > 0
+    working["position_theses"][0]["thesis"] += "x" * padding
+    candidate["working_memory"] = working
+    context["working_memory"] = deepcopy(working)
+    context["working_memory"]["views"][0] = "x" * 300
+    candidate["memory_dispositions"] = [
+        {
+            "from": "v0",
+            "to": "v0",
+            "disposition": "updated",
+            "reason": "Synthetic candidate wording changed",
+            "evidence_ids": ["input"],
+        }
+    ]
+    assert repair_scope(working) == ["v0"]
+    patch = {
+        "replacements": [
+            {
+                "from": "v0",
+                "text": '"' * 300,
+                "reason": "Synthetic escaped overflow",
+                "evidence_ids": ["input"],
+            }
+        ]
+    }
+    expanded = expand_repair_patch(candidate, patch, "input", before=context["working_memory"])
+    for key, text in entries(working).items():
+        if key != "v0":
+            assert entries(expanded["working_memory"])[key] == text
+    with pytest.raises(ShadowError, match="working_memory_bound"):
+        validate_working(expanded["working_memory"], now())
+
+
 @pytest.mark.parametrize("full_field", ["views", "waiting_for"])
 def test_full_list_at_exact_utf8_limit_does_not_force_other_kind_to_consolidate(full_field):
     context, candidate, _ = example()

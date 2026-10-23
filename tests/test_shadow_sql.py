@@ -3260,7 +3260,7 @@ def test_qualification_freshness_uses_read_completion_not_earlier_request_time(m
 
 @pytest.mark.parametrize("failed", [False, True])
 @pytest.mark.parametrize("overflow", ["total", "full_views", "full_waiting_for"])
-def test_sql_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, failed, overflow):
+def test_sql_overflow_selects_minimal_scope_and_preserves_every_attempt(mind, failed, overflow):
     from types import SimpleNamespace
 
     from pipmind.shadow.common import encoded
@@ -3340,7 +3340,32 @@ def test_sql_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, 
         "memory_dispositions": mapping(before),
         "candidate_dispositions": mapping(candidate["working_memory"]),
     }
-    if failed:
+    if overflow != "total":
+        key = "v0" if field == "views" else "w0"
+        candidate["memory_dispositions"] = [
+            {
+                "from": key,
+                "to": key,
+                "disposition": "updated",
+                "reason": "Synthetic new prerequisite remains unresolved",
+                "evidence_ids": [event["message_id"]],
+            }
+        ]
+        after = deepcopy(candidate["working_memory"])
+        after[field][0] = before[field][0] + "; New prerequisite remains unresolved"
+        correction = {
+            "replacements": [
+                {
+                    "from": key,
+                    "text": after[field][0],
+                    "reason": "Synthetic concise wording preserves prerequisites",
+                    "evidence_ids": [event["message_id"]],
+                }
+            ]
+        }
+        if failed:
+            correction["replacements"][0]["from"] = key[0] + "1"
+    elif failed:
         correction["candidate_dispositions"].pop()
     requests = []
 
@@ -3372,8 +3397,14 @@ def test_sql_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, 
         asyncio.run(ShadowEngine(mind, Live(fixture.responses), clock=lambda: MOMENT).step())
         is not failed
     )
-    assert len(requests) == 1 and "editable_keys" not in requests[0][0]["correction"]
-    assert requests[0][0]["schema"]["$id"] == "urn:pipmind:schema:v1:memory-repair"
+    assert len(requests) == 1
+    if overflow == "total":
+        assert "editable_keys" not in requests[0][0]["correction"]
+        expected_schema = "memory-repair"
+    else:
+        assert requests[0][0]["correction"]["editable_keys"] == [key]
+        expected_schema = "memory-repair-patch"
+    assert requests[0][0]["schema"]["$id"] == "urn:pipmind:schema:v1:" + expected_schema
     assert requests[0][1]["max_tokens"] == 4096
     if failed:
         assert (
@@ -3387,6 +3418,12 @@ def test_sql_overflow_uses_full_consolidation_and_preserves_every_attempt(mind, 
         )
         result = mind.outcome(event["message_id"])
         assert result["status"] == "observed"
+        if overflow != "total":
+            assert all(
+                entries(mind.head()["working"])[other] == text
+                for other, text in entries(candidate["working_memory"]).items()
+                if other != key
+            )
     assert (
         result["memory_repair"]["candidate"] == candidate
         and result["memory_repair"]["response"] == correction

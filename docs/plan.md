@@ -26,6 +26,8 @@ consolidation remains for total or topology pressure, with its existing headroom
 Prove exact carry-forwards and refusal boundaries offline and in required SQL
 CI, then review a fresh actual retained correction before retrying the source.
 All original attempts, history, dependencies and hard limits remain preserved.
+If replacement escaping itself exceeds the total guard, refuse the correction
+instead of formatting fixed entries to make room.
 
 Generation headroom is advisory, never clipping or permission to lose meaning.
 Keep normal triage/decision schemas, mandatory theses, the single correction
