@@ -582,7 +582,7 @@ def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free
     requested = captured["message"]["schema"]["properties"]["replacements"]
     assert requested["minItems"] == requested["maxItems"] == 1
     assert requested["items"]["properties"]["from"]["enum"] == ["v0"]
-    assert requested["items"]["properties"]["text"]["maxLength"] == 200
+    assert requested["items"]["properties"]["text"]["maxLength"] == 280
     assert captured["message"]["correction"]["patch_budget"]["target_json_text_bytes"] == {
         "v0": 220
     }
@@ -699,8 +699,8 @@ def test_total_correction_requests_full_consolidation_with_both_mapping_sets():
 @pytest.mark.parametrize("field", ["views", "waiting_for"])
 @pytest.mark.parametrize("count", [7, 8])
 @pytest.mark.parametrize("unicode_text", [False, True])
-def test_overlong_entry_selects_full_only_when_its_own_kind_is_full(field, count, unicode_text):
-    context, candidate, correction = example()
+def test_overlong_entry_stays_scoped_when_total_and_topology_fit(field, count, unicode_text):
+    context, candidate, _ = example()
     candidate["working_memory"].update(
         views=[f"Distinct uncertainty {i}" for i in range(8)],
         waiting_for=[f"Unresolved prerequisite {i}" for i in range(8)],
@@ -724,9 +724,7 @@ def test_overlong_entry_selects_full_only_when_its_own_kind_is_full(field, count
     class Agent:
         async def run(self, message, *, options):
             captured.update(message=json.loads(message), options=options)
-            return SimpleNamespace(
-                text=encoded(correction if count == 8 else patch), usage_details={}
-            )
+            return SimpleNamespace(text=encoded(patch), usage_details={})
 
     def factory(**kwargs):
         captured.update(kwargs)
@@ -739,14 +737,14 @@ def test_overlong_entry_selects_full_only_when_its_own_kind_is_full(field, count
         model.repair_memory({"message_id": "input"}, context, candidate, None, now())
     )
     prompt = captured["message"]
-    expected = "memory-repair" if count == 8 else "memory-repair-patch"
+    expected = "memory-repair-patch"
     assert prompt["schema"]["$id"] == "urn:pipmind:schema:v1:" + expected
-    assert ("editable_keys" in prompt["correction"]) is (count == 7)
-    assert ("patch_budget" in prompt["correction"]) is (count == 7)
+    assert "editable_keys" in prompt["correction"]
+    assert "patch_budget" in prompt["correction"]
     assert captured["tools"] == []
     assert captured["options"]["max_tokens"] == 4096 and model.timeout == 90
     assert captured["options"]["reasoning"] == {"effort": "low"}
-    assert trace["prompt_version"] == "shadow-repair-v19"
+    assert trace["prompt_version"] == "shadow-repair-v20"
 
 
 def test_repair_generation_headroom_does_not_mutate_later_normal_requests_or_hard_limits():
@@ -846,8 +844,51 @@ def test_scoped_generation_headroom_never_relaxes_supplied_allocation(allocation
         )
     )
     text = captured["schema"]["properties"]["replacements"]["items"]["properties"]["text"]
-    assert text["maxLength"] == min(200, allocation)
+    assert text["maxLength"] == min(280, allocation)
     assert model.contracts.schemas == normative
+
+
+def test_valid_total_scoped_repair_never_formats_fixed_entries_to_hide_escaped_overflow():
+    context, candidate, _ = example()
+    working = {
+        "views": ["x" * 301] + [f"View{i}: " + "A; B; C; " * 18 for i in range(7)],
+        "waiting_for": [f"Wait{i}: " + "D; E; F; " * 18 for i in range(8)],
+        "position_theses": [
+            {"instrument": "EUR/USD", "thesis": "Synthetic", "as_of": "2026-01-01T00:00:00Z"}
+        ],
+    }
+    padding = 4990 - working_sizes(working)["total_bytes"]
+    assert padding > 0
+    working["position_theses"][0]["thesis"] += "x" * padding
+    candidate["working_memory"] = working
+    context["working_memory"] = deepcopy(working)
+    context["working_memory"]["views"][0] = "x" * 300
+    candidate["memory_dispositions"] = [
+        {
+            "from": "v0",
+            "to": "v0",
+            "disposition": "updated",
+            "reason": "Synthetic candidate wording changed",
+            "evidence_ids": ["input"],
+        }
+    ]
+    assert repair_scope(working) == ["v0"]
+    patch = {
+        "replacements": [
+            {
+                "from": "v0",
+                "text": '"' * 300,
+                "reason": "Synthetic escaped overflow",
+                "evidence_ids": ["input"],
+            }
+        ]
+    }
+    expanded = expand_repair_patch(candidate, patch, "input", before=context["working_memory"])
+    for key, text in entries(working).items():
+        if key != "v0":
+            assert entries(expanded["working_memory"])[key] == text
+    with pytest.raises(ShadowError, match="working_memory_bound"):
+        validate_working(expanded["working_memory"], now())
 
 
 @pytest.mark.parametrize("full_field", ["views", "waiting_for"])

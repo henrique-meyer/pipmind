@@ -16,22 +16,24 @@ flags. No history skipping, SQL pooling, mutable-state parallelism, new resource
 capacity/quota/provider change, broker login, orders, X write or PIP-17 overlap.
 PIP-47 operational recovery remains separate from this read-only M4 stream.
 
-Fresh preflight found a retained repair hold on the previous backend. A scoped
-correction repeated an oversized entry in a full eight-entry list. Select the
-existing full-consolidation correction when an overlong entry's same-kind list
-has no free slot, so the model can factor related content with complete BEFORE
-and candidate mappings. Keep the single correction call, all hard limits and
-fail-closed validation. Reproduce the failure offline, exercise success/refusal
-with actual disposable SQL, and validate the actual retained case in isolation
-before an exact audited owner retry. Keep every failed attempt and pending input.
+The isolated correction with generation headroom passed byte limits but failed
+semantic review: unrelated measurements and unresolved verification conditions
+were lost. Keep that result rejected. For a single oversized entry with valid
+total size and topology, prefer scoped correction even when its list has eight
+entries; copy every other entry exactly. Give only the scoped replacement a
+280-character generation ceiling within its calculated allocation. Full
+consolidation remains for total or topology pressure, with its existing headroom.
+Prove exact carry-forwards and refusal boundaries offline and in required SQL
+CI, then review a fresh actual retained correction before retrying the source.
+All original attempts, history, dependencies and hard limits remain preserved.
+If replacement escaping itself exceeds the total guard, refuse the correction
+instead of formatting fixed entries to make room.
 
-The first actual isolated full correction still exceeded several per-entry
-bounds. Add repair-only generation headroom in its requested schema: target
-200 characters while retaining the existing authoritative 300 UTF-8 byte guard.
-This is generation guidance, never clipping or permission to lose meaning. Keep
-normal triage/decision schemas, mandatory theses, call/output/time limits and all
-local validators unchanged. Preserve the failed live trial and require another
-isolated actual check plus semantic review before retrying the held source.
+Generation headroom is advisory, never clipping or permission to lose meaning.
+Keep normal triage/decision schemas, mandatory theses, the single correction
+call, output/time limits and all local validators unchanged. Retain complete
+BEFORE/candidate mappings and every failed attempt. A valid-size response alone
+does not authorize the exact audited owner retry or qualify a full shadow day.
 
 ## PIP-57 — Explicit Azure managed-PITR dry recovery composition
 

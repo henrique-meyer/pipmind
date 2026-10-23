@@ -103,7 +103,14 @@ def expand_repair_patch(candidate, patch, event_ref, *, before=None):
             field = "views" if key[0] == "v" else "waiting_for"
             index = int(key[1:])
             after[field][index] = punctuation_spacing(after[field][index])
-        if before is not None and len(encoded(after).encode()) > MAX_BYTES:
+        if (
+            before is not None
+            and len(encoded(original).encode()) > MAX_BYTES
+            and len(encoded(after).encode()) > MAX_BYTES
+        ):
+            # Only an already-overfull candidate may need separately audited
+            # carry-forward formatting. A scoped repair of valid-total state
+            # must never change a fixed entry to rescue its own escaped growth.
             for key, text in proposed.items():
                 if key in edits:
                     continue
