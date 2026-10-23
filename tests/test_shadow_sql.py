@@ -10563,3 +10563,76 @@ def test_sql_social_lost_page_ack_retains_exact_committed_evidence_without_rpc_r
     assert current["last_error_code"] == "timeline_commit_unconfirmed"
     assert current["page"]["traversal"] == "initial_seed"
     assert store.state("x:cursor:" + user_id)["since"] == identifier
+
+
+def test_decision_evidence_budget_complete_audit_and_input_completion_persist_in_sql(
+    mind, monkeypatch
+):
+    from pipmind.contracts import stamp
+    from pipmind.shadow.common import encoded
+    from tests.test_decision_budget_engine import BUILD, NOW, Model, Store
+
+    monkeypatch.setenv("BUILD_SHA", BUILD)
+    event = deepcopy(CASE["events"][0])
+    identifier = event["message_id"]
+    mind.accept("synthetic-budget", [{"sequence": 1, "event": event}], NOW)
+    mind.set_runtime("feed_status", {"coverage": "mandatory uncertainty " + "m" * 17000})
+    mind.set_paused(False)
+    evidence = deepcopy(Store().evidence)
+    # The selected synthetic rows really exist in SQL. Only selection is fixed
+    # here; the real engine/compiler/budgeter and SqlMind commit remain in use.
+    for row in evidence["retrieved_memories"]:
+        row["metadata"] = metadata(row["metadata"]["record_id"], "memory", stamp(NOW), mind.trader)
+    with mind.transaction() as cur:
+        for row in evidence["retrieved_memories"]:
+            mind._insert(cur, row["metadata"], row["body"])
+    original_context = mind.context
+    observed_contexts = []
+
+    def selected_context(*args, **kwargs):
+        actual = original_context(*args, **kwargs)
+        if kwargs.get("history", True):
+            actual.update(deepcopy(evidence))
+            observed_contexts.append(deepcopy(actual))
+        return actual
+
+    monkeypatch.setattr(mind, "context", selected_context)
+    before_head = mind.head()
+    model = Model()  # Explicit inert synthetic factory; no SDK or model network.
+    assert asyncio.run(ShadowEngine(mind, model, clock=lambda: NOW).step()) is True
+    assert len(model.requests) == 2 and model.factories == model.rpcs == 1
+    assert len(observed_contexts) == 1
+    result = mind.outcome(identifier)
+    audit = result["decision_evidence_budget"]
+    assert result["status"] == "observed" and result["dispatches"] == 0
+    assert result["context"]["retrieved_memories"] == evidence["retrieved_memories"]
+    assert result["context"]["feed_status"]["coverage"].endswith("m" * 17000)
+    assert encoded(result["context"]) == encoded(model.requests[0][1])
+    assert audit["original_refusal"] == model.refusals[0] == result["usage"][1]
+    assert audit["original_refusal"]["attempted"] is False
+    assert audit["before_prompt_bytes"] > 28000 >= audit["after_prompt_bytes"]
+    assert audit["after_context_sha256"] == digest(encoded(model.requests[1][1]))
+    assert result["usage"][2]["attempted"] is True
+    assert result["usage"][2]["input_tokens"] == 234
+    assert result["usage"][2]["output_tokens"] == 23
+    assert len(encoded(result).encode()) > 32768
+    for removed in audit["removed_rows"]:
+        assert removed["row"] == evidence[removed["field"]][removed["index"]]
+        assert removed["sha256"] == digest(encoded(removed["row"]))
+    # One actual SQL snapshot observes the completed input and both exact copies
+    # of the full result, rather than trusting a serialization-only test.
+    with mind.transaction() as cur:
+        cur.execute(
+            "SELECT i.status,o.result,r.body FROM pm_inputs i "
+            "JOIN pm_outcomes o ON o.trader=i.trader AND o.event_id=i.id "
+            "JOIN pm_records r ON r.trader=i.trader AND r.id=%s "
+            "WHERE i.trader=%s AND i.id=%s",
+            ("outcome:" + digest(identifier), mind.trader, identifier),
+        )
+        state, outcome_raw, journal_raw = cur.fetchone()
+    assert state == "complete" and outcome_raw == journal_raw == encoded(result)
+    assert mind.pending() is None and mind.head()["revision"] == before_head["revision"] + 1
+    retained = mind.retained()
+    with pytest.raises(ShadowError, match="shadow_input_not_pending"):
+        mind.commit(event, mind.head()["revision"], deepcopy(result), NOW)
+    assert mind.retained() == retained and mind.outcome(identifier) == result

@@ -1046,3 +1046,26 @@ data recovery; a future controlled restoration must also prove that only the
 intended engine has authority before order execution. No alternative operational
 recovery procedure or additional infrastructure is approved by this clarification.
 The dry code delivery does not activate orders or qualify a full shadow day.
+## PIP-67 — Complete decision prompt budget
+
+Status: [PIP-67](https://nitro.atlassian.net/browse/PIP-67), In Progress.
+Fit optional retrieved decision evidence within the unchanged
+28,000-byte complete prompt guard; preserve the 16,000-byte triage guard and every
+working-memory, model, call, output and history limit. An exact retained decision
+was refused before an RPC because optional cards plus mandatory state exceeded
+the complete prompt budget.
+
+Only a proven normal decision size refusal with no RPC and known usage may use
+one additional request assembly. Preserve all mandatory fields and restrict the
+new supplied evidence to an exact ordered subset of the original cards, preventing
+backfill and duplicate resurrection. Retain the original refusal, full original
+context, excluded rows and request hashes/bytes in SQL; native archive search and
+all dependencies remain available. Mandatory-state overflow continues to hold.
+This changes initial evidence selection, not the source history.
+
+Implement and test the independent budgeter and engine integration without
+editing PIP-17-owned files. Require meaningful offline retained-request and
+failure-path checks, actual disposable SQL CI, retained model/dependency checks
+and existing guarded held-source release controls before retrying the input.
+No automatic resume, new resource, capacity change, landing change or full-day
+qualification is implied.
