@@ -306,6 +306,7 @@ def main():
                     "-m",
                     "pytest",
                     "tests/test_shadow_sql.py",
+                    "tests/test_safety_recovery_managed_sql.py",
                     "-q",
                 ],
                 capture_output=True,

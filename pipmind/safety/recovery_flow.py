@@ -9,6 +9,7 @@ from dataclasses import asdict
 
 from pipmind.safety.admission import decode_request, encode_request
 from pipmind.safety.authority_sql import SqlAuthorityStore
+from pipmind.safety.azure_identity_sql import AzureDatabaseIdentity
 from pipmind.safety.checkpoint_sql import (
     Inventory,
     NativeBackupReference,
@@ -20,9 +21,16 @@ from pipmind.safety.checkpoint_sql import (
 from pipmind.safety.checkpoint_sql import (
     complete_required_locks as required_locks,
 )
-from pipmind.safety.incarnation import encode_incarnation
+from pipmind.safety.command_checkpoint_sql import capture_complete_restricted_in_transaction
+from pipmind.safety.identity_profiles import identity_sha256
+from pipmind.safety.incarnation import DatabaseIncarnation, encode_incarnation
 from pipmind.safety.integration_sql import SqlSafetyGateway, _lock
 from pipmind.safety.lease_sql import LeaseCommitUnknown, LeaseRefused, SqlLeaseStore
+from pipmind.safety.managed_restore import (
+    AzurePitrReference,
+    ManagedRestoreRefused,
+    validate_restored_reference,
+)
 from pipmind.safety.recovery_sql import Assignment, RecoveryCommitUnknown, SqlRecoveryStore
 
 
@@ -32,7 +40,29 @@ def _need(value, code):
 
 
 def incarnation_sha256(value):
+    if type(value) is AzureDatabaseIdentity:
+        return identity_sha256(value)
     return hashlib.sha256(encode_incarnation(value).encode("ascii")).hexdigest()
+
+
+def _inventory_profile(value):
+    _need(
+        type(value) is str and value in ("native-dbo-v1", "restricted-command-catalog-v1"),
+        "recovery_invalid_inventory_profile",
+    )
+    return value
+
+
+def _capture_inventory(cur, recovery, leases, profile):
+    # A closed choice of real readers, never caller-supplied inventory evidence.
+    if _inventory_profile(profile) == "restricted-command-catalog-v1":
+        return capture_complete_restricted_in_transaction(
+            cur,
+            recovery.binding,
+            leases.binding,
+            expected_database=leases.incarnation.database,
+        )
+    return capture_in_transaction(cur, recovery.binding, leases.binding)
 
 
 def _scope(authority, expected, leases, recovery):
@@ -144,15 +174,20 @@ class DryRecoveryCoordinator:
     require preparing a new plan. No table is truncated to make a plan fit.
     """
 
-    def __init__(self, authority, expected, leases, recovery):
+    def __init__(self, authority, expected, leases, recovery, *, inventory_profile="native-dbo-v1"):
+        self._inventory_profile = _inventory_profile(inventory_profile)
         _scope(authority, expected, leases, recovery)
         _need(expected.mode == "held", "recovery_hold_required")
         self.authority, self.expected = authority, expected
         self.leases, self.recovery = leases, recovery
 
+    @property
+    def inventory_profile(self):
+        return self._inventory_profile
+
     def _inventory(self, cur):
         _all_locks(cur, self.recovery, self.leases)
-        return capture_in_transaction(cur, self.recovery.binding, self.leases.binding)
+        return _capture_inventory(cur, self.recovery, self.leases, self.inventory_profile)
 
     def capture(self, grant):
         with self.authority.guard(self.expected, mode="held"):
@@ -167,13 +202,69 @@ class DryRecoveryCoordinator:
         matching metadata alone never proves a native backup exists.
         """
         _need(
-            type(inventory) is Inventory and type(backup) is NativeBackupReference,
+            type(inventory) is Inventory
+            and type(backup) is NativeBackupReference
+            and type(self.leases.incarnation) is DatabaseIncarnation
+            and type(self.authority.expected_incarnation) is DatabaseIncarnation
+            and (
+                self.expected.source_incarnation is None
+                or type(self.expected.source_incarnation) is DatabaseIncarnation
+            ),
             "recovery_invalid_checkpoint",
         )
         encode_inventory(inventory)
         backup.__post_init__()
         _need(
             backup.source_inventory_sha256 == inventory.sha256, "recovery_backup_inventory_mismatch"
+        )
+        with self.authority.guard(self.expected, mode="held"):
+            result = self.leases._run(self._inventory)
+            _need(result == inventory, "recovery_restored_state_mismatch")
+        return result
+
+    def verify_managed_restored(
+        self,
+        inventory,
+        reference,
+        *,
+        expected_source_identity,
+        management_receipt_sha256,
+        history_receipt_sha256,
+    ):
+        """Compare actual complete target state against separately trusted receipts.
+
+        A sidecar binds references only. Management-operation and complete-history
+        artifacts must be independently verified by the trusted caller. Neither
+        their hashes nor matching source lineage acknowledges either database's
+        lease barrier, changes authority, activates a robot or permits dispatch.
+        """
+        _need(
+            type(inventory) is Inventory
+            and type(reference) is AzurePitrReference
+            and type(expected_source_identity) is AzureDatabaseIdentity
+            and type(self.expected.source_incarnation) is AzureDatabaseIdentity
+            and self.expected.source_incarnation == expected_source_identity
+            and type(self.leases.incarnation) is AzureDatabaseIdentity
+            and type(self.authority.expected_incarnation) is AzureDatabaseIdentity
+            and self.expected.application_incarnation == self.leases.incarnation,
+            "recovery_invalid_managed_checkpoint",
+        )
+        encode_inventory(inventory)
+        try:
+            validate_restored_reference(
+                reference,
+                inventory_sha256=inventory.sha256,
+                source_identity=expected_source_identity,
+                target_identity=self.leases.incarnation,
+            )
+        except ManagedRestoreRefused:
+            raise LeaseRefused("recovery_managed_reference_mismatch") from None
+        _need(
+            type(management_receipt_sha256) is str
+            and type(history_receipt_sha256) is str
+            and reference.management_receipt_sha256 == management_receipt_sha256
+            and reference.history_receipt_sha256 == history_receipt_sha256,
+            "recovery_managed_receipt_mismatch",
         )
         with self.authority.guard(self.expected, mode="held"):
             result = self.leases._run(self._inventory)
@@ -259,6 +350,7 @@ class DryRecoveryCoordinator:
             attribution,
             assignment,
             _held=True,
+            inventory_profile=self.inventory_profile,
         )
         with self.authority.guard(self.expected, mode="held") as guard:
             result = wrapped._gateway.reconcile(grant, request)
@@ -298,10 +390,20 @@ class RecoveryAwareDryGateway:
     """
 
     def __init__(
-        self, authority, expected, gateway, recovery, attribution, assignment, *, _held=False
+        self,
+        authority,
+        expected,
+        gateway,
+        recovery,
+        attribution,
+        assignment,
+        *,
+        _held=False,
+        inventory_profile="native-dbo-v1",
     ):
         from pipmind.safety.attribution_sql import SqlAttributionStore
 
+        inventory_profile = _inventory_profile(inventory_profile)
         _need(
             type(gateway) is SqlSafetyGateway and type(attribution) is SqlAttributionStore,
             "recovery_invalid_gateway",
@@ -326,7 +428,7 @@ class RecoveryAwareDryGateway:
                 # transaction as reconciliation, while the external HELD guard
                 # spans its acknowledged commit and subsequent activation.
                 _all_locks(cur, recovery, leases)
-                inventory = capture_in_transaction(cur, recovery.binding, leases.binding)
+                inventory = _capture_inventory(cur, recovery, leases, inventory_profile)
                 counts = inventory.command_counts
                 _need(
                     counts is None or counts.unattempted + counts.attempted == 0,
