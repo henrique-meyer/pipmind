@@ -9,6 +9,17 @@ Offline and actual SQL regressions verify session settings, exact lock/resource,
 contention/release and rollback/commit/disposal. The rejected optimization remains
 recorded; no throughput improvement or hosted change is claimed.
 
+## PIP-58 — Bounded official publisher structured association links
+
+Delivered: [PIP-58](https://nitro.atlassian.net/browse/PIP-58) supports PIP-22
+with bounded top-level publisher organization JSON-LD `sameAs` association
+proof beside existing HTML anchors. Require the configured official publisher's
+canonical origin and an exact account URL; preserve all current profile, role,
+parody and read-only validation. Adversarial offline tests reject malformed,
+ambiguous, nested third-party and lookalike evidence. This delivery makes no
+provider call, activates no source, changes no hosted configuration and does not
+qualify PIP-22's current account identity or coverage gates.
+
 ## PIP-20 — Hosted throughput qualification
 
 The initial resumed fixed capture includes a feed-status read failure. Replace
