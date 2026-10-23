@@ -1,6 +1,19 @@
+## PIP-66 - Cached macro quality and seed provenance
+
+In Progress: [PIP-66](https://nitro.atlassian.net/browse/PIP-66) exposes fixed,
+bounded typed macro quality and latest-seed metadata already loaded by the
+coherent coverage frame. Preserve existing fields, query/key/response limits and
+unknown legacy facts; provider quality stays attributed and one-time seed capture
+does not prove currentness, released-as-of safety or complete history. Historical
+window bounds were not stored and remain unknown. No new SQL/provider request,
+write, configuration, endpoint, history or hosted change. Independent review,
+adversarial projection tests and full offline/actual SQL CI precede merge;
+PIP-21 retains actual source, continuity, callback and day qualification.
+
+
 ## PIP-65 - Bounded engine failure and stage diagnostics
 
-In Progress: [PIP-65](https://nitro.atlassian.net/browse/PIP-65) preserves fixed
+Delivered: [PIP-65](https://nitro.atlassian.net/browse/PIP-65) preserves fixed
 engine stages and safe refusal codes before the outer worker catch erases them,
 plus bounded monotonic operation timing/count aggregates for throughput profiling.
 Keep public step API, exceptions/cancellation, calls, commits, retries, history and
