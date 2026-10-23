@@ -3008,6 +3008,58 @@ def test_stream_snapshot_preserves_checkpoint_while_source_writer_commits(mind, 
         admin.close()
 
 
+def test_batched_transaction_setup_applies_options_and_owns_exclusive_lock(mind):
+    from pipmind.shadow.sql import transaction
+
+    resource = "test-setup-batch-" + uuid4().hex
+    with transaction(mind.connect, resource) as cur:
+        cur.execute(
+            "SELECT @@OPTIONS,transaction_isolation_level,@@TRANCOUNT,"
+            "APPLOCK_MODE('public',%s,'Transaction') "
+            "FROM sys.dm_exec_sessions WHERE session_id=@@SPID",
+            (resource,),
+        )
+        options, isolation, count, mode = cur.fetchone()
+        assert options & 512  # NOCOUNT
+        assert options & 16384  # XACT_ABORT
+        assert isolation == 4  # SERIALIZABLE
+        assert count >= 1 and mode == "Exclusive"
+
+
+def test_batched_transaction_lock_contention_refuses_then_releases(mind):
+    from pipmind.shadow.sql import transaction
+
+    resource = "test-batch-contention-" + uuid4().hex
+    with transaction(mind.connect, resource):
+        # A different transaction cannot obtain this same transaction-owned lock.
+        with pytest.raises(ShadowError, match="^shadow_store_busy$"):
+            with transaction(mind.connect, resource):
+                pytest.fail("contender must not receive an unlocked cursor")
+        # The failed contender is disposed; an unrelated resource still works.
+        with transaction(mind.connect, resource + "-independent") as cur:
+            cur.execute("SELECT 1")
+            assert cur.fetchone()[0] == 1
+    # Committing the owner releases the lock for a new fresh session.
+    with transaction(mind.connect, resource) as cur:
+        cur.execute("SELECT APPLOCK_MODE('public',%s,'Transaction')", (resource,))
+        assert cur.fetchone()[0] == "Exclusive"
+
+
+def test_batched_transaction_disposal_rolls_back_and_success_commits(mind):
+    from pipmind.shadow.sql import transaction
+
+    key = "batch-rollback-" + uuid4().hex
+    resource = "test-batch-rollback-" + uuid4().hex
+    with pytest.raises(ShadowError, match="^synthetic_batch_refusal$"):
+        with transaction(mind.connect, resource) as cur:
+            cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (mind.trader, key, "true"))
+            raise ShadowError("synthetic_batch_refusal")
+    assert mind.runtime(key) is None
+    with transaction(mind.connect, resource) as cur:
+        cur.execute("INSERT pm_runtime VALUES(%s,%s,%s)", (mind.trader, key, "true"))
+    assert mind.runtime(key) is True
+
+
 def test_closed_sql_session_keeps_original_error_and_rolls_back_staged_data(mind):
     from pipmind.shadow.sql import transaction
 
