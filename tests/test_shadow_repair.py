@@ -582,7 +582,7 @@ def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free
     requested = captured["message"]["schema"]["properties"]["replacements"]
     assert requested["minItems"] == requested["maxItems"] == 1
     assert requested["items"]["properties"]["from"]["enum"] == ["v0"]
-    assert requested["items"]["properties"]["text"]["maxLength"] == 300
+    assert requested["items"]["properties"]["text"]["maxLength"] == 200
     assert captured["message"]["correction"]["patch_budget"]["target_json_text_bytes"] == {
         "v0": 220
     }
@@ -664,12 +664,32 @@ def test_total_correction_requests_full_consolidation_with_both_mapping_sets():
     assert "patch_budget" not in prompt["correction"]
     assert prompt["correction"]["candidate_sizes"] == working_sizes(candidate["working_memory"])
     assert "schema_definitions" in prompt
+    for field in ("views", "waiting_for"):
+        assert (
+            prompt["schema"]["properties"]["working_memory"]["allOf"][1]["properties"][field][
+                "items"
+            ]["maxLength"]
+            == 200
+        )
+        assert (
+            prompt["schema_definitions"]["working-memory"]["properties"][field]["items"][
+                "maxLength"
+            ]
+            == 200
+        )
+        assert (
+            model.contracts.schemas["memory-repair"]["properties"]["working_memory"]["allOf"][1][
+                "properties"
+            ][field]["items"]["maxLength"]
+            == 300
+        )
     assert "factoring repeated" in captured["instructions"]
     assert "Reconsideration means" not in captured["instructions"]
     assert "monetary-policy versus broader-policy" in captured["instructions"]
     assert captured["tools"] == [] and captured["options"]["max_tokens"] == 4096
     assert model.timeout == 90
     assert captured["options"]["reasoning"] == {"effort": "low"}
+    assert "never clip text or omit meaning" in captured["instructions"]
     assert (
         model.contracts.schemas["memory-repair-patch"]["properties"]["replacements"]["maxItems"]
         == 16
@@ -726,7 +746,108 @@ def test_overlong_entry_selects_full_only_when_its_own_kind_is_full(field, count
     assert captured["tools"] == []
     assert captured["options"]["max_tokens"] == 4096 and model.timeout == 90
     assert captured["options"]["reasoning"] == {"effort": "low"}
-    assert trace["prompt_version"] == "shadow-repair-v18"
+    assert trace["prompt_version"] == "shadow-repair-v19"
+
+
+def test_repair_generation_headroom_does_not_mutate_later_normal_requests_or_hard_limits():
+    context, candidate = total_example()
+    _, _, correction = example()
+    prompts = []
+
+    class Agent:
+        async def run(self, message, *, options):
+            prompt = json.loads(message)
+            prompts.append(prompt)
+            if prompt["phase"] == "memory_repair":
+                response = correction
+            elif prompt["phase"] == "triage":
+                response = {"wake": True, "summary": "Synthetic relevant input"}
+            else:
+                response = {
+                    "action": "hold",
+                    "reasoning": "Synthetic uncertainty remains",
+                    "evidence_ids": [],
+                    "tool_calls": [],
+                    "working_memory": context["working_memory"],
+                }
+            return SimpleNamespace(text=encoded(response), usage_details={})
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kwargs: Agent(),
+    )
+    normative = deepcopy(model.contracts.schemas)
+    asyncio.run(model.repair_memory({"message_id": "input"}, context, candidate, None, now()))
+    asyncio.run(
+        model.decide(
+            {"message_id": "input"}, context, {"wake": True, "summary": "Synthetic"}, None, now()
+        )
+    )
+    asyncio.run(model.triage({"message_id": "input"}, context, None, now()))
+    assert model.contracts.schemas == normative == Contracts().schemas
+    assert (
+        prompts[0]["schema_definitions"]["working-memory"]["properties"]["views"]["items"][
+            "maxLength"
+        ]
+        == 200
+    )
+    normal_items = prompts[1]["schema_definitions"]["working-memory"]["properties"]["views"][
+        "items"
+    ]
+    assert all("maxLength" not in option for option in normal_items["anyOf"])
+    assert "schema_definitions" not in prompts[2]
+    assert prompts[2]["schema"] == normative["triage-result"]
+    assert (
+        prompts[1]["schema"]["properties"]["working_memory"]["$ref"]
+        == "urn:pipmind:wire:working-refs-v1"
+    )
+
+    # Generation headroom is advisory; the established local bound remains300 UTF-8 bytes.
+    for text in ("x" * 201, "x" * 300):
+        state = {"views": [text], "waiting_for": [], "position_theses": []}
+        validate_working(state, now())
+    with pytest.raises(ShadowError, match="working_memory_bound"):
+        validate_working({"views": ["é" * 151], "waiting_for": [], "position_theses": []}, now())
+
+
+@pytest.mark.parametrize("allocation", [120, 300])
+def test_scoped_generation_headroom_never_relaxes_supplied_allocation(allocation):
+    context, candidate, patch = patch_example()
+    captured = {}
+
+    class Agent:
+        async def run(self, message, *, options):
+            captured.update(json.loads(message))
+            return SimpleNamespace(text=encoded(patch), usage_details={})
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kwargs: Agent(),
+    )
+    normative = deepcopy(model.contracts.schemas)
+    asyncio.run(
+        model._call(
+            "memory_repair",
+            {"message_id": "input"},
+            context,
+            None,
+            now(),
+            repair={
+                "candidate": candidate,
+                "editable_keys": ["v0"],
+                "patch_budget": {"max_json_text_bytes": {"v0": allocation}},
+            },
+        )
+    )
+    text = captured["schema"]["properties"]["replacements"]["items"]["properties"]["text"]
+    assert text["maxLength"] == min(200, allocation)
+    assert model.contracts.schemas == normative
 
 
 @pytest.mark.parametrize("full_field", ["views", "waiting_for"])

@@ -563,7 +563,7 @@ The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.
 
-Repair prompt `shadow-repair-v18` uses full consolidation for total overflow
+Repair prompt `shadow-repair-v19` uses full consolidation for total overflow
 or an overlong entry whose same-kind list already has eight entries. A scoped
 patch cannot redistribute that packed entry into the other slots. The full
 correction retains complete BEFORE and candidate mappings; roomier lists retain
@@ -571,6 +571,16 @@ the scoped correction path. Lossless punctuation spacing is still tried first.
 The correction has the same single-call, timeout and output limits; failure
 remains an audited hold with its input pending. Hosted retained-case checks are
 required before claiming the new selection succeeds with the actual model.
+
+Repair request schemas target 200 characters per generated view/condition to
+leave room under the authoritative 300 UTF-8 byte entry limit. Scoped requests
+also respect a lower calculated allocation. These copied request definitions
+are generation guidance; stored schemas and local validators remain unchanged,
+including the 5,000-byte total and exact mandatory theses. Normal triage and
+decision requests keep their existing definitions. A model can still miss the
+target or lose meaning: refuse invalid results, preserve the attempt and review
+actual retained cases. Generation headroom never permits clipping or dropping
+an unresolved prerequisite.
 
 Earlier full-consolidation work addressed total overflow,
 even when counts and individual entries fit. Fixed-topology total patches

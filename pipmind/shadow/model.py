@@ -22,7 +22,16 @@ from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
 from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
 PROMPT_VERSION = "shadow-context-v16"
-REPAIR_PROMPT_VERSION = "shadow-repair-v18"
+REPAIR_PROMPT_VERSION = "shadow-repair-v19"
+REPAIR_TEXT_MAX_CHARACTERS = 200
+REPAIR_HEADROOM_INSTRUCTIONS = (
+    f" Repair generation uses at most {REPAIR_TEXT_MAX_CHARACTERS} characters per entry"
+    " as headroom, not a replacement for the hard 300 UTF-8 byte entry limit and"
+    " 5000 serialized UTF-8 byte total limit. Characters can occupy multiple bytes."
+    " Preserve every predicate, qualifier and dependency through explicit mappings;"
+    " never clip text or omit meaning to meet a target. This guidance does not"
+    " guarantee compliance; local validation still refuses an invalid correction."
+)
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -267,9 +276,17 @@ class FoundryModel:
             replacements["minItems"] = replacements["maxItems"] = len(repair["editable_keys"])
             properties = replacements["items"]["properties"]
             properties["from"]["enum"] = repair["editable_keys"]
-            properties["text"]["maxLength"] = max(
-                repair["patch_budget"]["max_json_text_bytes"].values()
+            properties["text"]["maxLength"] = min(
+                REPAIR_TEXT_MAX_CHARACTERS,
+                max(repair["patch_budget"]["max_json_text_bytes"].values()),
             )
+        elif repair is not None:
+            # Keep the visible inline constraint consistent with the copied
+            # referenced definition; neither changes the local audit contract.
+            schema = deepcopy(schema)
+            working = schema["properties"]["working_memory"]["allOf"][1]["properties"]
+            for field in ("views", "waiting_for"):
+                working[field]["items"]["maxLength"] = REPAIR_TEXT_MAX_CHARACTERS
         prompt = {
             "phase": phase,
             "now": stamp(moment),
@@ -287,6 +304,13 @@ class FoundryModel:
                 "working-memory": self.contracts.schemas["working-memory"],
                 "memory-dispositions": self.contracts.schemas["memory-dispositions"],
             }
+            if repair is not None:
+                # Generation headroom only: never mutate normative schemas or
+                # narrow normal decision requests or the local UTF-8 validators.
+                working = deepcopy(prompt["schema_definitions"]["working-memory"])
+                for field in ("views", "waiting_for"):
+                    working["properties"][field]["items"]["maxLength"] = REPAIR_TEXT_MAX_CHARACTERS
+                prompt["schema_definitions"]["working-memory"] = working
             if references_enabled:
                 prompt["schema_definitions"]["working-memory"] = wire_schema(
                     prompt["schema_definitions"]["working-memory"]
@@ -314,6 +338,7 @@ class FoundryModel:
             + (TRIAGE_INSTRUCTIONS if phase == "triage" else "")
             + (
                 (PATCH_INSTRUCTIONS if repair.get("editable_keys") else REPAIR_INSTRUCTIONS)
+                + REPAIR_HEADROOM_INSTRUCTIONS
                 if repair is not None
                 else ""
             )

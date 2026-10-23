@@ -25,6 +25,14 @@ fail-closed validation. Reproduce the failure offline, exercise success/refusal
 with actual disposable SQL, and validate the actual retained case in isolation
 before an exact audited owner retry. Keep every failed attempt and pending input.
 
+The first actual isolated full correction still exceeded several per-entry
+bounds. Add repair-only generation headroom in its requested schema: target
+200 characters while retaining the existing authoritative 300 UTF-8 byte guard.
+This is generation guidance, never clipping or permission to lose meaning. Keep
+normal triage/decision schemas, mandatory theses, call/output/time limits and all
+local validators unchanged. Preserve the failed live trial and require another
+isolated actual check plus semantic review before retrying the held source.
+
 ## PIP-57 — Explicit Azure managed-PITR dry recovery composition
 
 Delivered: [PIP-57](https://nitro.atlassian.net/browse/PIP-57) adds a distinct
