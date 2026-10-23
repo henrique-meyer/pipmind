@@ -1091,23 +1091,34 @@ class SqlMind:
             ],
         }
 
+    def _status(self, cur):
+        head = self._head(cur)
+        cur.execute("SELECT COUNT(*) FROM pm_outcomes WHERE trader=%s", (self.trader,))
+        outcomes = cur.fetchone()[0]
+        cur.execute(
+            "SELECT COUNT(*) FROM pm_inputs WHERE trader=%s AND status='pending'",
+            (self.trader,),
+        )
+        return {
+            "mode": "shadow",
+            "paused": head["paused"],
+            "revision": head["revision"],
+            "outcomes": outcomes,
+            "pending": cur.fetchone()[0],
+            "dispatches": 0,
+            "reasoning_hold": self._runtime(cur, "reasoning_hold"),
+        }
+
     def status(self):
         with self.transaction() as cur:
-            head = self._head(cur)
-            cur.execute("SELECT COUNT(*) FROM pm_outcomes WHERE trader=%s", (self.trader,))
-            outcomes = cur.fetchone()[0]
-            cur.execute(
-                "SELECT COUNT(*) FROM pm_inputs WHERE trader=%s AND status='pending'",
-                (self.trader,),
-            )
+            return self._status(cur)
+
+    def status_frame(self):
+        """Existing status and qualification ACTIVE from one source-locked view."""
+        with self.transaction() as cur:
             return {
-                "mode": "shadow",
-                "paused": head["paused"],
-                "revision": head["revision"],
-                "outcomes": outcomes,
-                "pending": cur.fetchone()[0],
-                "dispatches": 0,
-                "reasoning_hold": self._runtime(cur, "reasoning_hold"),
+                "status": self._status(cur),
+                "qualification": self._runtime(cur, "qualification:active"),
             }
 
     def outcome(self, identifier):

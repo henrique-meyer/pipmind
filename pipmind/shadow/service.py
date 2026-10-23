@@ -563,7 +563,16 @@ def create_app(
 
     @app.get("/status")
     def status():
-        state = store.status()
+        frame_reader = getattr(store, "status_frame", None)
+        use_frame = callable(frame_reader)
+        frame = frame_reader() if use_frame else None
+        if use_frame and (
+            not isinstance(frame, dict)
+            or set(frame) != {"status", "qualification"}
+            or not isinstance(frame["status"], dict)
+        ):
+            raise ShadowError("shadow_store_transaction_failed")
+        state = frame["status"] if use_frame else store.status()
         loop_alive = lifecycle["task"] is not None and not lifecycle["task"].done()
         supervisor_alive = lifecycle["watcher"] is not None and not lifecycle["watcher"].done()
         return {
@@ -571,7 +580,9 @@ def create_app(
             **runtime,
             **(
                 {
-                    "qualification": store.runtime("qualification:active"),
+                    "qualification": frame["qualification"]
+                    if use_frame
+                    else store.runtime("qualification:active"),
                     "qualification_recorder": {
                         "alive": lifecycle.get("qualification") is not None
                         and not lifecycle["qualification"].done(),

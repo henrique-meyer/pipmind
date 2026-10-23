@@ -1,3 +1,13 @@
+## PIP-61 - Coherent shadow status frame
+
+Delivered: [PIP-61](https://nitro.atlassian.net/browse/PIP-61).
+Read existing shadow status and qualification ACTIVE in one coherent locked SQL
+frame, avoiding a redundant connection/lock cycle while preserving status shape,
+authentication, worker fields, legacy store.status behavior and fallback. No
+cache, isolation/timeout/owner-control/history/DDL/model/hosting change. Required
+offline and actual disposable SQL checks precede merge; PIP-20 separately
+measures any hosted effect and qualification.
+
 ## PIP-59 - SQL session setup regression guards
 
 Delivered: [PIP-59](https://nitro.atlassian.net/browse/PIP-59) preserves the
