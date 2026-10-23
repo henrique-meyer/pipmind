@@ -5,6 +5,7 @@ from copy import deepcopy
 from pipmind.contracts import ContractError, Contracts, event_id, stamp, utc, validate_event
 from pipmind.shadow.common import ShadowError, now
 from pipmind.shadow.context import event_query
+from pipmind.shadow.decision_budget import fit_decision_evidence
 from pipmind.shadow.maintenance import (
     POLICY,
     entries,
@@ -300,9 +301,27 @@ class ShadowEngine:
                     {"phase": "decision", "attempted": True, "usage_unknown": True}
                 )
                 with self._diagnostics.operation("decision"):
-                    reply, usage = await self.model.decide(
-                        deepcopy(event), deepcopy(context), triage, self.store, moment
-                    )
+                    try:
+                        reply, usage = await self.model.decide(
+                            deepcopy(event), deepcopy(context), triage, self.store, moment
+                        )
+                    except ModelFailure as error:
+                        # The only eligible failure occurred before any RPC.
+                        # Keep that exact refusal and original context in the audit.
+                        result["usage"][-1] = deepcopy(error.trace)
+                        fitted = fit_decision_evidence(event, context, triage, moment, error.trace)
+                        if fitted is None:
+                            raise
+                        decision_context, audit = fitted
+                        result["decision_evidence_budget"] = audit
+                        result["usage"].append(
+                            {"phase": "decision", "attempted": True, "usage_unknown": True}
+                        )
+                        # One additional assembly, never a transport retry. The
+                        # unchanged model guard still runs before its sole RPC.
+                        reply, usage = await self.model.decide(
+                            deepcopy(event), decision_context, triage, self.store, moment
+                        )
                 result["usage"][-1] = usage
                 result["model_reply"] = deepcopy(reply)
                 self.contracts.validate("model-reply", reply)
