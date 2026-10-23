@@ -10637,4 +10637,3 @@ def test_decision_evidence_budget_complete_audit_and_input_completion_persist_in
     with pytest.raises(ShadowError, match="shadow_input_not_pending"):
         mind.commit(event, mind.head()["revision"], deepcopy(result), NOW)
     assert mind.retained() == retained and mind.outcome(identifier) == result
-
