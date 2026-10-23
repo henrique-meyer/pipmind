@@ -21,6 +21,15 @@ current event already present. No new retrieval, SQL, tools or model calls; reta
 card bounds and fail before RPC at the existing prompt guard. Preserve uncertainty
 when source evidence is absent. Retain exact unrelated state and all limits.
 
+In progress: make the scoped correction request losslessly avoid duplicated
+unchanged candidate text using explicit references to the once-supplied BEFORE
+working state. Prove exact reconstruction before inference; retain every selected
+string, disposition, source card, qualifier and thesis. Keep normal decision,
+triage and full-consolidation behavior and all guards unchanged. Add retained-shape
+multi-card and adversarial reconstruction/size tests, then repeat required actual
+SQL CI and fresh hosted validation before any guarded retry. An isolated model
+pass does not certify the next live candidate's prompt size or operational drain.
+
 ## PIP-61 - Coherent shadow status frame
 
 Delivered: [PIP-61](https://nitro.atlassian.net/browse/PIP-61).

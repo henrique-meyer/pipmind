@@ -12,6 +12,7 @@ from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
 from pipmind.shadow.maintenance import (
     MAX_BYTES,
+    MAX_ENTRIES,
     POLICY,
     repair_budget,
     working_sizes,
@@ -20,7 +21,19 @@ from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
 from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
 PROMPT_VERSION = "shadow-context-v18"
-REPAIR_PROMPT_VERSION = "shadow-repair-v22"
+REPAIR_PROMPT_VERSION = "shadow-repair-v23"
+REPAIR_CANDIDATE_ENCODING = "same-index-before-refs-v1"
+REPAIR_CANDIDATE_INSTRUCTIONS = (
+    " correction.candidate_working_memory_encoding=same-index-before-refs-v1 means"
+    " candidate working_memory.views/waiting_for integer i copies the COMPLETE"
+    " literal context.working_memory BEFORE entry in the SAME list at index i EXACTLY."
+    " BEFORE is supplied as ordinary strings, not phrase encoding, on this path."
+    " Each integer occurs only at its own index in an unselected unchanged entry;"
+    " selected candidate entries remain complete literal strings. Expand references"
+    " mentally before interpreting the candidate; no text, prerequisite or qualifier"
+    " is omitted. Candidate theses, dispositions and decision fields are unchanged."
+    " This is request compression only: return the ordinary scoped replacements."
+)
 REPAIR_TEXT_MAX_CHARACTERS = 200
 REPAIR_PATCH_MAX_CHARACTERS = 280
 REPAIR_HEADROOM_INSTRUCTIONS = (
@@ -229,6 +242,58 @@ def related_repair_evidence(context, repair, current_event):
     return cards
 
 
+def expand_repair_candidate(candidate, before, editable_keys):
+    """Pure request decoding: only same-index unselected BEFORE references exist."""
+    if (
+        not isinstance(candidate, dict)
+        or not isinstance(candidate.get("working_memory"), dict)
+        or not isinstance(before, dict)
+        or not isinstance(editable_keys, list)
+        or any(not isinstance(key, str) for key in editable_keys)
+    ):
+        raise ShadowError("shadow_repair_candidate_reference")
+    result = deepcopy(candidate)
+    selected = set(editable_keys)
+    for field, prefix in (("views", "v"), ("waiting_for", "w")):
+        original, rows = before.get(field), result.get("working_memory", {}).get(field)
+        if (
+            not isinstance(original, list)
+            or not isinstance(rows, list)
+            or not len(original) == len(rows) <= MAX_ENTRIES
+            or any(not isinstance(text, str) for text in original)
+        ):
+            raise ShadowError("shadow_repair_candidate_reference")
+        for index, value in enumerate(rows):
+            if isinstance(value, str):
+                continue
+            if type(value) is not int or value != index or prefix + str(index) in selected:
+                raise ShadowError("shadow_repair_candidate_reference")
+            rows[index] = original[index]
+    if any(
+        not isinstance(key, str)
+        or not re.fullmatch(r"[vw][0-7]", key)
+        or int(key[1:]) >= len(before["views" if key[0] == "v" else "waiting_for"])
+        for key in selected
+    ):
+        raise ShadowError("shadow_repair_candidate_reference")
+    return result
+
+
+def project_repair_candidate(candidate, before, editable_keys):
+    """Replace duplicated literals only after proving exact canonical reconstruction."""
+    result = deepcopy(candidate)
+    # Validate topology/types even if no text is eligible for reference encoding.
+    expand_repair_candidate(result, before, editable_keys)
+    selected = set(editable_keys)
+    for field, prefix in (("views", "v"), ("waiting_for", "w")):
+        for index, text in enumerate(result["working_memory"][field]):
+            if prefix + str(index) not in selected and text == before[field][index]:
+                result["working_memory"][field][index] = index
+    if encoded(expand_repair_candidate(result, before, editable_keys)) != encoded(candidate):
+        raise ShadowError("shadow_repair_candidate_reference")
+    return result
+
+
 class FoundryModel:
     def __init__(
         self,
@@ -285,6 +350,16 @@ class FoundryModel:
                 selected["related_source_evidence"] = related_repair_evidence(
                     context, repair, event["message_id"]
                 )
+                # BEFORE appears once as literal strings on this request-only path;
+                # every candidate reference can therefore be expanded unambiguously.
+                selected["working_memory"] = deepcopy(context["working_memory"])
+                wire_repair = deepcopy(repair)
+                wire_repair["candidate"] = project_repair_candidate(
+                    repair["candidate"], selected["working_memory"], repair["editable_keys"]
+                )
+                wire_repair["candidate_working_memory_encoding"] = REPAIR_CANDIDATE_ENCODING
+            else:
+                wire_repair = repair
         except Exception as error:
             raise ModelFailure(
                 {
@@ -385,7 +460,7 @@ class FoundryModel:
                     prompt["schema_definitions"]["working-memory"]
                 )
         if repair is not None:
-            prompt["correction"] = repair
+            prompt["correction"] = wire_repair
         message = encoded(prompt)
         instructions, memory_instructions = INSTRUCTIONS, MEMORY_INSTRUCTIONS
         if references_enabled:
@@ -419,6 +494,11 @@ class FoundryModel:
             + (
                 RELATED_PATCH_INSTRUCTIONS
                 if repair is not None and repair.get("patch_budget", {}).get("related_edit_group")
+                else ""
+            )
+            + (
+                REPAIR_CANDIDATE_INSTRUCTIONS
+                if repair is not None and wire_repair.get("candidate_working_memory_encoding")
                 else ""
             )
             + (
