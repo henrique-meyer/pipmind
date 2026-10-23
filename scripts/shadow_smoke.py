@@ -309,6 +309,7 @@ def main():
                     "tests/test_safety_recovery_managed_sql.py",
                     "tests/test_feed_read_frames_sql.py",
                     "tests/test_shadow_status_frame_sql.py",
+                    "tests/test_shadow_recorder_diagnostics_sql.py",
                     "-q",
                 ],
                 capture_output=True,
