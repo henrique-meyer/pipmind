@@ -10,12 +10,19 @@ from urllib.parse import urlsplit
 from pipmind.contracts import Contracts, stamp
 from pipmind.shadow.common import ShadowError, bounded_json, encoded
 from pipmind.shadow.context import CONTEXT_VERSION, phase_context, record_view
-from pipmind.shadow.maintenance import MAX_BYTES, POLICY, repair_budget, working_sizes
+from pipmind.shadow.maintenance import (
+    MAX_BYTES,
+    MAX_ENTRIES,
+    MAX_TEXT_BYTES,
+    POLICY,
+    repair_budget,
+    working_sizes,
+)
 from pipmind.shadow.working_refs import INSTRUCTIONS as REFERENCE_INSTRUCTIONS
 from pipmind.shadow.working_refs import SCHEMA_ID, VERSION, expand_reply, wire_schema
 
 PROMPT_VERSION = "shadow-context-v16"
-REPAIR_PROMPT_VERSION = "shadow-repair-v17"
+REPAIR_PROMPT_VERSION = "shadow-repair-v18"
 CALENDAR_INSTRUCTIONS = (
     "For a daily brief, use search_memory with the supplied calendar record_id and a "
     "currency/date or event-title focus to inspect relevant upcoming schedule and consensus. "
@@ -478,15 +485,19 @@ class FoundryModel:
 
     async def repair_memory(self, event, context, candidate, store, moment):
         sizes = working_sizes(candidate["working_memory"])
-        # Total overflow needs whole-state consolidation. Fixed-topology patches
-        # repeatedly returned the same dense catalogue just above the limit.
+        # A full same-kind list also needs room to redistribute an overlong
+        # entry's dependencies. Fixed-topology patches can only rewrite that
+        # dense slot, whereas full consolidation must map every retained entry.
         # Lossless spacing is still tried before this RPC by the engine; scoped
         # patches remain appropriate for isolated overlong entries.
-        budget = (
-            repair_budget(candidate["working_memory"])
-            if sizes["total_bytes"] <= MAX_BYTES
-            else None
+        needs_consolidation = sizes["total_bytes"] > MAX_BYTES or any(
+            len(candidate["working_memory"][field]) >= MAX_ENTRIES
+            and any(
+                len(text.encode()) > MAX_TEXT_BYTES for text in candidate["working_memory"][field]
+            )
+            for field in ("views", "waiting_for")
         )
+        budget = None if needs_consolidation else repair_budget(candidate["working_memory"])
         return await self._call(
             "memory_repair",
             event,

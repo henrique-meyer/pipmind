@@ -563,7 +563,16 @@ The committed entry limit remains **300 UTF-8 bytes**, never 1,000 characters.
 The exact candidate, raw patch, expanded applied text and spacing conversions
 remain auditable; residual overflow or any dependency/transition fault holds.
 
-Repair prompt `shadow-repair-v17` uses full consolidation for total overflow,
+Repair prompt `shadow-repair-v18` uses full consolidation for total overflow
+or an overlong entry whose same-kind list already has eight entries. A scoped
+patch cannot redistribute that packed entry into the other slots. The full
+correction retains complete BEFORE and candidate mappings; roomier lists retain
+the scoped correction path. Lossless punctuation spacing is still tried first.
+The correction has the same single-call, timeout and output limits; failure
+remains an audited hold with its input pending. Hosted retained-case checks are
+required before claiming the new selection succeeds with the actual model.
+
+Earlier full-consolidation work addressed total overflow,
 even when counts and individual entries fit. Fixed-topology total patches
 repeatedly returned the same dense catalogue above the bound. Consolidation may
 factor repeated qualifications with explicitly named scope and same-kind merges;

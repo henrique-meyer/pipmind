@@ -596,13 +596,18 @@ def test_actual_scoped_request_uses_patch_schema_and_single_low_effort_tool_free
     assert trace["output_tokens"] == 80 and trace["max_output_tokens"] == 4096
 
 
-def test_punctuation_spacing_repairs_small_overflow_without_rpc_or_lexical_loss():
+@pytest.mark.parametrize("full_views", [False, True])
+def test_punctuation_spacing_repairs_small_overflow_without_rpc_or_lexical_loss(full_views):
     import re
 
     context, candidate, _ = patch_example()
     text = "EUR: " + "x" * 274 + "; risk; wait; uncertainty"
     assert len(text.encode()) > 300
     candidate["working_memory"]["views"] = [text]
+    if full_views:
+        carry = [f"Distinct unchanged uncertainty {i}" for i in range(7)]
+        context["working_memory"]["views"].extend(carry)
+        candidate["working_memory"]["views"].extend(carry)
 
     async def forbidden(*args):
         pytest.fail("A representation-only correction must not call a model")
@@ -669,6 +674,97 @@ def test_total_correction_requests_full_consolidation_with_both_mapping_sets():
         model.contracts.schemas["memory-repair-patch"]["properties"]["replacements"]["maxItems"]
         == 16
     )
+
+
+@pytest.mark.parametrize("field", ["views", "waiting_for"])
+@pytest.mark.parametrize("count", [7, 8])
+@pytest.mark.parametrize("unicode_text", [False, True])
+def test_overlong_entry_selects_full_only_when_its_own_kind_is_full(field, count, unicode_text):
+    context, candidate, correction = example()
+    candidate["working_memory"].update(
+        views=[f"Distinct uncertainty {i}" for i in range(8)],
+        waiting_for=[f"Unresolved prerequisite {i}" for i in range(8)],
+    )
+    candidate["working_memory"][field] = candidate["working_memory"][field][:count]
+    candidate["working_memory"][field][0] = "é" * 151 if unicode_text else "x" * 301
+    assert working_sizes(candidate["working_memory"])["total_bytes"] < 5000
+    assert len(candidate["working_memory"][field][0].encode()) > 300
+    patch = {
+        "replacements": [
+            {
+                "from": "v0" if field == "views" else "w0",
+                "text": "Synthetic same-kind uncertainty remains",
+                "reason": "Synthetic concise wording preserves uncertainty",
+                "evidence_ids": ["input"],
+            }
+        ]
+    }
+    captured = {}
+
+    class Agent:
+        async def run(self, message, *, options):
+            captured.update(message=json.loads(message), options=options)
+            return SimpleNamespace(
+                text=encoded(correction if count == 8 else patch), usage_details={}
+            )
+
+    def factory(**kwargs):
+        captured.update(kwargs)
+        return Agent()
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test", "t", "d", enabled=True, factory=factory
+    )
+    _, trace = asyncio.run(
+        model.repair_memory({"message_id": "input"}, context, candidate, None, now())
+    )
+    prompt = captured["message"]
+    expected = "memory-repair" if count == 8 else "memory-repair-patch"
+    assert prompt["schema"]["$id"] == "urn:pipmind:schema:v1:" + expected
+    assert ("editable_keys" in prompt["correction"]) is (count == 7)
+    assert ("patch_budget" in prompt["correction"]) is (count == 7)
+    assert captured["tools"] == []
+    assert captured["options"]["max_tokens"] == 4096 and model.timeout == 90
+    assert captured["options"]["reasoning"] == {"effort": "low"}
+    assert trace["prompt_version"] == "shadow-repair-v18"
+
+
+@pytest.mark.parametrize("full_field", ["views", "waiting_for"])
+def test_full_list_at_exact_utf8_limit_does_not_force_other_kind_to_consolidate(full_field):
+    context, candidate, _ = example()
+    other_field = "waiting_for" if full_field == "views" else "views"
+    candidate["working_memory"][full_field] = ["é" * 150] + [
+        f"Unchanged synthetic entry {i}" for i in range(7)
+    ]
+    candidate["working_memory"][other_field] = ["é" * 151]
+    key = "w0" if other_field == "waiting_for" else "v0"
+    patch = {
+        "replacements": [
+            {
+                "from": key,
+                "text": "Synthetic uncertainty retained",
+                "reason": "Concise synthetic condition retained",
+                "evidence_ids": ["input"],
+            }
+        ]
+    }
+    captured = {}
+
+    class Agent:
+        async def run(self, message, *, options):
+            captured.update(json.loads(message))
+            return SimpleNamespace(text=encoded(patch), usage_details={})
+
+    model = FoundryModel(
+        "https://synthetic.invalid/api/projects/test",
+        "t",
+        "d",
+        enabled=True,
+        factory=lambda **kwargs: Agent(),
+    )
+    asyncio.run(model.repair_memory({"message_id": "input"}, context, candidate, None, now()))
+    assert captured["schema"]["$id"] == "urn:pipmind:schema:v1:memory-repair-patch"
+    assert captured["correction"]["editable_keys"] == [key]
 
 
 @pytest.mark.parametrize("recoverable", [False, True])
