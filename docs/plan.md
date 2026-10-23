@@ -16,6 +16,15 @@ flags. No history skipping, SQL pooling, mutable-state parallelism, new resource
 capacity/quota/provider change, broker login, orders, X write or PIP-17 overlap.
 PIP-47 operational recovery remains separate from this read-only M4 stream.
 
+Fresh preflight found a retained repair hold on the previous backend. A scoped
+correction repeated an oversized entry in a full eight-entry list. Select the
+existing full-consolidation correction when an overlong entry's same-kind list
+has no free slot, so the model can factor related content with complete BEFORE
+and candidate mappings. Keep the single correction call, all hard limits and
+fail-closed validation. Reproduce the failure offline, exercise success/refusal
+with actual disposable SQL, and validate the actual retained case in isolation
+before an exact audited owner retry. Keep every failed attempt and pending input.
+
 ## PIP-57 — Explicit Azure managed-PITR dry recovery composition
 
 Delivered: [PIP-57](https://nitro.atlassian.net/browse/PIP-57) adds a distinct
