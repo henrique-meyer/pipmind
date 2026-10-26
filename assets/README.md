@@ -5,7 +5,8 @@ A cream brain represents the persistent mind described in the [architecture](../
 | File | Use |
 | --- | --- |
 | `logo.svg` | Square app icon and SVG favicon; 64 × 64 viewBox with a rounded navy tile. |
-| `logo.png` | 1024 × 1024 export of the square icon, with transparent outer corners. |
+| `logo.png` | 1024 × 1024 share image. Opaque square; the outer corners are the navy tile (`#0C2340`) so link previews fill the card. |
+| `favicon.ico` | 32 × 32 opaque icon served at `/favicon.ico`. The SVG remains the page favicon. |
 | `logo-mark.svg` | The same symbol with a tight viewBox and transparent background, for headers and inline branding. |
 | `logo-mark.png` | Transparent mark exported at 1024 pixels high, preserving its aspect ratio. |
 
@@ -28,4 +29,4 @@ In the text wordmark `PipMind.`, the period always uses the brand green (`#199D8
 | Mint trace | `#52D6AE` |
 | Deep teal facet | `#199D83` |
 
-PNG exports use an SVG renderer at a height of 1024 pixels, with transparency preserved. No font, external image, or network resource is required by the SVGs.
+PNG exports use an SVG renderer at a height of 1024 pixels. The mark keeps its transparency. The share image is an opaque square. No font, external image, or network resource is required by the SVGs.

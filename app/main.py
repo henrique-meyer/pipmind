@@ -117,6 +117,11 @@ async def sitemap():
     )
 
 
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+async def favicon():
+    return Response((ROOT / "assets" / "favicon.ico").read_bytes(), media_type="image/x-icon")
+
+
 @app.get("/healthz", include_in_schema=False)
 async def health():
     return JSONResponse(

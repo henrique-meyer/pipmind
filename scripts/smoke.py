@@ -6,6 +6,7 @@ import os
 import struct
 import time
 import xml.etree.ElementTree as ET
+import zlib
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlsplit
@@ -63,6 +64,83 @@ class Page(HTMLParser):
             self.in_title = False
         if tag == "script":
             self.in_jsonld = False
+
+
+def _paeth(left, up, upper_left):
+    estimate = left + up - upper_left
+    nearest_left = abs(estimate - left)
+    nearest_up = abs(estimate - up)
+    if nearest_left <= nearest_up and nearest_left <= abs(estimate - upper_left):
+        return left
+    if nearest_up <= abs(estimate - upper_left):
+        return up
+    return upper_left
+
+
+def share_image_corners(data):
+    """Corner RGBA tuples and size for a non-interlaced 8-bit PNG."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise AssertionError("Share image is not a PNG")
+    position = 8
+    width = height = color = depth = interlace = None
+    payload = bytearray()
+    while position + 8 <= len(data):
+        length = struct.unpack(">I", data[position : position + 4])[0]
+        kind = data[position + 4 : position + 8]
+        chunk = data[position + 8 : position + 8 + length]
+        position += length + 12
+        if kind == b"IHDR":
+            width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", chunk)
+        elif kind == b"IDAT":
+            payload.extend(chunk)
+        elif kind == b"IEND":
+            break
+    if not (width and height and depth == 8 and interlace == 0 and color in (2, 6)):
+        raise AssertionError("Share image must be a non-interlaced 8-bit RGB PNG")
+    channels = 3 if color == 2 else 4
+    raw = zlib.decompress(bytes(payload))
+    stride = width * channels
+    rows = []
+    cursor = 0
+    previous = bytearray(stride)
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        row = bytearray(raw[cursor : cursor + stride])
+        cursor += stride
+        for index in range(stride):
+            left = row[index - channels] if index >= channels else 0
+            up = previous[index]
+            upper_left = previous[index - channels] if index >= channels else 0
+            if filter_type == 0:
+                value = row[index]
+            elif filter_type == 1:
+                value = row[index] + left
+            elif filter_type == 2:
+                value = row[index] + up
+            elif filter_type == 3:
+                value = row[index] + (left + up) // 2
+            elif filter_type == 4:
+                value = row[index] + _paeth(left, up, upper_left)
+            else:
+                raise AssertionError("Unsupported PNG filter")
+            row[index] = value & 255
+        previous = row
+        rows.append(row)
+
+    def pixel(x, y):
+        start = x * channels
+        red, green, blue = rows[y][start : start + 3]
+        alpha = 255 if channels == 3 else rows[y][start + 3]
+        return red, green, blue, alpha
+
+    corners = (
+        pixel(0, 0),
+        pixel(width - 1, 0),
+        pixel(0, height - 1),
+        pixel(width - 1, height - 1),
+    )
+    return corners, (width, height)
 
 
 def fetch(base, path, method="GET"):
@@ -136,6 +214,9 @@ def main():
         assert image.startswith(b"\x89PNG\r\n\x1a\n")
         width, height = struct.unpack(">II", image[16:24])
         assert width >= 300 and height >= 300, "Share image is too small"
+        corners, dimensions = share_image_corners(image)
+        assert dimensions == (width, height) == (1024, 1024)
+        assert corners == ((12, 35, 64, 255),) * 4, "Share image corners are not opaque navy"
         assert (int(head.meta["og:image:width"]), int(head.meta["og:image:height"])) == (
             width,
             height,
@@ -166,6 +247,10 @@ def main():
         assert "google" not in headers["Content-Security-Policy"]
     assert "'unsafe-inline'" not in headers["Content-Security-Policy"]
     assert "'unsafe-eval'" not in headers["Content-Security-Policy"]
+    status, icon_headers, icon = fetch(args.url, "/favicon.ico")
+    assert status == 200 and icon_headers["Content-Type"].startswith("image/")
+    assert icon.startswith(b"\x00\x00\x01\x00")
+    assert fetch(args.url, "/favicon.ico", "HEAD")[0] == 200
     for asset in page.assets:
         status, _, content = fetch(args.url, asset)
         assert status == 200 and len(content) > 100, f"Broken asset: {asset}"

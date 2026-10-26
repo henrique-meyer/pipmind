@@ -24,7 +24,7 @@ RUN groupadd --gid 10001 pipmind && useradd --uid 10001 --gid pipmind --no-creat
 COPY --from=build /app/.venv /app/.venv
 COPY app ./app
 COPY web ./web
-COPY assets/logo.svg assets/logo-mark.svg assets/logo.png ./assets/
+COPY assets/logo.svg assets/logo-mark.svg assets/logo.png assets/favicon.ico ./assets/
 COPY LICENSE ./LICENSE
 USER 10001:10001
 EXPOSE 8080
