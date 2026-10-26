@@ -30,6 +30,27 @@ param googleAnalyticsId string = ''
 @description('Public HTTPS origin for canonical metadata and sitemap; blank keeps previews noindex.')
 param publicSiteUrl string = ''
 
+@secure()
+@description('Optional private owner-dashboard settings. Empty preserves landing-only configuration.')
+param dashboardSettings object = {}
+
+var dashboardEnabled = contains(dashboardSettings, 'enabled') ? bool(dashboardSettings.enabled) : false
+var dashboardSecrets = dashboardEnabled ? [
+  { name: 'dashboard-password-hash', value: string(dashboardSettings.passwordHash) }
+  { name: 'dashboard-session-secret', value: string(dashboardSettings.sessionSecret) }
+  { name: 'dashboard-shadow-token', value: string(dashboardSettings.shadowToken) }
+  { name: 'dashboard-feeds-token', value: string(dashboardSettings.feedsToken) }
+] : []
+var dashboardEnvironment = dashboardEnabled ? [
+  { name: 'PIPMIND_DASHBOARD_ENABLED', value: 'true' }
+  { name: 'PIPMIND_DASHBOARD_ORIGIN', value: string(dashboardSettings.origin) }
+  { name: 'PIPMIND_DASHBOARD_BACKEND_URL', value: string(dashboardSettings.backendUrl) }
+  { name: 'PIPMIND_DASHBOARD_PASSWORD_HASH', secretRef: 'dashboard-password-hash' }
+  { name: 'PIPMIND_DASHBOARD_SESSION_SECRET', secretRef: 'dashboard-session-secret' }
+  { name: 'PIPMIND_DASHBOARD_SHADOW_TOKEN', secretRef: 'dashboard-shadow-token' }
+  { name: 'PIPMIND_DASHBOARD_FEEDS_TOKEN', secretRef: 'dashboard-feeds-token' }
+] : []
+
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName
   location: location
@@ -70,6 +91,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
+      secrets: dashboardSecrets
       ingress: {
         external: true
         targetPort: 8080
@@ -84,10 +106,10 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
         {
           name: 'landing'
           image: containerImage
-          env: [
+          env: concat([
             { name: 'GOOGLE_ANALYTICS_ID', value: googleAnalyticsId }
             { name: 'PUBLIC_SITE_URL', value: publicSiteUrl }
-          ]
+          ], dashboardEnvironment)
           resources: { cpu: json('0.25'), memory: '0.5Gi' }
           probes: [
             { type: 'Startup', httpGet: { path: '/healthz', port: 8080 }, initialDelaySeconds: 1, periodSeconds: 2, timeoutSeconds: 2, failureThreshold: 30 }

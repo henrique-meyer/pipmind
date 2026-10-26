@@ -32,6 +32,7 @@ jobs:
       AZURE_LOG_WORKSPACE: ${{ secrets.AZURE_LOG_WORKSPACE }}
       GOOGLE_ANALYTICS_ID: ${{ vars.GOOGLE_ANALYTICS_ID }}
       PUBLIC_SITE_URL: ${{ secrets.PUBLIC_SITE_URL }}
+      DASHBOARD_SETTINGS: ${{ secrets.DASHBOARD_SETTINGS }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -67,6 +68,16 @@ jobs:
           values = {"location": os.environ["AZURE_LOCATION"], "appName": os.environ["AZURE_CONTAINER_APP"], "environmentName": os.environ["AZURE_CONTAINER_ENVIRONMENT"], "workspaceName": os.environ["AZURE_LOG_WORKSPACE"], "containerImage": os.environ["CONTAINER_IMAGE"], "customDomains": domains}
           values["googleAnalyticsId"] = os.environ.get("GOOGLE_ANALYTICS_ID", "")
           values["publicSiteUrl"] = os.environ["PUBLIC_SITE_URL"]
+          dashboard = json.loads(os.environ.get("DASHBOARD_SETTINGS") or "{}")
+          for value in dashboard.values():
+              if isinstance(value, str) and len(value) > 3:
+                  print("::add-mask::" + value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
+          if dashboard:
+              assert set(dashboard) == {"enabled", "origin", "backendUrl", "passwordHash", "sessionSecret", "shadowToken", "feedsToken"}
+              assert dashboard["enabled"] is True
+              assert all(isinstance(value, str) and value for key, value in dashboard.items() if key != "enabled")
+              assert dashboard["origin"].rstrip("/") == os.environ["PUBLIC_SITE_URL"].rstrip("/")
+          values["dashboardSettings"] = dashboard
           with open(sys.argv[2], "w") as f:
               json.dump({"parameters": {k: {"value": v} for k, v in values.items()}}, f)
           PY
@@ -81,3 +92,6 @@ jobs:
           test -n "$READY_REVISION"
           REVISION_IMAGE=$(az containerapp revision show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --revision "$READY_REVISION" --query 'properties.template.containers[0].image' -o tsv)
           test "$REVISION_IMAGE" = "$CONTAINER_IMAGE"
+      - name: Remove private deployment inputs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/parameters.json" "$RUNNER_TEMP/domains.json"
