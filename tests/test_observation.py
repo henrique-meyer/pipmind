@@ -10,11 +10,12 @@ from fastapi.testclient import TestClient
 
 from pipmind.contracts import utc
 from pipmind.feeds.observation import (
-    OUTCOMES_SQL,
+    OUTCOME_SQL,
     ObservationError,
     ObservationReader,
     outcome_projection,
     read_snapshot,
+    recent_outcomes,
     working_projection,
 )
 from pipmind.feeds.service import create_app
@@ -155,9 +156,80 @@ def test_native_pytds_parameter_binder_accepts_projection_without_network():
         begin_response=lambda: None,
         find_result_or_done=lambda: None,
     )
-    _TdsSession.execute(fake, OUTCOMES_SQL, ("literal%trader",))
-    assert "WHERE trader=@P1" in sent[0][0]
+    _TdsSession.execute(fake, OUTCOME_SQL, ("literal%trader", 100))
+    assert "WHERE o.trader=@P1 AND o.pk=@P2" in sent[0][0]
     assert "literal%trader" not in sent[0][0]
+
+
+def projection_row(pk, identifier):
+    return (
+        pk,
+        identifier,
+        MOMENT.isoformat(),
+        "observed",
+        "hold",
+        "EURUSD",
+        "Exact captured reasoning " + identifier,
+        0,
+        encoded([{"input_tokens": 20, "output_tokens": 4}]),
+        0,
+        None,
+        MOMENT.isoformat(),
+        0,
+    )
+
+
+@pytest.mark.parametrize("count", [0, 20, 21])
+def test_recent_window_empty_exact_full_and_lookahead_preserve_order_and_identity(count):
+    keys = [(100 - i, "event:" + str(i)) for i in range(count)]
+    rows = [projection_row(*key) for key in keys[:20]]
+    cursor = Mock()
+    cursor.fetchall.side_effect = [keys, *([row] for row in rows)]
+    outcomes, has_more = recent_outcomes(cursor, "configured%trader")
+    assert [row["event_id"] for row in outcomes] == [key[1] for key in keys[:20]]
+    assert [row["reasoning"] for row in outcomes] == [row[6] for row in rows]
+    assert has_more is (count == 21)
+    if count:
+        projected_keys = [call.args[1] for call in cursor.execute.call_args_list[1:]]
+        assert projected_keys == [("configured%trader", key[0]) for key in keys[:20]]
+        assert ("configured%trader", 80) not in projected_keys  # Metadata-only lookahead.
+    else:
+        assert cursor.execute.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "mismatch", ["wrong_key", "wrong_event", "duplicate", "missing", "reordered"]
+)
+def test_recent_window_refuses_substituted_or_incomplete_projection(mismatch):
+    keys = [(10, "event:one"), (9, "event:two")]
+    rows = [projection_row(*key) for key in keys]
+    if mismatch == "wrong_key":
+        rows[0] = projection_row(11, keys[0][1])
+    elif mismatch == "wrong_event":
+        rows[0] = projection_row(10, "another-trader:event")
+    elif mismatch == "duplicate":
+        rows[1] = rows[0]
+    elif mismatch == "missing":
+        rows.pop()
+    else:
+        rows.reverse()
+    cursor = Mock()
+    cursor.fetchall.side_effect = (
+        [keys, [rows[0]], [rows[0], rows[0]]]
+        if mismatch == "duplicate"
+        else [keys, *([row] for row in rows), []]
+    )
+    with pytest.raises(ObservationError, match="observation_window_invalid"):
+        recent_outcomes(cursor, "configured")
+
+
+@pytest.mark.parametrize("keys", [[(10, "duplicate"), (9, "duplicate")], [(10, "a"), (10, "b")]])
+def test_recent_window_refuses_duplicate_key_metadata(keys):
+    cursor = Mock()
+    cursor.fetchall.return_value = keys
+    with pytest.raises(ObservationError, match="observation_window_invalid"):
+        recent_outcomes(cursor, "configured")
+    assert cursor.execute.call_count == 1
 
 
 def test_snapshot_failure_never_falls_back_to_writer_lock_or_leaks_errors():

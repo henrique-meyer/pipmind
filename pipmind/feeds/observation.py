@@ -36,8 +36,9 @@ def bounded_sql(field, maximum):
 EVENT_AT_SQL = (
     "JSON_VALUE(CASE WHEN ISJSON(i.envelope)=1 THEN i.envelope ELSE '{}' END, '$.available_at')"
 )
-OUTCOMES_SQL = f"""
-SELECT TOP (21) o.event_id,
+OUTCOME_KEYS_SQL = "SELECT TOP (21) pk,event_id FROM pm_outcomes WHERE trader=%s ORDER BY pk DESC"
+OUTCOME_SQL = f"""
+SELECT TOP (2) o.pk,o.event_id,
  {bounded_sql("p.recorded_at", 80)}, {bounded_sql("p.status", 128)},
  {bounded_sql("p.action", 64)}, {bounded_sql("p.instrument", 256)},
  {bounded_sql("p.reasoning", MAX_TEXT_BYTES)},
@@ -49,10 +50,7 @@ SELECT TOP (21) o.event_id,
  CASE WHEN DATALENGTH(p.recorded_at)>80 OR DATALENGTH(p.status)>128
  OR DATALENGTH(p.action)>64 OR DATALENGTH(p.instrument)>256
  OR DATALENGTH(p.error)>256 OR DATALENGTH({EVENT_AT_SQL})>80 THEN 1 ELSE 0 END
-FROM (
- SELECT TOP (21) pk,trader,event_id,result FROM pm_outcomes
- WHERE trader=%s ORDER BY pk DESC
-) o
+FROM pm_outcomes o
 LEFT JOIN pm_inputs i ON i.trader=o.trader AND i.id=o.event_id
 OUTER APPLY OPENJSON(CASE WHEN ISJSON(o.result)=1 THEN o.result ELSE '{{}}' END)
 WITH (
@@ -61,8 +59,43 @@ WITH (
  reasoning nvarchar(max) '$.decision.reasoning', usage nvarchar(max) '$.usage' AS JSON,
  error nvarchar(max) '$.error'
 ) p
+WHERE o.trader=%s AND o.pk=%s
 ORDER BY o.pk DESC
 """
+
+
+def recent_outcomes(cur, trader):
+    # Materialize only narrow keys before touching audit JSON. TOP in a single
+    # LOB-carrying query does not guarantee bounded candidate-plan LOB work.
+    cur.execute(OUTCOME_KEYS_SQL, (trader,))
+    keys = cur.fetchall()
+    if (
+        len(keys) > RECENT_LIMIT + 1
+        or any(
+            len(row) != 2
+            or type(row[0]) is not int
+            or row[0] <= 0
+            or not isinstance(row[1], str)
+            or not 1 <= len(row[1]) <= 256
+            for row in keys
+        )
+        or any(left[0] <= right[0] for left, right in zip(keys, keys[1:], strict=False))
+        or len({row[1] for row in keys}) != len(keys)
+    ):
+        raise ObservationError("observation_window_invalid")
+    outcomes = []
+    for pk, identifier in keys[:RECENT_LIMIT]:
+        # A bulk IN plan can still scan/parse historical LOBs. A measured point
+        # predicate bounds each projection without changing the SQL capacity.
+        cur.execute(OUTCOME_SQL, (trader, pk))
+        rows = cur.fetchall()
+        # Refuse missing/duplicate/wrong-trader rows instead of relabeling an
+        # incomplete projection as the captured recent window. TOP2 exposes
+        # malformed JSON producing duplicate rows without unbounded transfer.
+        if len(rows) != 1 or tuple(rows[0][:2]) != (pk, identifier):
+            raise ObservationError("observation_window_invalid")
+        outcomes.append(outcome_projection(rows[0][1:]))
+    return outcomes, len(keys) > RECENT_LIMIT
 
 
 def timestamp(value):
@@ -209,9 +242,7 @@ def read_snapshot(connect, trader, moment):
         if not head:
             raise ObservationError("observation_trader_missing")
         working, issues = working_projection(head[2])
-        cur.execute(OUTCOMES_SQL, (trader,))
-        rows = cur.fetchall()
-        outcomes = [outcome_projection(row) for row in rows[:RECENT_LIMIT]]
+        outcomes, has_more = recent_outcomes(cur, trader)
         if any(row["issues"] for row in outcomes):
             issues.append("recent_outcomes_partial")
         result = {
@@ -223,7 +254,7 @@ def read_snapshot(connect, trader, moment):
             "recent_outcomes": outcomes,
             "recent_window": {
                 "limit": RECENT_LIMIT,
-                "has_more": len(rows) > RECENT_LIMIT,
+                "has_more": has_more,
                 "order": "newest_commit_first",
             },
             "issues": issues,
