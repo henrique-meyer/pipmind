@@ -54,11 +54,17 @@ Authenticated browser GETs use only these same-origin paths:
 | `/app/api/coverage` | `/feeds/coverage` | Feed bearer |
 | `/app/api/observation` | `/feeds/observation` | Feed bearer |
 | `/app/api/books` | Gateway `GET /books` | Gateway bearer, separate origin |
+| `/app/api/instruments` | Gateway `GET /instruments` | Gateway bearer, separate origin |
+| `/app/api/bars` | Gateway `GET /bars` | Gateway bearer, separate origin |
 
 `/app/api/books` is omitted from the shadow origin. It is contacted only when `PIPMIND_DASHBOARD_GATEWAY_URL` and `PIPMIND_DASHBOARD_GATEWAY_TOKEN` are both valid. Missing or invalid gateway settings leave the positions panel unavailable and do not disable the rest of the workspace. The browser projection keeps `dispatch_enabled` false and drops unknown fields. The panel has no place, modify, or cancel control. Stale retained snapshots and working orders are labeled stale and are not presented as a live book. Named stop and limit fields are shown; an integer broker order-type code is not guessed. Opening reasoning is linked in the browser by instrument inside the recent observation window, not by inventing a broker order id.
 
-No URL, upstream path, query parameter, browser cookie or user-supplied header is
-forwarded. Unknown names and all query strings are rejected. Upstream redirects
+No URL, upstream path, browser cookie or user-supplied header is forwarded.
+Unknown names are rejected. Query strings are rejected except `/app/api/bars`,
+which accepts only an instrument and one of `15m`, `1h`, `2h`, `4h`, `1d`. The
+BFF checks the instrument against the configured list and rebuilds that query
+itself. The chart is served from a local charting script, not a third-party CDN.
+Upstream redirects
 and environment proxy discovery are disabled, TLS verification remains enabled,
 and responses are limited to 512 KiB with an eight-second timeout. The status
 projection excludes qualification/configuration blobs; observation and feed
@@ -66,8 +72,10 @@ coverage use their bounded internal projections. Browser output uses DOM text,
 never HTML interpretation of recorded reasoning.
 
 The BFF caches each fixed read for 30 seconds, including failures. The visible
-page polls every 30 seconds, stops fetching while hidden and has a 15-second
-request timeout. Panels describe independent observations, not one transaction
+page polls status, coverage, observation, the book and the pair list every 30
+seconds, and price history every 60 seconds. It stops fetching while hidden and
+has a 15-second request timeout. The gateway keeps its own short bar cache and
+request budget so those polls stay inside broker rate limits. Panels describe independent observations, not one transaction
 across services. Unavailable reads clear previous success displays; missing,
 partial, stale and bounded-window history remain explicit. The first coverage
 page is bounded to 100 recipes; if more exist the workspace labels the page

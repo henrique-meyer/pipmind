@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:instrument-list",
+  "title": "InstrumentList",
+  "description": "Core instrument ids the gateway is configured to read. Market ids are not included.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "instruments"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "instruments": {
+      "type": "array",
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z]{3}/[A-Z]{3}$" }
+    }
+  }
+}

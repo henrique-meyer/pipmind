@@ -43,6 +43,7 @@
     list("theses", working.position_theses, (item) => `${show(item.instrument)} · As of ${stamp(item.as_of)}\n${show(item.thesis)}`);
     linkedOutcomes = data.recent_outcomes;
     if (latestBook) books(latestBook);
+    if (lastCandles) paintChart(lastCandles);
     const target = byId("outcomes"); target.replaceChildren();
     const outcomes = data.recent_outcomes;
     text("outcome-window", data.recent_window?.has_more ? "Partial history: older committed outcomes exist beyond this window." : "Bounded recent window; this is not a complete account history.");
@@ -140,8 +141,173 @@
       for (const value of [show(order.instrument), show(order.side), show(order.size), show(order.status), order.stop === null ? "None" : money(order.stop), order.limit === null ? "None" : money(order.limit), money(order.trigger), order.role === "unclassified" ? "Unclassified trigger" : "If-done stop/limit", show(order.broker_order_id), stamp(order.ts)]) row.append(node("td", value));
       orders.append(row);
     }
+    if (lastCandles) paintChart(lastCandles);
   }
-  const render = { status: runtime, coverage, observation, books };
+  const TIMEFRAMES = ["15m", "1h", "2h", "4h", "1d"];
+  let chartTimeframe = "15m";
+  let chartInstrument = "";
+  let chartView = null;
+  let chartSeries = null;
+  let priceLines = [];
+  let lastCandles = null;
+  let chartBusy = false;
+  function overlays(instrument) {
+    const markers = [];
+    if (Array.isArray(linkedOutcomes)) for (const item of linkedOutcomes) {
+      if (!item || item.instrument !== instrument) continue;
+      const kind = item.action === "enter" || item.action === "add" ? "Entry" : item.action === "reduce" || item.action === "exit" ? "Exit" : "";
+      if (!kind) continue;
+      const time = Math.floor(Date.parse(item.event_at || item.recorded_at || "") / 1000);
+      if (!Number.isFinite(time)) continue;
+      markers.push({ time, position: kind === "Entry" ? "belowBar" : "aboveBar", color: kind === "Entry" ? "#199d83" : "#8b3128", shape: kind === "Entry" ? "arrowUp" : "arrowDown", text: kind, detail: `${kind} · ${show(item.action)} · ${stamp(item.event_at || item.recorded_at)}\n${item.reasoning ?? "No reasoning retained for this outcome."}` });
+    }
+    const lines = [];
+    const stops = [];
+    const limits = [];
+    const book = latestBook && latestBook.availability !== "unavailable" ? latestBook : null;
+    if (book && Array.isArray(book.positions?.positions)) book.positions.positions.forEach((position, index) => {
+      if (!position || position.instrument !== instrument) return;
+      const annotation = Array.isArray(book.annotations) ? book.annotations[index] : null;
+      if (annotation?.protection !== "known") return;
+      if (typeof annotation.stop === "number") { lines.push({ price: annotation.stop, color: "#8b3128", title: "Stop" }); stops.push("Position stop " + money(annotation.stop)); }
+      if (typeof annotation.limit === "number") { lines.push({ price: annotation.limit, color: "#0c2340", title: "Limit" }); limits.push("Position limit " + money(annotation.limit)); }
+    });
+    if (book && book.orders_state !== "unavailable" && Array.isArray(book.working_orders)) for (const order of book.working_orders) {
+      if (!order || order.instrument !== instrument) continue;
+      if (typeof order.stop === "number") { lines.push({ price: order.stop, color: "#8b3128", title: "Order stop" }); stops.push("Order stop " + money(order.stop)); }
+      if (typeof order.limit === "number") { lines.push({ price: order.limit, color: "#0c2340", title: "Order limit" }); limits.push("Order limit " + money(order.limit)); }
+    }
+    return { markers, lines, stops, limits };
+  }
+  function fillSummary(data, overlay) {
+    const body = byId("chart-summary-body");
+    body.replaceChildren();
+    const bars = Array.isArray(data.bars) ? data.bars : [];
+    const last = bars.length ? bars[bars.length - 1] : null;
+    if (!last) {
+      const row = node("tr");
+      const cell = node("td", "No bars in this history.");
+      cell.colSpan = 8;
+      row.append(cell);
+      body.append(row);
+      return;
+    }
+    const decisions = overlay.markers.length ? overlay.markers.map((item) => item.detail).join("\n\n") : "No linked entry or exit in the recent reasoning window.";
+    const row = node("tr");
+    for (const value of [money(last.open), money(last.high), money(last.low), money(last.close), stamp(last.ts), decisions, overlay.stops.join("\n") || "None", overlay.limits.join("\n") || "None"]) row.append(node("td", value));
+    body.append(row);
+  }
+  function clearChart() {
+    const body = byId("chart-summary-body");
+    body.replaceChildren();
+    const row = node("tr");
+    const cell = node("td", "Price history unavailable. No order was placed, modified, or cancelled.");
+    cell.colSpan = 8;
+    row.append(cell);
+    body.append(row);
+    if (!chartSeries) return;
+    chartSeries.setMarkers([]);
+    chartSeries.setData([]);
+    for (const line of priceLines) chartSeries.removePriceLine(line);
+    priceLines = [];
+  }
+  function paintChart(data) {
+    lastCandles = data;
+    const closed = data.availability === "closed" || data.market_state === "closed";
+    const stale = data.stale === true || data.availability === "stale" || closed;
+    byId("chart-card").classList.toggle("stale-card", stale && data.availability !== "unavailable");
+    text("chart-age", data.availability === "unavailable" ? "History unavailable" : closed ? `Market closed · not a live quote · ${age(data.fetched_at)}` : data.availability === "fresh" ? `Within freshness window · ${age(data.fetched_at)}` : `STALE · not a live quote · ${age(data.fetched_at)}`);
+    const note = data.availability === "unavailable" ? ["Price history is unavailable."] : closed ? ["Market closed. These bars are not a live quote."] : data.availability === "stale" || data.stale ? ["STALE price history. These bars are not a live quote."] : ["Mid-price history is inside the freshness window. This is not a public quote."];
+    if (data.forming) note.push("The last bar is still forming.");
+    if (data.history_partial) note.push("PARTIAL: older bars are not shown.");
+    text("chart-state", note.join(" "));
+    const overlay = overlays(data.instrument);
+    fillSummary(data, overlay);
+    const pane = byId("chart-pane");
+    if (typeof LightweightCharts === "undefined" || !LightweightCharts.createChart) {
+      if (!pane.firstChild) pane.append(node("p", "Chart drawing is unavailable. The table below still lists the latest bar."));
+      return;
+    }
+    try {
+      if (!chartView) {
+        chartView = LightweightCharts.createChart(pane, { autoSize: true, layout: { background: { color: "#fffdf8" }, textColor: "#0c2340" }, grid: { vertLines: { color: "#dedfd9" }, horzLines: { color: "#dedfd9" } }, timeScale: { timeVisible: true, secondsVisible: false } });
+        chartSeries = chartView.addCandlestickSeries({ upColor: "#199d83", downColor: "#8b3128", borderVisible: false, wickUpColor: "#199d83", wickDownColor: "#8b3128" });
+      }
+      const rows = [];
+      for (const bar of data.bars || []) {
+        const time = Math.floor(Date.parse(bar.ts) / 1000);
+        if (Number.isFinite(time)) rows.push({ time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+      }
+      chartSeries.setData(rows);
+      const grouped = new Map();
+      for (const marker of overlay.markers) {
+        const existing = grouped.get(marker.time);
+        if (existing) existing.text += " · " + marker.text;
+        else grouped.set(marker.time, { time: marker.time, position: marker.position, color: marker.color, shape: marker.shape, text: marker.text });
+      }
+      chartSeries.setMarkers([...grouped.values()].sort((left, right) => left.time - right.time));
+      for (const line of priceLines) chartSeries.removePriceLine(line);
+      priceLines = overlay.lines.map((line) => chartSeries.createPriceLine({ price: line.price, color: line.color, lineStyle: 2, title: line.title, axisLabelVisible: true }));
+    } catch {
+      text("chart-state", "Chart drawing is unavailable. The table below still lists the latest bar.");
+    }
+  }
+  function instruments(data) {
+    const select = byId("chart-pair");
+    const previous = select.value;
+    select.replaceChildren();
+    const names = Array.isArray(data.instruments) ? data.instruments : [];
+    if (!names.length) {
+      const option = node("option", "No configured pairs");
+      option.value = "";
+      select.append(option);
+      select.disabled = true;
+      text("chart-state", "No currency pair is configured for this trader.");
+      return;
+    }
+    select.disabled = false;
+    for (const name of names) {
+      const option = node("option", name);
+      option.value = name;
+      if (name === previous) option.selected = true;
+      select.append(option);
+    }
+    if (select.value !== chartInstrument) {
+      chartInstrument = select.value;
+      refreshChart();
+    }
+  }
+  async function refreshChart() {
+    if (chartBusy || document.hidden) return;
+    const instrument = byId("chart-pair").value;
+    if (!instrument || !TIMEFRAMES.includes(chartTimeframe)) {
+      text("chart-state", "No configured currency pair is available.");
+      return;
+    }
+    chartBusy = true;
+    try {
+      const params = new URLSearchParams({ instrument, timeframe: chartTimeframe });
+      const response = await fetch("/app/api/bars?" + params.toString(), { credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15000) });
+      if (response.status === 401) { window.location.replace("/app/login"); return; }
+      const payload = await response.json();
+      if (!response.ok || payload.status !== "ok" || !payload.data) throw new Error("unavailable");
+      paintChart(payload.data);
+    } catch {
+      lastCandles = null;
+      clearChart();
+      text("chart-state", "Price history is unavailable. No order was placed, modified, or cancelled.");
+      text("chart-age", "Observation unavailable");
+      byId("chart-card").classList.remove("stale-card");
+    }
+    chartBusy = false;
+  }
+  for (const button of document.querySelectorAll("[data-timeframe]")) button.addEventListener("click", () => {
+    chartTimeframe = button.getAttribute("data-timeframe") || "15m";
+    for (const item of document.querySelectorAll("[data-timeframe]")) item.setAttribute("aria-pressed", item === button ? "true" : "false");
+    refreshChart();
+  });
+  byId("chart-pair").addEventListener("change", () => { chartInstrument = byId("chart-pair").value; refreshChart(); });
+  const render = { status: runtime, coverage, observation, books, instruments };
   let busy = false;
   async function refresh() {
     if (busy || document.hidden) return;
@@ -161,7 +327,8 @@
         if (name === "status") { text("runtime-state", "Unavailable"); byId("runtime-facts").replaceChildren(); text("runtime-age", "Observation unavailable"); text("runtime-hold", "Hold state unavailable."); text("runtime-worker", ""); }
         if (name === "coverage") { byId("sources").replaceChildren(); text("feed-summary", "Feed observations unavailable."); text("feeds-age", "Observation unavailable"); }
         if (name === "observation") { linkedOutcomes = null; for (const id of ["views", "waiting", "theses"]) list(id, null); byId("outcomes").replaceChildren(node("p", "Recent reasoning unavailable.")); text("memory-state", "Working memory unavailable."); text("memory-age", "Observation unavailable"); text("outcome-window", ""); if (latestBook) books(latestBook); }
-        if (name === "books") { latestBook = null; byId("positions").replaceChildren(); byId("orders").replaceChildren(); byId("account-facts").replaceChildren(); text("book-state", "Positions and orders unavailable. No order was placed, modified, or cancelled."); text("book-age", "Observation unavailable"); text("orders-state", "Working orders unavailable."); byId("book-card").classList.remove("stale-card"); }
+        if (name === "books") { latestBook = null; byId("positions").replaceChildren(); byId("orders").replaceChildren(); byId("account-facts").replaceChildren(); text("book-state", "Positions and orders unavailable. No order was placed, modified, or cancelled."); text("book-age", "Observation unavailable"); text("orders-state", "Working orders unavailable."); byId("book-card").classList.remove("stale-card"); if (lastCandles) paintChart(lastCandles); }
+        if (name === "instruments") { byId("chart-pair").replaceChildren(); text("chart-state", "Configured currency pairs are unavailable."); text("chart-age", "Observation unavailable"); lastCandles = null; clearChart(); byId("chart-card").classList.remove("stale-card"); }
       }
     }));
     text("connection", failed.length ? `PARTIAL / UNAVAILABLE: ${failed.join(", ")}. Other panels are independent saved observations. Next attempt in 30 seconds.` : `Last refresh ${stamp(new Date().toISOString())}. Panels are independent saved observations, not a single cross-service transaction.`);
@@ -169,4 +336,5 @@
   }
   refresh();
   setInterval(refresh, 30000);
+  setInterval(refreshChart, 60000);
 })();

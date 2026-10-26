@@ -70,7 +70,7 @@ M4 also maintains bounded current state with audited before/after dispositions a
 
 PIP-16 supplies a [blank starter](../templates/blank/README.md) compatible with existing paused initialization and the [private owner chat design](architecture.md#private-owner-chat-and-confirmed-edits). Future owner-interface work adds separate blank/clone/recovery onboarding, evidence-grounded explanations, suggestions and confirmed direct chat edits. It does not reset the hosted trader, close PIP-14 qualification or change autonomous nightly/market/experience learning. The UI and durable chat-edit path remain planned.
 
-The private owner workspace can also show a read-only positions and orders book from `GET /books`. Broker marks stay off the public page. The panel cannot place, modify, or cancel orders.
+The private owner workspace can also show a read-only positions and orders book from `GET /books`, and a mid-price chart for configured pairs at 15m, 1h, 2h, 4h and 1d from `GET /bars`. Broker marks stay off the public page. Neither panel can place, modify, or cancel orders.
 
 Also define the [compact robot-save profile](architecture.md#compact-robot-saves-and-restore), separate from full experience/recovery and account history, with named manual saves, compatible imports, exact rules/guide round trips and confirmed restore as a new version. Robot identity/training/lessons and account data/authority are distinct. These planned controls do not reinterpret existing runtime bundles or certify M4 qualification.
 

@@ -300,7 +300,7 @@ def test_books_panel_is_read_only_and_private(client, monkeypatch):
     assert "Positions and orders" in page.text
     assert "cannot place, change, or cancel" in page.text
     assert page.text.count("<form") == 1 and 'action="/app/logout"' in page.text
-    assert page.text.count("<button") == 1
+    assert page.text.count('type="submit"') == 1
     landing = client.get("/")
     assert "Positions and orders" not in landing.text
     assert "/app/api/books" not in landing.text
@@ -563,3 +563,178 @@ def test_hash_slot_survives_caller_cancellation_and_recovers(configured, monkeyp
         asyncio.run(scenario())
     finally:
         release.set()
+
+
+def test_chart_is_private_and_rebuilds_its_query(client, configured, monkeypatch):
+    configured.config = module.Config(
+        ORIGIN,
+        "https://internal.example",
+        configured.config.password,
+        configured.config.secret,
+        "synthetic-shadow-token",
+        "synthetic-feeds-token",
+        "https://gateway.example",
+        "synthetic-gateway-token-0123456789",
+    )
+    calls = []
+
+    def fetch_read(config, name):
+        calls.append(name)
+        if name == "instruments":
+            return {"schema_version": 1, "instruments": ["GBP/JPY", "EUR/USD"]}
+        raise ValueError("dashboard_upstream_response")
+
+    def fetch_bars(config, instrument, timeframe):
+        calls.append((config.gateway, instrument, timeframe))
+        return {
+            "schema_version": 1,
+            "instrument": instrument,
+            "timeframe": timeframe,
+            "price": "mid",
+            "checked_at": "2026-10-05T14:00:00Z",
+            "fetched_at": "2026-10-05T14:00:00Z",
+            "availability": "closed",
+            "market_state": "closed",
+            "stale": True,
+            "age_seconds": 30,
+            "history_partial": False,
+            "forming": False,
+            "bars": [
+                {
+                    "ts": "2026-10-05T13:00:00Z",
+                    "open": 1.1,
+                    "high": 1.2,
+                    "low": 1.05,
+                    "close": 1.11,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module, "fetch_read", fetch_read)
+    monkeypatch.setattr(module, "fetch_bars", fetch_bars)
+    signin(client)
+    page = client.get("/app")
+    landing = client.get("/")
+    assert "Price chart" in page.text and 'data-timeframe="2h"' in page.text
+    assert "/app/resources/lightweight-charts.js" in page.text
+    assert "unpkg" not in page.text and "jsdelivr" not in page.text
+    assert "Price chart" not in landing.text and "lightweight-charts" not in landing.text
+    assert "/app/api/bars" not in landing.text
+    assert client.get("/app/api/bars").status_code == 404
+    assert client.get("/app/api/bars?instrument=EUR/USD&timeframe=3h").status_code == 404
+    assert client.get("/app/api/bars?instrument=EUR/USD&timeframe=1h&extra=1").status_code == 404
+    assert client.get("/app/api/bars?instrument=USD/JPY&timeframe=1h").status_code == 404
+    body = client.get("/app/api/bars?instrument=EUR/USD&timeframe=1h").json()
+    assert body["status"] == "ok" and body["data"]["availability"] == "closed"
+    assert calls[-1] == ("https://gateway.example", "EUR/USD", "1h")
+    assert "instruments" in calls
+    script = client.get("/app/resources/dashboard.js").text
+    library = client.get("/app/resources/lightweight-charts.js").text
+    assert "innerHTML" not in script and "https://" not in script
+    assert "Market closed · not a live quote" in script and "EUR/USD" not in script
+    assert "createChart" in library and "unpkg" not in library and "jsdelivr" not in library
+
+
+def test_candle_transport_strips_fields_and_builds_the_gateway_query(configured, monkeypatch):
+    configured.config = module.Config(
+        ORIGIN,
+        "https://internal.example",
+        configured.config.password,
+        configured.config.secret,
+        "synthetic-shadow-token",
+        "synthetic-feeds-token",
+        "https://gateway.example",
+        "synthetic-gateway-token-0123456789",
+    )
+    requests = []
+
+    class Headers:
+        def get_content_type(self):
+            return "application/json"
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, bound):
+            return json.dumps(
+                {
+                    "instrument": "EUR/USD",
+                    "timeframe": "4h",
+                    "price": "mid",
+                    "checked_at": "2026-10-05T14:00:00Z",
+                    "fetched_at": "2026-10-05T14:00:00Z",
+                    "availability": "stale",
+                    "market_state": "open",
+                    "stale": True,
+                    "age_seconds": 90,
+                    "history_partial": False,
+                    "forming": False,
+                    "bars": [
+                        {
+                            "ts": "2026-10-05T12:00:00Z",
+                            "open": 1.1,
+                            "high": 1.2,
+                            "low": 1.05,
+                            "close": 1.11,
+                            "volume": 9,
+                        }
+                    ],
+                    "market_id": 42,
+                    "password": "DO-NOT-LEAK",
+                }
+            ).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            assert timeout == 8
+            return Response()
+
+    def opener(*handlers):
+        assert any(isinstance(handler, module.NoRedirect) for handler in handlers)
+        assert any(
+            isinstance(handler, module.ProxyHandler) and handler.proxies == {}
+            for handler in handlers
+        )
+        return Opener()
+
+    monkeypatch.setattr(module, "build_opener", opener)
+    result = module.fetch_bars(configured.config, "EUR/USD", "4h")
+    assert requests[0].full_url == "https://gateway.example/bars?instrument=EUR%2FUSD&timeframe=4h"
+    assert requests[0].get_method() == "GET"
+    assert requests[0].headers["Authorization"] == "Bearer synthetic-gateway-token-0123456789"
+    assert result["bars"] == [
+        {
+            "ts": "2026-10-05T12:00:00Z",
+            "open": 1.1,
+            "high": 1.2,
+            "low": 1.05,
+            "close": 1.11,
+        }
+    ]
+    assert "market_id" not in result and "password" not in result
+    assert "DO-NOT-LEAK" not in json.dumps(result)
+    try:
+        module.fetch_bars(
+            module.Config(
+                ORIGIN,
+                "https://internal.example",
+                configured.config.password,
+                configured.config.secret,
+                "synthetic-shadow-token",
+                "synthetic-feeds-token",
+            ),
+            "EUR/USD",
+            "4h",
+        )
+    except ValueError as error:
+        assert str(error) == "dashboard_upstream_response"
+    else:
+        raise AssertionError("missing gateway was contacted")
