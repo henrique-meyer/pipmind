@@ -18,14 +18,20 @@ def number(value, *, positive=False):
     try:
         if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
             raise ValueError
-        result = Decimal(str(value))
-        if (
-            not result.is_finite()
-            or len(result.as_tuple().digits) > 28
-            or (positive and result <= 0)
-            or (result != 0 and not -28 <= result.adjusted() <= 28)
-        ):
-            raise ValueError
+        # Isolate the parse. An invalid literal sets InvalidOperation on the
+        # active context even when the exception is caught, and that sticky
+        # flag must not escape into the caller's arithmetic.
+        with localcontext() as context:
+            context.prec = 128
+            context.clear_flags()
+            result = Decimal(str(value))
+            if (
+                not result.is_finite()
+                or len(result.as_tuple().digits) > 28
+                or (positive and result <= 0)
+                or (result != 0 and not -28 <= result.adjusted() <= 28)
+            ):
+                raise ValueError
         return result
     except (InvalidOperation, ValueError):
         raise GatewayError("invalid_broker_number") from None

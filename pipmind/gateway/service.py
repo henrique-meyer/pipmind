@@ -43,6 +43,10 @@ class ReadWorker:
         self.lock, self.stop_event = threading.RLock(), threading.Event()
         self.contracts = Contracts()
         self.snapshots, self.last_snapshot, self.last_error = None, None, None
+        self.protections = None
+        self.working_orders = None
+        self.orders_error = {"code": "working_orders_not_read"}
+        self.orders_as_of = None
         self.snapshot_interval, self.evidence_interval = snapshot_interval, evidence_interval
         self.evidence_since = evidence_since or self.now()
         if self.evidence_since > self.now():
@@ -86,8 +90,29 @@ class ReadWorker:
                 snapshots = self.broker.snapshots()
                 self.contracts.validate("account-snapshot", snapshots[0])
                 self.contracts.validate("position-snapshot", snapshots[1])
+                protections = getattr(self.broker, "protections", None)
                 with self.lock:
                     self.snapshots, self.last_snapshot = snapshots, now
+                    self.protections = protections
+                if hasattr(self.broker, "working_orders"):
+                    try:
+                        page = self.broker.working_orders()
+                        with self.lock:
+                            self.working_orders, self.orders_error, self.orders_as_of = (
+                                page,
+                                None,
+                                now,
+                            )
+                    except ContractError as error:
+                        with self.lock:
+                            # Keep the previous list and mark it stale. Do not drop it silently.
+                            self.orders_error = {"code": str(error), "ts": stamp(self.now())}
+                    except Exception:
+                        with self.lock:
+                            self.orders_error = {
+                                "code": "broker_orders_unreadable",
+                                "ts": stamp(self.now()),
+                            }
             if self.evidence_interval is not None and (
                 self.evidence_attempt is None
                 or (now - self.evidence_attempt).total_seconds() >= self.evidence_interval
@@ -212,6 +237,39 @@ class ReadWorker:
                 "headlines_error": deepcopy(self.headlines_error),
             }
 
+    def books(self):
+        """Retained owner account book. Does not call the broker or submit orders."""
+        from copy import deepcopy
+
+        from pipmind.gateway.books import project_book
+
+        state = self.state()
+        with self.lock:
+            snapshots = deepcopy(self.snapshots)
+            protections = deepcopy(self.protections)
+            orders_page = deepcopy(self.working_orders)
+            orders_error = deepcopy(self.orders_error)
+            orders_as_of = self.orders_as_of
+            last_snapshot = self.last_snapshot
+            last_error = deepcopy(self.last_error)
+        account = positions = None
+        if snapshots:
+            account, positions = snapshots
+        return project_book(
+            self.contracts,
+            checked_at=state["checked_at"],
+            account=account,
+            positions=positions,
+            protections=protections,
+            orders_page=orders_page,
+            orders_error=orders_error,
+            orders_as_of=stamp(orders_as_of) if orders_as_of else None,
+            marks=state.get("prices") or [],
+            snapshot_as_of=stamp(last_snapshot) if last_snapshot else None,
+            snapshot_error=last_error,
+            freshness_seconds=max(120, min(self.snapshot_interval * 2, 7200)),
+        )
+
 
 def create_app(gateway, token, *, worker=None):
     if not isinstance(token, str) or len(token) < 32:
@@ -294,6 +352,14 @@ def create_app(gateway, token, *, worker=None):
                 "last_error": {"code": "broker_reads_disabled"},
             }
         )
+
+    @app.get("/books")
+    def books():
+        from pipmind.gateway.books import empty_book
+
+        if not worker:
+            return empty_book(stamp(datetime.now(UTC)))
+        return worker.books()
 
     @app.get("/headlines")
     def headlines():

@@ -58,6 +58,7 @@ Default binding is `127.0.0.1:8081`. Only the container entrypoint binds all int
 | `GET /healthz` | Application identity, `mode: dry`, `dispatch_enabled: false`; process liveness, not proof of broker readiness. |
 | `POST /orders` | Bounded strict JSON `OrderRequest`; returns `{acknowledgement, replayed}`. Invalid JSON/schema is 422, a changed payload under an existing ID is 409, unavailable durable storage is 503. Unsupported symbols/sizes produce durable rejected acknowledgements. |
 | `GET /state` | Private current prices and snapshots plus read-worker error state. Reads are off by default. Snapshot `as_of` is conservative request-start time; failed refreshes preserve the old timestamp. Consumers must enforce freshness before risk. |
+| `GET /books` | Read-only owner account book: retained `AccountSnapshot` and `PositionSnapshot`, named stop/limit fields, and the active stop/limit list. It does not place, modify, or cancel orders, and `dispatch_enabled` is fixed false. Stale retained rows stay labeled stale. |
 
 The stable [acknowledgement contract](../contracts/v1/gateway-acknowledgement.schema.json) wraps the existing `OrderUpdate`. The dry marker is mandatory, including refusals and uncertain outcomes. Retried commands return the identical persisted acknowledgement; only the response wrapper's `replayed` flag changes. Schema-invalid commands are not acknowledged or entered in the ledger. Reasons are fixed codes; raw external errors and credentials are not returned. No access logging or public API documentation is enabled.
 

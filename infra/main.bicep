@@ -35,21 +35,33 @@ param publicSiteUrl string = ''
 param dashboardSettings object = {}
 
 var dashboardEnabled = contains(dashboardSettings, 'enabled') ? bool(dashboardSettings.enabled) : false
-var dashboardSecrets = dashboardEnabled ? [
-  { name: 'dashboard-password-hash', value: string(dashboardSettings.passwordHash) }
-  { name: 'dashboard-session-secret', value: string(dashboardSettings.sessionSecret) }
-  { name: 'dashboard-shadow-token', value: string(dashboardSettings.shadowToken) }
-  { name: 'dashboard-feeds-token', value: string(dashboardSettings.feedsToken) }
-] : []
-var dashboardEnvironment = dashboardEnabled ? [
-  { name: 'PIPMIND_DASHBOARD_ENABLED', value: 'true' }
-  { name: 'PIPMIND_DASHBOARD_ORIGIN', value: string(dashboardSettings.origin) }
-  { name: 'PIPMIND_DASHBOARD_BACKEND_URL', value: string(dashboardSettings.backendUrl) }
-  { name: 'PIPMIND_DASHBOARD_PASSWORD_HASH', secretRef: 'dashboard-password-hash' }
-  { name: 'PIPMIND_DASHBOARD_SESSION_SECRET', secretRef: 'dashboard-session-secret' }
-  { name: 'PIPMIND_DASHBOARD_SHADOW_TOKEN', secretRef: 'dashboard-shadow-token' }
-  { name: 'PIPMIND_DASHBOARD_FEEDS_TOKEN', secretRef: 'dashboard-feeds-token' }
-] : []
+var dashboardGateway = dashboardEnabled && contains(dashboardSettings, 'gatewayUrl') && contains(dashboardSettings, 'gatewayToken')
+var dashboardSecrets = concat(
+  dashboardEnabled ? [
+    { name: 'dashboard-password-hash', value: string(dashboardSettings.passwordHash) }
+    { name: 'dashboard-session-secret', value: string(dashboardSettings.sessionSecret) }
+    { name: 'dashboard-shadow-token', value: string(dashboardSettings.shadowToken) }
+    { name: 'dashboard-feeds-token', value: string(dashboardSettings.feedsToken) }
+  ] : [],
+  dashboardGateway ? [
+    { name: 'dashboard-gateway-token', value: string(dashboardSettings.gatewayToken) }
+  ] : []
+)
+var dashboardEnvironment = concat(
+  dashboardEnabled ? [
+    { name: 'PIPMIND_DASHBOARD_ENABLED', value: 'true' }
+    { name: 'PIPMIND_DASHBOARD_ORIGIN', value: string(dashboardSettings.origin) }
+    { name: 'PIPMIND_DASHBOARD_BACKEND_URL', value: string(dashboardSettings.backendUrl) }
+    { name: 'PIPMIND_DASHBOARD_PASSWORD_HASH', secretRef: 'dashboard-password-hash' }
+    { name: 'PIPMIND_DASHBOARD_SESSION_SECRET', secretRef: 'dashboard-session-secret' }
+    { name: 'PIPMIND_DASHBOARD_SHADOW_TOKEN', secretRef: 'dashboard-shadow-token' }
+    { name: 'PIPMIND_DASHBOARD_FEEDS_TOKEN', secretRef: 'dashboard-feeds-token' }
+  ] : [],
+  dashboardGateway ? [
+    { name: 'PIPMIND_DASHBOARD_GATEWAY_URL', value: string(dashboardSettings.gatewayUrl) }
+    { name: 'PIPMIND_DASHBOARD_GATEWAY_TOKEN', secretRef: 'dashboard-gateway-token' }
+  ] : []
+)
 
 resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: workspaceName

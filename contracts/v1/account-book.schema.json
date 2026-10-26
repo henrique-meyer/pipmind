@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:account-book",
+  "title": "AccountBook",
+  "description": "Read-only owner projection. account and positions are the existing AccountSnapshot and PositionSnapshot contracts. working_orders reuse OrderUpdate status words where the documented broker status table maps cleanly, and OrderRequest stop/limit prices only when a named if-done field supplies them. No client_order_id is invented. dispatch_enabled is fixed false: this document cannot place, modify, or cancel an order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "checked_at",
+    "availability",
+    "orders_state",
+    "stale",
+    "age_seconds",
+    "orders_age_seconds",
+    "account",
+    "positions",
+    "annotations",
+    "working_orders",
+    "orders_partial",
+    "orders_as_of",
+    "orders_scope",
+    "marks",
+    "dispatch_enabled"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "availability": {
+      "type": "string",
+      "enum": ["fresh", "stale", "unavailable"],
+      "description": "Freshness of the retained account and position snapshots. Stale data remains visible and must not be labeled live."
+    },
+    "orders_state": {
+      "type": "string",
+      "enum": ["fresh", "stale", "unavailable"]
+    },
+    "stale": {
+      "type": "boolean",
+      "description": "True when the position book or the working-order list is retained past its freshness window."
+    },
+    "age_seconds": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "orders_age_seconds": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "account": {
+      "anyOf": [
+        { "$ref": "urn:pipmind:schema:v1:account-snapshot" },
+        { "type": "null" }
+      ]
+    },
+    "positions": {
+      "anyOf": [
+        { "$ref": "urn:pipmind:schema:v1:position-snapshot" },
+        { "type": "null" }
+      ]
+    },
+    "annotations": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stop", "limit", "protection", "quote_pnl", "mark_stale"],
+        "properties": {
+          "stop": { "type": ["number", "null"] },
+          "limit": { "type": ["number", "null"] },
+          "protection": { "type": "string", "enum": ["known", "unavailable"] },
+          "quote_pnl": {
+            "type": ["number", "null"],
+            "description": "Quote-currency difference from entry and a fresh mid mark. Not broker cash P&L. Null when the mark is missing or stale."
+          },
+          "mark_stale": { "type": ["boolean", "null"] }
+        }
+      }
+    },
+    "working_orders": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instrument",
+          "side",
+          "size",
+          "status",
+          "broker_order_id",
+          "ts",
+          "stop",
+          "limit",
+          "trigger",
+          "role"
+        ],
+        "properties": {
+          "instrument": { "type": "string" },
+          "side": { "type": "string", "enum": ["buy", "sell"] },
+          "size": { "type": "number", "exclusiveMinimum": 0 },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "accepted",
+              "working",
+              "cancelled",
+              "rejected",
+              "suspended",
+              "triggered",
+              "unknown"
+            ]
+          },
+          "broker_order_id": { "type": "string", "minLength": 1 },
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          },
+          "stop": { "type": ["number", "null"] },
+          "limit": { "type": ["number", "null"] },
+          "trigger": { "type": "number", "exclusiveMinimum": 0 },
+          "role": {
+            "type": "string",
+            "enum": ["if_done", "unclassified"]
+          }
+        }
+      }
+    },
+    "orders_partial": { "type": "boolean" },
+    "orders_as_of": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "orders_scope": {
+      "type": "string",
+      "enum": ["broker_active_list", "unavailable"]
+    },
+    "marks": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instrument", "bid", "ask", "venue_ts", "stale", "source"],
+        "properties": {
+          "instrument": { "type": "string" },
+          "bid": { "type": "number", "exclusiveMinimum": 0 },
+          "ask": { "type": "number", "exclusiveMinimum": 0 },
+          "venue_ts": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          },
+          "stale": { "type": "boolean" },
+          "source": { "type": "string", "enum": ["stream", "rest"] }
+        }
+      }
+    },
+    "dispatch_enabled": { "const": false }
+  }
+}

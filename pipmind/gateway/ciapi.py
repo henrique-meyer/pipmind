@@ -371,6 +371,7 @@ class Ciapi:
 
     def snapshots(self):
         as_of = stamp(self.now())  # Conservative request-start time, not last price time.
+        self.protections = None
         margin = fields(
             self.read(
                 "/v2/margin/clientAccountMargin",
@@ -396,7 +397,9 @@ class Ciapi:
             }
             if not re.fullmatch(r"[A-Z]{3}", account["currency"]):
                 raise GatewayError("invalid_broker_currency")
-            positions, identifiers = [], set()
+            from pipmind.gateway.books import protection_from_row
+
+            positions, protections, identifiers = [], [], set()
             for row in map(fields, data["OpenPositions"]):
                 item = self.symbols.market(row["MarketId"])
                 if row["TradingAccountId"] != self.config.trading_account_id:
@@ -419,6 +422,26 @@ class Ciapi:
                         else None,
                     }
                 )
+                # Named protection fields only. A bad shape marks that row unknown
+                # and does not drop the position or invent a stop/limit role.
+                protections.append(protection_from_row(row))
         except (KeyError, TypeError, AttributeError):
             raise GatewayError("incomplete_broker_snapshot") from None
+        self.protections = protections
         return account, {"schema_version": 1, "as_of": as_of, "positions": positions}
+
+    def working_orders(self):
+        """Active stop/limit orders. Read-only; this method cannot submit or change them."""
+        from pipmind.gateway.books import normalize_working_orders
+
+        data = fields(
+            self.read(
+                "/order/activestoplimitorders",
+                legacy=True,
+                query={"TradingAccountId": self.config.trading_account_id},
+            )
+        )
+        rows = data.get("ActiveStopLimitOrders")
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise GatewayError("incomplete_broker_orders")
+        return normalize_working_orders(rows, self.symbols, self.config.trading_account_id)

@@ -282,6 +282,106 @@ def test_fixed_transport_no_redirect_proxy_or_end_user_forwarding(configured, mo
     )
 
 
+def test_books_panel_is_read_only_and_private(client, monkeypatch):
+    monkeypatch.setattr(
+        module,
+        "fetch_read",
+        lambda config, name: {
+            "availability": "stale",
+            "orders_state": "stale",
+            "stale": True,
+            "account": None,
+            "positions": None,
+            "working_orders": [],
+        },
+    )
+    signin(client)
+    page = client.get("/app")
+    assert "Positions and orders" in page.text
+    assert "cannot place, change, or cancel" in page.text
+    assert page.text.count("<form") == 1 and 'action="/app/logout"' in page.text
+    assert page.text.count("<button") == 1
+    landing = client.get("/")
+    assert "Positions and orders" not in landing.text
+    assert "/app/api/books" not in landing.text
+    assert client.get("/app/api/books?instrument=EUR/USD").status_code == 404
+    assert client.post("/app/api/books").status_code == 405
+    script = client.get("/app/resources/dashboard.js").text
+    assert "innerHTML" not in script and "STALE · not a live book" in script
+    assert "No order was placed, modified, or cancelled." in script
+
+
+def test_books_transport_strips_secrets_and_uses_the_gateway(configured, monkeypatch):
+    configured.config = module.Config(
+        ORIGIN,
+        "https://internal.example",
+        configured.config.password,
+        configured.config.secret,
+        "synthetic-shadow-token",
+        "synthetic-feeds-token",
+        "https://gateway.example",
+        "synthetic-gateway-token-0123456789",
+    )
+    requests = []
+
+    class Headers:
+        def get_content_type(self):
+            return "application/json"
+
+    class Response:
+        status = 200
+        headers = Headers()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, bound):
+            return json.dumps(
+                {
+                    "availability": "stale",
+                    "dispatch_enabled": True,
+                    "account": {"balance": 1, "password": "DO-NOT-LEAK"},
+                    "secret": "DO-NOT-LEAK",
+                }
+            ).encode()
+
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            assert timeout == 8
+            return Response()
+
+    def opener(*handlers):
+        assert any(isinstance(handler, module.NoRedirect) for handler in handlers)
+        assert any(
+            isinstance(handler, module.ProxyHandler) and handler.proxies == {}
+            for handler in handlers
+        )
+        return Opener()
+
+    monkeypatch.setattr(module, "build_opener", opener)
+    result = module.fetch_read(configured.config, "books")
+    assert requests[0].full_url == "https://gateway.example/books"
+    assert requests[0].get_method() == "GET"
+    assert requests[0].headers["Authorization"] == "Bearer synthetic-gateway-token-0123456789"
+    assert result["dispatch_enabled"] is False
+    assert "password" not in result["account"]
+    assert "secret" not in result
+    assert "DO-NOT-LEAK" not in json.dumps(result)
+
+
+def test_books_without_gateway_stays_unavailable_and_unforwarded(configured):
+    try:
+        module.fetch_read(configured.config, "books")
+    except ValueError as error:
+        assert str(error) == "dashboard_upstream_response"
+    else:
+        raise AssertionError("missing gateway was contacted")
+
+
 def test_private_content_not_discovered_and_script_uses_safe_dom(client):
     assert "/app" not in client.get("/sitemap.xml").text
     assert client.get("/app/resources/dashboard.js").status_code == 401

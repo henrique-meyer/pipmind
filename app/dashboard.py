@@ -26,7 +26,30 @@ LOGIN_COOKIE = "__Host-pipmind_login"
 FLASH_COOKIE = "__Host-pipmind_message"
 SESSION_SECONDS = 3600
 MAX_RESPONSE = 524288
-PATHS = {"status": "/status", "coverage": "/feeds/coverage", "observation": "/feeds/observation"}
+PATHS = {
+    "status": "/status",
+    "coverage": "/feeds/coverage",
+    "observation": "/feeds/observation",
+    "books": "/books",
+}
+BOOK_KEYS = (
+    "schema_version",
+    "checked_at",
+    "availability",
+    "orders_state",
+    "stale",
+    "age_seconds",
+    "orders_age_seconds",
+    "account",
+    "positions",
+    "annotations",
+    "working_orders",
+    "orders_partial",
+    "orders_as_of",
+    "orders_scope",
+    "marks",
+    "dispatch_enabled",
+)
 PRIVATE_CSP = (
     "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; "
     "connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
@@ -90,6 +113,8 @@ class Config:
     secret: bytes
     shadow_token: str
     feeds_token: str
+    gateway: str | None = None
+    gateway_token: str | None = None
 
     @classmethod
     def environment(cls):
@@ -118,6 +143,16 @@ class Config:
                 )
             ):
                 return None
+            gateway, gateway_token = None, None
+            raw_gateway = os.environ.get(prefix + "GATEWAY_URL", "")
+            raw_gateway_token = os.environ.get(prefix + "GATEWAY_TOKEN", "")
+            # Optional. Invalid gateway settings disable the book read only.
+            if raw_gateway or raw_gateway_token:
+                try:
+                    if re.fullmatch(r"[\x21-\x7e]{32,4096}", raw_gateway_token):
+                        gateway, gateway_token = origin(raw_gateway), raw_gateway_token
+                except ValueError:
+                    gateway, gateway_token = None, None
             return cls(
                 origin(values["ORIGIN"]),
                 origin(values["BACKEND_URL"]),
@@ -125,6 +160,8 @@ class Config:
                 values["SESSION_SECRET"].encode(),
                 values["SHADOW_TOKEN"],
                 values["FEEDS_TOKEN"],
+                gateway,
+                gateway_token,
             )
         except (ValueError, UnicodeError):
             return None
@@ -135,11 +172,73 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _pick(value, keys):
+    if not isinstance(value, dict):
+        return None
+    return {key: value.get(key) for key in keys}
+
+
+def _rows(value, keys, limit):
+    if not isinstance(value, list):
+        return []
+    return [_pick(row, keys) for row in value[:limit] if isinstance(row, dict)]
+
+
+def _book_projection(result):
+    account_keys = (
+        "schema_version",
+        "as_of",
+        "currency",
+        "balance",
+        "equity",
+        "margin_used",
+        "margin_available",
+    )
+    position_keys = ("instrument", "side", "size", "average_price", "unrealized_pnl")
+    order_keys = (
+        "instrument",
+        "side",
+        "size",
+        "status",
+        "broker_order_id",
+        "ts",
+        "stop",
+        "limit",
+        "trigger",
+        "role",
+    )
+    annotation_keys = ("stop", "limit", "protection", "quote_pnl", "mark_stale")
+    mark_keys = ("instrument", "bid", "ask", "venue_ts", "stale", "source")
+    positions = result.get("positions")
+    projected = {key: result.get(key) for key in BOOK_KEYS}
+    projected["account"] = _pick(result.get("account"), account_keys)
+    projected["positions"] = (
+        {
+            "schema_version": positions.get("schema_version"),
+            "as_of": positions.get("as_of"),
+            "positions": _rows(positions.get("positions"), position_keys, 500),
+        }
+        if isinstance(positions, dict)
+        else None
+    )
+    projected["annotations"] = _rows(result.get("annotations"), annotation_keys, 500)
+    projected["working_orders"] = _rows(result.get("working_orders"), order_keys, 200)
+    projected["marks"] = _rows(result.get("marks"), mark_keys, 50)
+    projected["dispatch_enabled"] = False
+    return projected
+
+
 def fetch_read(config, name):
     """Only fixed GET paths; no proxies, redirect following, or request-derived headers."""
-    token = config.shadow_token if name == "status" else config.feeds_token
+    if name == "books":
+        if not config.gateway or not config.gateway_token:
+            raise ValueError("dashboard_upstream_response")
+        target, token = config.gateway + PATHS[name], config.gateway_token
+    else:
+        token = config.shadow_token if name == "status" else config.feeds_token
+        target = config.backend + PATHS[name]
     request = Request(
-        config.backend + PATHS[name],
+        target,
         headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
         method="GET",
     )
@@ -173,6 +272,9 @@ def fetch_read(config, name):
                 "reasoning_worker",
             )
         }
+    if name == "books":
+        # Fixed projection. Nested broker fields outside these keys never reach the browser.
+        result = _book_projection(result)
     return result
 
 
@@ -259,11 +361,17 @@ class Dashboard:
                 result = {"status": "ok", "fetched_at": datetime.now(UTC).isoformat(), "data": data}
             except (ValueError, TypeError, OSError, HTTPError, URLError, RecursionError):
                 # Do not return private hostnames, token-bearing exceptions, or stale success.
+                message = (
+                    "Positions and orders are unavailable. "
+                    "No order was placed, modified, or cancelled."
+                    if name == "books"
+                    else "Saved observations are unavailable. No backend action was taken."
+                )
                 result = {
                     "status": "unavailable",
                     "data": None,
                     "fetched_at": None,
-                    "message": "Saved observations are unavailable. No backend action was taken.",
+                    "message": message,
                 }
             self.cache[name] = (now, result)
             return result
