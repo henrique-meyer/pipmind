@@ -73,7 +73,10 @@ jobs:
               if isinstance(value, str) and len(value) > 3:
                   print("::add-mask::" + value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
           if dashboard:
-              assert set(dashboard) == {"enabled", "origin", "backendUrl", "passwordHash", "sessionSecret", "shadowToken", "feedsToken"}
+              base = {"enabled", "origin", "backendUrl", "passwordHash", "sessionSecret", "shadowToken", "feedsToken"}
+              extra = set(dashboard) - base
+              assert extra <= {"gatewayUrl", "gatewayToken"}
+              assert extra in (set(), {"gatewayUrl", "gatewayToken"})
               assert dashboard["enabled"] is True
               assert all(isinstance(value, str) and value for key, value in dashboard.items() if key != "enabled")
               assert dashboard["origin"].rstrip("/") == os.environ["PUBLIC_SITE_URL"].rstrip("/")
