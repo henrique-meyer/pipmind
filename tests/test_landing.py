@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.seo import public_site_url
-from scripts.smoke import Page
+from scripts.smoke import Page, share_image_corners
 
 
 @pytest.mark.parametrize("measurement_id", ["", "G-TEST123456"])
@@ -92,6 +92,22 @@ def test_seo_uses_configured_origin_not_request_headers(monkeypatch):
         assert sitemap.headers["X-Robots-Tag"] == "noindex"
         assert client.head("/sitemap.xml").content == b""
         assert client.head("/robots.txt").content == b""
+
+
+def test_share_image_corners_are_opaque_navy_and_favicon_is_an_icon():
+    with TestClient(main.app) as client:
+        image = client.get("/assets/logo.png")
+        assert image.status_code == 200 and image.headers["content-type"] == "image/png"
+        corners, dimensions = share_image_corners(image.content)
+        assert dimensions == (1024, 1024)
+        assert corners == ((12, 35, 64, 255),) * 4
+        icon = client.get("/favicon.ico")
+        assert icon.status_code == 200
+        assert icon.headers["content-type"].startswith("image/")
+        assert icon.content.startswith(b"\x00\x00\x01\x00")
+        assert not icon.content.startswith(b"{")
+        assert client.head("/favicon.ico").status_code == 200
+        assert client.head("/favicon.ico").content == b""
 
 
 def test_unconfigured_preview_does_not_advertise_indexable_urls(monkeypatch):
