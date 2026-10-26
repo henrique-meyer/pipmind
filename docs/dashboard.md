@@ -80,7 +80,10 @@ matching origin. Login failure feedback uses a short-lived signed HttpOnly cooki
 and a clean redirect; credentials and notices never enter the URL.
 
 All `/app` responses, including errors and private resources, use `private,
-no-store`, `noindex`, a restrictive same-origin CSP and `no-referrer`. They include
+no-store`, `noindex`, a restrictive same-origin CSP and `Referrer-Policy:
+same-origin`. Cross-origin referrers are suppressed; same-origin form submissions
+retain their legitimate browser Origin for strict CSRF validation. Null and foreign
+Origins remain rejected. They include
 no analytics or social metadata. The public landing and one-page sitemap retain
 their existing behavior. There are no CORS permissions or backend write proxy.
 

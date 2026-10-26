@@ -1103,3 +1103,7 @@ checks, actual disposable SQL CI, measured hosted reads and the complete browser
 flow; do not add capacity, indexes or longer timeouts to mask the query cost.
 Also wait for the expected image's latest ready revision before HTTP release
 checks; an accepted deployment can still briefly route to the previous build.
+Actual browser verification also requires a same-origin referrer policy on
+private forms: suppress cross-origin referrers while retaining the legitimate
+Origin header. Keep strict origin equality and signed CSRF checks; never accept
+null origins as a workaround.
