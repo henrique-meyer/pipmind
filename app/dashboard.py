@@ -15,7 +15,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from fastapi import Request as WebRequest
@@ -31,7 +31,9 @@ PATHS = {
     "coverage": "/feeds/coverage",
     "observation": "/feeds/observation",
     "books": "/books",
+    "instruments": "/instruments",
 }
+TIMEFRAMES = {"15m", "1h", "2h", "4h", "1d"}
 BOOK_KEYS = (
     "schema_version",
     "checked_at",
@@ -228,9 +230,98 @@ def _book_projection(result):
     return projected
 
 
+def chart_query(raw):
+    """Rebuild the only accepted chart query. The browser string is never forwarded."""
+    if not raw or len(raw) > 80:
+        raise ValueError("dashboard_chart_query")
+    try:
+        parsed = parse_qs(raw, strict_parsing=True, max_num_fields=2)
+    except ValueError:
+        raise ValueError("dashboard_chart_query") from None
+    if set(parsed) != {"instrument", "timeframe"} or any(
+        len(values) != 1 for values in parsed.values()
+    ):
+        raise ValueError("dashboard_chart_query")
+    instrument, timeframe = parsed["instrument"][0], parsed["timeframe"][0]
+    if not re.fullmatch(r"[A-Z]{3}/[A-Z]{3}", instrument) or timeframe not in TIMEFRAMES:
+        raise ValueError("dashboard_chart_query")
+    return instrument, timeframe
+
+
+def _finite_price(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("dashboard_upstream_shape")
+    if value != value or abs(value) == float("inf") or not value > 0:
+        raise ValueError("dashboard_upstream_shape")
+    return value
+
+
+def _instrument_projection(result):
+    rows = result.get("instruments") if isinstance(result, dict) else None
+    if not isinstance(rows, list) or len(rows) > 50:
+        raise ValueError("dashboard_upstream_shape")
+    names = []
+    for item in rows:
+        if (
+            not isinstance(item, str)
+            or not re.fullmatch(r"[A-Z]{3}/[A-Z]{3}", item)
+            or item in names
+        ):
+            raise ValueError("dashboard_upstream_shape")
+        names.append(item)
+    return {"schema_version": 1, "instruments": names}
+
+
+def _candle_projection(result, instrument, timeframe):
+    if not isinstance(result, dict):
+        raise ValueError("dashboard_upstream_shape")
+    bars = []
+    raw_bars = result.get("bars")
+    if not isinstance(raw_bars, list) or len(raw_bars) > 240:
+        raise ValueError("dashboard_upstream_shape")
+    for row in raw_bars:
+        if not isinstance(row, dict):
+            raise ValueError("dashboard_upstream_shape")
+        bars.append(
+            {
+                "ts": row.get("ts"),
+                "open": _finite_price(row.get("open")),
+                "high": _finite_price(row.get("high")),
+                "low": _finite_price(row.get("low")),
+                "close": _finite_price(row.get("close")),
+            }
+        )
+    availability = result.get("availability")
+    market_state = result.get("market_state")
+    if availability not in {"fresh", "stale", "unavailable", "closed"} or market_state not in {
+        "open",
+        "closed",
+    }:
+        raise ValueError("dashboard_upstream_shape")
+    if result.get("price") != "mid" or result.get("instrument") != instrument:
+        raise ValueError("dashboard_upstream_shape")
+    if result.get("timeframe") != timeframe or not isinstance(result.get("stale"), bool):
+        raise ValueError("dashboard_upstream_shape")
+    return {
+        "schema_version": 1,
+        "instrument": instrument,
+        "timeframe": timeframe,
+        "price": "mid",
+        "checked_at": result.get("checked_at"),
+        "fetched_at": result.get("fetched_at"),
+        "availability": availability,
+        "market_state": market_state,
+        "stale": result.get("stale"),
+        "age_seconds": result.get("age_seconds"),
+        "history_partial": result.get("history_partial") is True,
+        "forming": result.get("forming") is True,
+        "bars": bars,
+    }
+
+
 def fetch_read(config, name):
     """Only fixed GET paths; no proxies, redirect following, or request-derived headers."""
-    if name == "books":
+    if name in {"books", "instruments"}:
         if not config.gateway or not config.gateway_token:
             raise ValueError("dashboard_upstream_response")
         target, token = config.gateway + PATHS[name], config.gateway_token
@@ -275,7 +366,48 @@ def fetch_read(config, name):
     if name == "books":
         # Fixed projection. Nested broker fields outside these keys never reach the browser.
         result = _book_projection(result)
+    if name == "instruments":
+        result = _instrument_projection(result)
     return result
+
+
+def fetch_bars(config, instrument, timeframe):
+    """Gateway candle read. The upstream query is built from validated values only."""
+    if not config.gateway or not config.gateway_token:
+        raise ValueError("dashboard_upstream_response")
+    target = (
+        config.gateway + "/bars?" + urlencode({"instrument": instrument, "timeframe": timeframe})
+    )
+    request = Request(
+        target,
+        headers={
+            "Authorization": "Bearer " + config.gateway_token,
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    with build_opener(ProxyHandler({}), NoRedirect()).open(request, timeout=8) as response:
+        if response.status != 200 or response.headers.get_content_type() != "application/json":
+            raise ValueError("dashboard_upstream_response")
+        data = response.read(MAX_RESPONSE + 1)
+    if len(data) > MAX_RESPONSE:
+        raise ValueError("dashboard_upstream_bound")
+
+    def invalid_constant(value):
+        raise ValueError("dashboard_upstream_nonfinite")
+
+    result = json.loads(data, parse_constant=invalid_constant)
+    return _candle_projection(result, instrument, timeframe)
+
+
+def _unavailable_message(name):
+    if name == "books":
+        return "Positions and orders are unavailable. No order was placed, modified, or cancelled."
+    if name == "instruments":
+        return "Configured currency pairs are unavailable."
+    if name == "bars":
+        return "Price history is unavailable. No order was placed, modified, or cancelled."
+    return "Saved observations are unavailable. No backend action was taken."
 
 
 class Dashboard:
@@ -361,12 +493,7 @@ class Dashboard:
                 result = {"status": "ok", "fetched_at": datetime.now(UTC).isoformat(), "data": data}
             except (ValueError, TypeError, OSError, HTTPError, URLError, RecursionError):
                 # Do not return private hostnames, token-bearing exceptions, or stale success.
-                message = (
-                    "Positions and orders are unavailable. "
-                    "No order was placed, modified, or cancelled."
-                    if name == "books"
-                    else "Saved observations are unavailable. No backend action was taken."
-                )
+                message = _unavailable_message(name)
                 result = {
                     "status": "unavailable",
                     "data": None,
@@ -374,6 +501,26 @@ class Dashboard:
                     "message": message,
                 }
             self.cache[name] = (now, result)
+            return result
+
+    def read_chart(self, instrument, timeframe):
+        key = f"bars\n{instrument}\n{timeframe}"
+        with self.read_lock:
+            now = time.time()
+            cached = self.cache.get(key)
+            if cached and now - cached[0] < 30:
+                return cached[1]
+            try:
+                data = fetch_bars(self.config, instrument, timeframe)
+                result = {"status": "ok", "fetched_at": datetime.now(UTC).isoformat(), "data": data}
+            except (ValueError, TypeError, OSError, HTTPError, URLError, RecursionError):
+                result = {
+                    "status": "unavailable",
+                    "data": None,
+                    "fetched_at": None,
+                    "message": _unavailable_message("bars"),
+                }
+            self.cache[key] = (now, result)
             return result
 
     def page(self, name, csrf="", message="", status=200):
@@ -538,20 +685,46 @@ def install_dashboard(app, root):
         session = dashboard.session(request)
         if not session:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        if name not in PATHS or request.url.query:
+        chart = None
+        if name == "bars":
+            try:
+                chart = chart_query(request.url.query)
+            except ValueError:
+                return JSONResponse({"error": "not_found"}, status_code=404)
+        elif name not in PATHS or request.url.query:
             return JSONResponse({"error": "not_found"}, status_code=404)
         if not dashboard.allowed(dashboard.reads, session["id"], 18, 60, maximum=128):
             return JSONResponse(
                 {"error": "rate_limited"}, status_code=429, headers={"Retry-After": "60"}
             )
-        result = dashboard.read(name)
+        if chart:
+            instrument, timeframe = chart
+            listed = dashboard.read("instruments")
+            names = None
+            if listed["status"] == "ok":
+                names = (listed.get("data") or {}).get("instruments")
+            if not isinstance(names, list):
+                return JSONResponse(
+                    {
+                        "status": "unavailable",
+                        "data": None,
+                        "fetched_at": None,
+                        "message": _unavailable_message("bars"),
+                    },
+                    status_code=503,
+                )
+            if instrument not in names:
+                return JSONResponse({"error": "not_found"}, status_code=404)
+            result = dashboard.read_chart(instrument, timeframe)
+        else:
+            result = dashboard.read(name)
         return JSONResponse(result, status_code=200 if result["status"] == "ok" else 503)
 
     @app.api_route("/app/resources/{name}", methods=["GET", "HEAD"])
     def resource(name: str, request: WebRequest):
         if not dashboard.config:
             return unavailable()
-        if name not in {"dashboard.css", "dashboard.js"}:
+        if name not in {"dashboard.css", "dashboard.js", "lightweight-charts.js"}:
             return Response(status_code=404)
         # Login needs CSS before authentication; neither static file contains private state.
         if name.endswith(".js") and not dashboard.session(request):

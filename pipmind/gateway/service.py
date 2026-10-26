@@ -47,6 +47,8 @@ class ReadWorker:
         self.working_orders = None
         self.orders_error = {"code": "working_orders_not_read"}
         self.orders_as_of = None
+        self.bar_lock = threading.Lock()
+        self.bar_cache, self.bar_calls = {}, []
         self.snapshot_interval, self.evidence_interval = snapshot_interval, evidence_interval
         self.evidence_since = evidence_since or self.now()
         if self.evidence_since > self.now():
@@ -270,6 +272,46 @@ class ReadWorker:
             freshness_seconds=max(120, min(self.snapshot_interval * 2, 7200)),
         )
 
+    def bars(self, instrument, timeframe):
+        """On-demand candle read. It is not part of the price cycle and cannot submit an order."""
+        from pipmind.gateway.bars import (
+            MAX_BARS,
+            TIMEFRAMES,
+            empty_history,
+            fx_market_closed,
+            parse_broker_bars,
+            project_history,
+            remember,
+        )
+
+        item = self.broker.symbols.symbol(instrument)
+        interval, span, width = TIMEFRAMES[timeframe]
+        with self.bar_lock:
+            now = self.now()
+            closed = fx_market_closed(now)
+            checked = stamp(now)
+            cached, failed = remember(
+                self.bar_cache,
+                self.bar_calls,
+                key=(item.instrument, timeframe),
+                now=now,
+                closed=closed,
+                fetch=lambda: parse_broker_bars(
+                    self.broker.bar_history(item, interval, span, int(now.timestamp()), MAX_BARS),
+                    checked,
+                ),
+            )
+            if not cached:
+                return empty_history(self.contracts, checked, item.instrument, timeframe, closed)
+            return project_history(
+                self.contracts,
+                cached,
+                checked_at=checked,
+                closed=closed,
+                width=width,
+                failed=failed,
+            )
+
 
 def create_app(gateway, token, *, worker=None):
     if not isinstance(token, str) or len(token) < 32:
@@ -360,6 +402,30 @@ def create_app(gateway, token, *, worker=None):
         if not worker:
             return empty_book(stamp(datetime.now(UTC)))
         return worker.books()
+
+    @app.get("/instruments")
+    def instruments():
+        from pipmind.gateway.bars import instrument_list
+
+        contracts = worker.contracts if worker else Contracts()
+        names = sorted(worker.broker.symbols.by_symbol) if worker else []
+        return instrument_list(contracts, names)
+
+    @app.get("/bars")
+    def bars(request: Request):
+        from pipmind.gateway.bars import empty_history, fx_market_closed, parse_bar_query
+
+        try:
+            instrument, timeframe = parse_bar_query(request.query_params)
+        except GatewayError:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        moment = worker.now() if worker else datetime.now(UTC)
+        if not worker or not hasattr(worker.broker, "bar_history"):
+            contracts = worker.contracts if worker else Contracts()
+            return empty_history(
+                contracts, stamp(moment), instrument, timeframe, fx_market_closed(moment)
+            )
+        return worker.bars(instrument, timeframe)
 
     @app.get("/headlines")
     def headlines():

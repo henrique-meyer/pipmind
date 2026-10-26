@@ -193,6 +193,7 @@ class Ciapi:
                 "/news/newsheadlines",
             }
             or re.fullmatch(r"/market/\d+/tickhistory", path)
+            or re.fullmatch(r"/market/\d+/barhistorybefore", path)
         ):
             raise GatewayError("broker_endpoint_forbidden")
         root = self.config.legacy_root if legacy else self.config.api_root
@@ -445,3 +446,27 @@ class Ciapi:
         if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
             raise GatewayError("incomplete_broker_orders")
         return normalize_working_orders(rows, self.symbols, self.config.trading_account_id)
+
+    def bar_history(self, item, interval, span, to_timestamp, max_results):
+        """Read-only OHLC bars. This method cannot submit or change an order."""
+        if (
+            interval not in {"MINUTE", "HOUR", "DAY"}
+            or type(span) is not int
+            or span not in {1, 2, 3, 4, 5, 8, 10, 15, 30}
+            or type(to_timestamp) is not int
+            or to_timestamp <= 0
+            or type(max_results) is not int
+            or not 1 <= max_results <= 240
+        ):
+            raise GatewayError("invalid_bar_request")
+        return self.read(
+            f"/market/{item.market_id}/barhistorybefore",
+            legacy=True,
+            query={
+                "interval": interval,
+                "span": span,
+                "toTimestampUTC": to_timestamp,
+                "maxResults": max_results,
+                "priceType": "MID",
+            },
+        )

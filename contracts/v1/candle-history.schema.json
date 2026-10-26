@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pipmind:schema:v1:candle-history",
+  "title": "CandleHistory",
+  "description": "Read-only mid-price OHLC history for one configured instrument and one native timeframe. It cannot place, modify, or cancel an order. Stale and closed-market series stay labeled and are not live quotes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "instrument",
+    "timeframe",
+    "price",
+    "checked_at",
+    "fetched_at",
+    "availability",
+    "market_state",
+    "stale",
+    "age_seconds",
+    "history_partial",
+    "forming",
+    "bars"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "instrument": { "type": "string", "pattern": "^[A-Z]{3}/[A-Z]{3}$" },
+    "timeframe": { "type": "string", "enum": ["15m", "1h", "2h", "4h", "1d"] },
+    "price": { "const": "mid" },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "fetched_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "pattern": "(Z|\\+00:00)$"
+    },
+    "availability": {
+      "type": "string",
+      "enum": ["fresh", "stale", "unavailable", "closed"],
+      "description": "Fresh only while the market is open and the newest bar is inside the timeframe window. Closed and stale series must not be labeled live."
+    },
+    "market_state": { "type": "string", "enum": ["open", "closed"] },
+    "stale": { "type": "boolean" },
+    "age_seconds": { "type": ["integer", "null"], "minimum": 0 },
+    "history_partial": {
+      "type": "boolean",
+      "description": "True when the retained window hit its bar cap and older history is not shown."
+    },
+    "forming": {
+      "type": "boolean",
+      "description": "True when the last bar is the broker's unfinished partial bar."
+    },
+    "bars": {
+      "type": "array",
+      "maxItems": 240,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ts", "open", "high", "low", "close"],
+        "properties": {
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "(Z|\\+00:00)$"
+          },
+          "open": { "type": "number", "exclusiveMinimum": 0 },
+          "high": { "type": "number", "exclusiveMinimum": 0 },
+          "low": { "type": "number", "exclusiveMinimum": 0 },
+          "close": { "type": "number", "exclusiveMinimum": 0 }
+        }
+      }
+    }
+  }
+}

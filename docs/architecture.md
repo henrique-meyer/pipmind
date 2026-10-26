@@ -125,6 +125,7 @@ The gateway does not decide to trade, size a position, or interpret news. It doe
 - accept `OrderRequest` and emit `OrderUpdate` and `FillEvent`
 - emit `PositionSnapshot` and `AccountSnapshot` on a timer and after fills
 - serve a read-only `GET /books` account book for the private owner workspace, composed from those snapshots, named protective prices, and the active stop/limit list
+- serve read-only `GET /instruments` and `GET /bars` candle history for that same workspace, using only the configured symbol map and native broker bar intervals
 - respect broker rate limits with backoff
 - treat `client_order_id` as an idempotency key
 
@@ -491,7 +492,7 @@ The snapshot contains:
 - an override flag where the owner, not the model, acted
 - a standing disclaimer
 
-Broker quotes, `PriceEvent`, raw `AccountSnapshot`, and vendor feeds are not in the snapshot. Execution prices are the account's fills, published because they are part of the trade record. Market data stays in the trading system. That is a product choice: the page is there to show what this account did and why. The authenticated owner workspace may show broker marks, open positions, and working orders from the gateway book. That book is not copied into the public snapshot. Excluding raw feeds does not itself establish display rights for derived reasoning; confirm applicable provider terms and any display add-on before public launch, as covered in the [cost model](cost-model.md#fxmacrodata).
+Broker quotes, `PriceEvent`, raw `AccountSnapshot`, and vendor feeds are not in the snapshot. Execution prices are the account's fills, published because they are part of the trade record. Market data stays in the trading system. That is a product choice: the page is there to show what this account did and why. The authenticated owner workspace may show broker marks, open positions, working orders, and a mid-price chart from the gateway. That book and those candles are not copied into the public snapshot. Excluding raw feeds does not itself establish display rights for derived reasoning; confirm applicable provider terms and any display add-on before public launch, as covered in the [cost model](cost-model.md#fxmacrodata).
 
 ### PublicSnapshot
 

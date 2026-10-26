@@ -7,6 +7,7 @@
 | ReleaseEvent, NewsEvent, PostEvent, PriceEvent, HeadlineRelay | Normalized feed messages; receipt and availability remain distinct. |
 | OrderRequest, OrderUpdate, FillEvent, PositionSnapshot, AccountSnapshot | Gateway boundary shapes; M2 implements reads and durable dry acceptance, with no order submission/fills. |
 | AccountBook | Read-only owner projection of the account and position snapshots plus named protective prices and active stop/limit orders. It does not invent client order ids or enable dispatch. |
+| CandleHistory, InstrumentList | Read-only mid-price OHLC history and the configured instrument ids. Market ids, order placement and live-quote labeling are outside these documents. |
 | gateway-acknowledgement | Mandatory dry-mode marker, stable acknowledgement ID, dispatch state and nested OrderUpdate. A dry accepted status never means venue acceptance. |
 | DecisionRecord, PublicSnapshot | Recorded proposals and the future sanitized publication shape. |
 | event-envelope | Logical message ID, type, payload and replay availability. Duplicate transport receipts retain the first logical event; changed facts require a new ID, with `revision_of` for an economic revision. |
