@@ -72,7 +72,9 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("Cache-Control", "public, max-age=300")
     if private:
         response.headers["Cache-Control"] = "private, no-store"
-        response.headers["Referrer-Policy"] = "no-referrer"
+        # Preserve the browser's same-origin form Origin for strict CSRF checks,
+        # while suppressing referrers entirely on cross-origin navigation.
+        response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Vary"] = "Cookie"
     return response
 

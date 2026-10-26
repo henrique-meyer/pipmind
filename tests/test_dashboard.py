@@ -111,7 +111,7 @@ def test_complete_login_read_logout_flow(client, configured, monkeypatch):
         response = client.get(path)
         assert response.headers["cache-control"] == "private, no-store"
         assert response.headers["x-robots-tag"] == "noindex"
-        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["referrer-policy"] == "same-origin"
         assert "google" not in response.headers["content-security-policy"]
         assert "unsafe-inline" not in response.headers["content-security-policy"]
         assert "connect-src 'self'" in response.headers["content-security-policy"]
@@ -139,6 +139,7 @@ def test_login_origin_csrf_limits_and_clean_failure_redirect(client):
     page = client.get("/app/login")
     data = {"csrf": csrf(page), "password": PASSWORD}
     assert client.post("/app/login", data=data).status_code == 403
+    assert client.post("/app/login", data=data, headers={"Origin": "null"}).status_code == 403
     assert (
         client.post("/app/login", data=data, headers={"Origin": "https://evil.example"}).status_code
         == 403
@@ -168,6 +169,12 @@ def test_session_tampering_expiry_and_logout_csrf(client, configured, monkeypatc
     signin(client)
     page = client.get("/app")
     assert client.post("/app/logout", data={"csrf": csrf(page)}).status_code == 403
+    assert (
+        client.post(
+            "/app/logout", data={"csrf": csrf(page)}, headers={"Origin": "null"}
+        ).status_code
+        == 403
+    )
     assert (
         client.post("/app/logout", data={"csrf": "wrong"}, headers={"Origin": ORIGIN}).status_code
         == 403
