@@ -314,7 +314,8 @@ def main():
                 ],
                 capture_output=True,
                 text=True,
-                timeout=300,
+                # A green run finished in 214s. 300s timed out on a slower runner.
+                timeout=480,
             )
             print(checks.stdout[-6000:], flush=True)
             if checks.returncode:
