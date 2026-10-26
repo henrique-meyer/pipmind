@@ -9,3 +9,4 @@ param containerImage = ''
 param minimumReplicas = 0
 param googleAnalyticsId = ''
 param publicSiteUrl = ''
+param dashboardSettings = {}

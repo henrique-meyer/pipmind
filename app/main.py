@@ -1,4 +1,4 @@
-"""Public landing routes only. No model, trading or owner-control endpoints."""
+"""Public landing and separately authenticated read-only owner observations."""
 
 import os
 import re
@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from app.dashboard import PRIVATE_CSP, install_dashboard
 from app.seo import metadata, public_site_url, schema_csp_source
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,11 +49,18 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    private = request.url.path == "/app" or request.url.path.startswith("/app/")
     response.headers.update(
         {
-            "Content-Security-Policy": page_csp()
-            if request.url.path == "/" and response.status_code == 200
-            else BASE_CSP + "img-src 'self'",
+            "Content-Security-Policy": (
+                PRIVATE_CSP
+                if private
+                else (
+                    page_csp()
+                    if request.url.path == "/" and response.status_code == 200
+                    else BASE_CSP + "img-src 'self'"
+                )
+            ),
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
@@ -62,6 +70,10 @@ async def security_headers(request: Request, call_next):
     if not PUBLIC_SITE_URL or not public_path or response.status_code != 200:
         response.headers["X-Robots-Tag"] = "noindex"
     response.headers.setdefault("Cache-Control", "public, max-age=300")
+    if private:
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Vary"] = "Cookie"
     return response
 
 
@@ -110,6 +122,8 @@ async def health():
         headers={"Cache-Control": "no-store"},
     )
 
+
+install_dashboard(app, ROOT)
 
 app.mount("/static", StaticFiles(directory=ROOT / "web" / "static"), name="static")
 app.mount("/assets", StaticFiles(directory=ROOT / "assets"), name="assets")

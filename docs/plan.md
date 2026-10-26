@@ -1069,3 +1069,27 @@ failure-path checks, actual disposable SQL CI, retained model/dependency checks
 and existing guarded held-source release controls before retrying the input.
 No automatic resume, new resource, capacity change, landing change or full-day
 qualification is implied.
+
+
+## PIP-68 — Authenticated read-only application dashboard
+
+Status: [PIP-68](https://nitro.atlassian.net/browse/PIP-68), In Progress.
+Deliver a private `/app` dashboard through the existing public landing service,
+with owner login, secure bounded sessions, logout, rate limiting, and server-side
+credentials. Hidden paths are not access control. Keep private pages out of
+analytics, discovery and caches; preserve the public landing, brand and SEO.
+
+Show actual shadow pause/hold/status and backlog, feed coverage and freshness,
+recent dated decisions and current working views/waiting/theses. Label missing,
+stale, partial and unknown data explicitly. Use a fixed read-only internal GET
+allowlist and a bounded cached SQL observation endpoint through the existing
+feeds service. Browsing must not create model, provider or broker calls, journal
+writes, account actions or changes to the source mind and its history.
+
+Reuse existing capacity and networking; no new resource or recurring commitment.
+Keep every PIP-17-owned file and owner control out of this work. The separate
+robot library and load/resume/edit controls remain PIP-17. Root serializes shared
+plan, Git, configuration and cloud changes and avoids deployment during an active
+qualification window. Require meaningful authentication/HTTP/bounds/actual SQL
+checks and a complete browser login/read/logout flow before completion. This
+visibility feature does not qualify M4 or block read-only shadow catch-up.

@@ -16,6 +16,7 @@ from pipmind.feeds.common import FeedError, identity
 from pipmind.feeds.coverage import project
 from pipmind.feeds.macro import webhook
 from pipmind.feeds.news import relay
+from pipmind.feeds.observation import ObservationError, ObservationReader
 from pipmind.feeds.runtime import Supervisor
 from pipmind.feeds.sql_store import configured_store
 from pipmind.feeds.store import encoded
@@ -43,6 +44,7 @@ def create_app(store, token, *, secret="", supervisor=None, now=None, configurat
         lifespan=lifespan,
     )
     app.state.store = store
+    observation = ObservationReader.environment(store)
 
     @app.middleware("http")
     async def auth(request, call_next):
@@ -129,6 +131,15 @@ def create_app(store, token, *, secret="", supervisor=None, now=None, configurat
     @app.get("/coverage")
     def coverage(offset: int = 0, limit: int = 100):
         return project(store, configuration, now(), offset=offset, limit=limit)
+
+    @app.get("/observation")
+    def observe(request: Request):
+        if request.query_params:
+            raise HTTPException(422, "observation_query_not_supported")
+        try:
+            return observation.get(now())
+        except ObservationError as error:
+            return JSONResponse({"error": str(error)}, status_code=503)
 
     app.state.private_status = status
     return app

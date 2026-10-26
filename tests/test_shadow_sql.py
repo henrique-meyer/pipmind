@@ -10636,3 +10636,159 @@ def test_decision_evidence_budget_complete_audit_and_input_completion_persist_in
     with pytest.raises(ShadowError, match="shadow_input_not_pending"):
         mind.commit(event, mind.head()["revision"], deepcopy(result), NOW)
     assert mind.retained() == retained and mind.outcome(identifier) == result
+
+
+@pytest.mark.skipif(
+    os.environ.get("PIPMIND_SQL_LOCAL") != "true",
+    reason="observation database setup is restricted to disposable local SQL",
+)
+def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
+    from pipmind.feeds.observation import OUTCOMES_SQL, ObservationError, read_snapshot
+    from pipmind.shadow.common import encoded
+
+    name = "observation_" + uuid4().hex
+    admin = mind.connect()
+    admin.autocommit = True
+    control = admin.cursor()
+    control.execute(f"CREATE DATABASE [{name}]")
+    try:
+        connect = connector({**os.environ, "PIPMIND_SQL_DATABASE": name})
+        migrate(connect)
+        # The observation reader must not turn snapshot isolation on itself.
+        with pytest.raises(ObservationError, match="observation_snapshot_required"):
+            read_snapshot(connect, "synthetic", MOMENT)
+        control.execute(f"ALTER DATABASE [{name}] SET ALLOW_SNAPSHOT_ISOLATION ON")
+        source = SqlMind(connect, "synthetic%trader")
+        source.initialize(
+            "Exact identity",
+            {"version": "v1", "text": "Exact playbook"},
+            MOMENT.isoformat(),
+            binding=digest("synthetic"),
+        )
+        working = {
+            "views": ["Exact retained dependency [synthetic:one]"],
+            "waiting_for": ["Confirmed release"],
+            "position_theses": [
+                {
+                    "instrument": "EURUSD",
+                    "thesis": "Exact thesis",
+                    "as_of": MOMENT.isoformat(),
+                }
+            ],
+        }
+
+        def insert(cur, index, *, reasoning="Literal 5% reasoning"):
+            identifier = "synthetic:" + str(index)
+            result = {
+                "ts": MOMENT.isoformat(),
+                "status": "observed",
+                "decision": {"action": "hold", "instrument": "EURUSD", "reasoning": reasoning},
+                "usage": [{"input_tokens": 123, "output_tokens": 12, "prompt": "WITHHELD"}],
+                "context": {"private": "WITHHELD"},
+                "tool_traces": "WITHHELD",
+            }
+            cur.execute(
+                "INSERT pm_inputs(trader,id,facts,envelope,status) VALUES(%s,%s,%s,%s,'complete')",
+                (
+                    source.trader,
+                    identifier,
+                    digest(identifier),
+                    encoded(
+                        {
+                            "available_at": MOMENT.isoformat(),
+                            "payload": {"private": "WITHHELD"},
+                        }
+                    ),
+                ),
+            )
+            cur.execute(
+                "INSERT pm_outcomes(trader,event_id,result) VALUES(%s,%s,%s)",
+                (
+                    source.trader,
+                    identifier,
+                    encoded(result),
+                ),
+            )
+
+        with source.transaction() as cur:
+            source._write_working(cur, working, MOMENT)
+            for index in range(22):
+                insert(cur, index)
+
+        def fingerprint():
+            with source.transaction() as cur:
+                cur.execute("SELECT * FROM pm_minds WHERE trader=%s", (source.trader,))
+                head = cur.fetchall()
+                cur.execute(
+                    "SELECT * FROM pm_records WHERE trader=%s ORDER BY pk", (source.trader,)
+                )
+                records = cur.fetchall()
+                cur.execute("SELECT * FROM pm_inputs WHERE trader=%s ORDER BY pk", (source.trader,))
+                inputs = cur.fetchall()
+                cur.execute(
+                    "SELECT * FROM pm_outcomes WHERE trader=%s ORDER BY pk", (source.trader,)
+                )
+                return head, records, inputs, cur.fetchall()
+
+        before = fingerprint()
+        observed = read_snapshot(connect, source.trader, MOMENT)
+        assert fingerprint() == before
+        assert observed["head"] == {"revision": 0, "paused": True, "working": working}
+        assert len(observed["recent_outcomes"]) == 20
+        assert observed["recent_window"]["has_more"]
+        latest = observed["recent_outcomes"][0]
+        assert latest["event_id"] == "synthetic:21"
+        assert latest["reasoning"] == "Literal 5% reasoning"
+        assert latest["event_at"] == latest["recorded_at"] == "2026-10-18T00:00:00Z"
+        assert latest["tokens"] == {"input_tokens": 123, "output_tokens": 12, "complete": True}
+        assert "WITHHELD" not in encoded(observed)
+
+        class ConcurrentCursor:
+            def __init__(self, cur):
+                self.cur = cur
+
+            def execute(self, statement, *args):
+                if statement == OUTCOMES_SQL:
+                    # Commit between head and outcome SELECTs. The same snapshot
+                    # must retain the old head AND old outcome window.
+                    with source.transaction() as writer:
+                        insert(writer, 22, reasoning="x" * 9000)
+                        writer.execute(
+                            "UPDATE pm_minds SET revision=revision+1,working=%s WHERE trader=%s",
+                            (encoded({**working, "views": ["New state"]}), source.trader),
+                        )
+                return self.cur.execute(statement, *args)
+
+            def __getattr__(self, key):
+                return getattr(self.cur, key)
+
+        class ConcurrentConnection:
+            def __init__(self, db):
+                self.db = db
+
+            def cursor(self):
+                return ConcurrentCursor(self.db.cursor())
+
+            def close(self):
+                self.db.close()
+
+        during = read_snapshot(
+            lambda **kwargs: ConcurrentConnection(connect(**kwargs)),
+            source.trader,
+            MOMENT,
+        )
+        assert during == observed
+        after = read_snapshot(connect, source.trader, MOMENT)
+        assert after["head"]["revision"] == 1
+        assert after["head"]["working"]["views"] == ["New state"]
+        assert after["recent_outcomes"][0]["event_id"] == "synthetic:22"
+        assert after["recent_outcomes"][0]["reasoning"] is None
+        assert "reasoning_oversize" in after["recent_outcomes"][0]["issues"]
+        assert after["status"] == "partial"
+        assert source.outcome("synthetic:22")["decision"]["reasoning"] == "x" * 9000
+        with pytest.raises(ObservationError, match="observation_trader_missing"):
+            read_snapshot(connect, "missing", MOMENT)
+    finally:
+        control.execute(f"ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+        control.execute(f"DROP DATABASE [{name}]")
+        admin.close()
