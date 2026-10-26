@@ -84,6 +84,25 @@ jobs:
           az deployment group create -g "$AZURE_RESOURCE_GROUP" -n "landing-${GITHUB_RUN_ID}" --template-file infra/main.bicep --parameters @"$RUNNER_TEMP/parameters.json" --only-show-errors -o none
           ACTUAL_IMAGE=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.template.containers[0].image' -o tsv)
           test "$ACTUAL_IMAGE" = "$CONTAINER_IMAGE"
+          READY=false
+          for ATTEMPT in $(seq 1 30); do
+            az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" -o json > "$RUNNER_TEMP/landing-readiness.json"
+            if python3 - "$RUNNER_TEMP/landing-readiness.json" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1]) as stream:
+              app = json.load(stream)["properties"]
+          ready = app.get("latestReadyRevisionName")
+          expected = app["template"]["containers"][0]["image"] == os.environ["CONTAINER_IMAGE"]
+          sys.exit(0 if ready and ready == app["latestRevisionName"] and expected else 1)
+          PY
+            then
+              READY=true
+              break
+            fi
+            echo "Waiting for the expected landing revision ($ATTEMPT/30)"
+            sleep 10
+          done
+          test "$READY" = true
           FQDN=$(az containerapp show -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_CONTAINER_APP" --query 'properties.configuration.ingress.fqdn' -o tsv)
           echo "::add-mask::$FQDN"
           python3 scripts/smoke.py --url "https://$FQDN" --build "$SOURCE_SHA"
@@ -94,4 +113,4 @@ jobs:
           test "$REVISION_IMAGE" = "$CONTAINER_IMAGE"
       - name: Remove private deployment inputs
         if: always()
-        run: rm -f "$RUNNER_TEMP/parameters.json" "$RUNNER_TEMP/domains.json"
+        run: rm -f "$RUNNER_TEMP/parameters.json" "$RUNNER_TEMP/domains.json" "$RUNNER_TEMP/landing-readiness.json"

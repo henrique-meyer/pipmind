@@ -1093,3 +1093,13 @@ plan, Git, configuration and cloud changes and avoids deployment during an activ
 qualification window. Require meaningful authentication/HTTP/bounds/actual SQL
 checks and a complete browser login/read/logout flow before completion. This
 visibility feature does not qualify M4 or block read-only shadow catch-up.
+
+Hosted verification found that the initial recent-outcome SQL projection can
+exceed its unchanged query timeout on the retained history. Before completing
+the hosted flow, select the newest 21 narrow record keys first, then project
+only the bounded recent window in the same snapshot. Retain full history and
+explicit partial/oversize states. Require exact selection/ordering and snapshot
+checks, actual disposable SQL CI, measured hosted reads and the complete browser
+flow; do not add capacity, indexes or longer timeouts to mask the query cost.
+Also wait for the expected image's latest ready revision before HTTP release
+checks; an accepted deployment can still briefly route to the previous build.

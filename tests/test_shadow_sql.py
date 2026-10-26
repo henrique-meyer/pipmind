@@ -10643,7 +10643,12 @@ def test_decision_evidence_budget_complete_audit_and_input_completion_persist_in
     reason="observation database setup is restricted to disposable local SQL",
 )
 def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
-    from pipmind.feeds.observation import OUTCOMES_SQL, ObservationError, read_snapshot
+    from pipmind.feeds.observation import (
+        OUTCOME_KEYS_SQL,
+        OUTCOME_SQL,
+        ObservationError,
+        read_snapshot,
+    )
     from pipmind.shadow.common import encoded
 
     name = "observation_" + uuid4().hex
@@ -10665,6 +10670,8 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
             MOMENT.isoformat(),
             binding=digest("synthetic"),
         )
+        empty = read_snapshot(connect, source.trader, MOMENT)
+        assert empty["recent_outcomes"] == [] and not empty["recent_window"]["has_more"]
         working = {
             "views": ["Exact retained dependency [synthetic:one]"],
             "waiting_for": ["Confirmed release"],
@@ -10677,7 +10684,8 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
             ],
         }
 
-        def insert(cur, index, *, reasoning="Literal 5% reasoning"):
+        def insert(cur, index, *, reasoning="Literal 5% reasoning", trader=None):
+            trader = source.trader if trader is None else trader
             identifier = "synthetic:" + str(index)
             result = {
                 "ts": MOMENT.isoformat(),
@@ -10690,7 +10698,7 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
             cur.execute(
                 "INSERT pm_inputs(trader,id,facts,envelope,status) VALUES(%s,%s,%s,%s,'complete')",
                 (
-                    source.trader,
+                    trader,
                     identifier,
                     digest(identifier),
                     encoded(
@@ -10704,7 +10712,7 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
             cur.execute(
                 "INSERT pm_outcomes(trader,event_id,result) VALUES(%s,%s,%s)",
                 (
-                    source.trader,
+                    trader,
                     identifier,
                     encoded(result),
                 ),
@@ -10712,8 +10720,29 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
 
         with source.transaction() as cur:
             source._write_working(cur, working, MOMENT)
-            for index in range(22):
+            for index in range(20):
                 insert(cur, index)
+
+        exact_twenty = read_snapshot(connect, source.trader, MOMENT)
+        assert len(exact_twenty["recent_outcomes"]) == 20
+        assert not exact_twenty["recent_window"]["has_more"]
+        with source.transaction() as cur:
+            insert(cur, 20)
+        twenty_one = read_snapshot(connect, source.trader, MOMENT)
+        assert len(twenty_one["recent_outcomes"]) == 20
+        assert twenty_one["recent_window"]["has_more"]
+        assert twenty_one["recent_outcomes"][0]["event_id"] == "synthetic:20"
+        with source.transaction() as cur:
+            insert(cur, 21)
+        other = SqlMind(connect, "another-trader")
+        other.initialize(
+            "Other identity",
+            {"version": "v1", "text": "Other playbook"},
+            MOMENT.isoformat(),
+            binding=digest("other"),
+        )
+        with other.transaction() as cur:
+            insert(cur, 21, trader=other.trader, reasoning="Never substitute another trader")
 
         def fingerprint():
             with source.transaction() as cur:
@@ -10746,16 +10775,26 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
         class ConcurrentCursor:
             def __init__(self, cur):
                 self.cur = cur
+                self.projected = False
 
             def execute(self, statement, *args):
-                if statement == OUTCOMES_SQL:
-                    # Commit between head and outcome SELECTs. The same snapshot
-                    # must retain the old head AND old outcome window.
+                if statement == OUTCOME_KEYS_SQL:
+                    # First commit is between head and narrow key selection.
                     with source.transaction() as writer:
                         insert(writer, 22, reasoning="x" * 9000)
                         writer.execute(
                             "UPDATE pm_minds SET revision=revision+1,working=%s WHERE trader=%s",
                             (encoded({**working, "views": ["New state"]}), source.trader),
+                        )
+                elif statement == OUTCOME_SQL and not self.projected:
+                    self.projected = True
+                    # Second commit is between keys and captured-PK projection.
+                    # Neither commit may leak into this reader's old snapshot.
+                    with source.transaction() as writer:
+                        insert(writer, 23)
+                        writer.execute(
+                            "UPDATE pm_minds SET revision=revision+1 WHERE trader=%s",
+                            (source.trader,),
                         )
                 return self.cur.execute(statement, *args)
 
@@ -10779,11 +10818,12 @@ def test_observation_actual_sql_is_bounded_read_only_and_one_snapshot(mind):
         )
         assert during == observed
         after = read_snapshot(connect, source.trader, MOMENT)
-        assert after["head"]["revision"] == 1
+        assert after["head"]["revision"] == 2
         assert after["head"]["working"]["views"] == ["New state"]
-        assert after["recent_outcomes"][0]["event_id"] == "synthetic:22"
-        assert after["recent_outcomes"][0]["reasoning"] is None
-        assert "reasoning_oversize" in after["recent_outcomes"][0]["issues"]
+        assert after["recent_outcomes"][0]["event_id"] == "synthetic:23"
+        assert after["recent_outcomes"][1]["event_id"] == "synthetic:22"
+        assert after["recent_outcomes"][1]["reasoning"] is None
+        assert "reasoning_oversize" in after["recent_outcomes"][1]["issues"]
         assert after["status"] == "partial"
         assert source.outcome("synthetic:22")["decision"]["reasoning"] == "x" * 9000
         with pytest.raises(ObservationError, match="observation_trader_missing"):
