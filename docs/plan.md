@@ -1107,3 +1107,19 @@ Actual browser verification also requires a same-origin referrer policy on
 private forms: suppress cross-origin referrers while retaining the legitimate
 Origin header. Keep strict origin equality and signed CSRF checks; never accept
 null origins as a workaround.
+
+
+## PIP-69 — Read-only demo book and candles in the owner workspace
+
+Status: [PIP-69](https://nitro.atlassian.net/browse/PIP-69), In Progress.
+Show the hosted `/app` Positions and orders panel and price chart from PipMind's
+own Forex.com demo account. The gateway container already runs beside the engine,
+and the container ingress targets the engine port. Owner `GET /books`,
+`GET /instruments`, and `GET /bars` hop from that existing internal HTTPS path to
+the loopback read-only gateway. Direct gateway URL and token settings remain
+optional when a gateway origin is itself reachable.
+
+`dispatch_enabled` stays false. There is no order transport and this is not M6.
+Do not add a resource or raise capacity. Keep the landing domain, TLS, and
+analytics unchanged. Never use another project's broker account. Broker
+credentials stay in the private repository and existing Container App secrets.

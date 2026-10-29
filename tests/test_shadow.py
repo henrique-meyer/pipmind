@@ -121,6 +121,9 @@ def test_private_service_auth_limits_and_no_order_routes():
         ).json()["accepted"]
         assert client.post("/inputs", headers=headers, content=b"x" * 262145).status_code == 413
         assert client.post("/orders", headers=headers, json={}).status_code == 404
+        assert client.get("/books", headers=headers).status_code == 404
+        assert client.get("/instruments", headers=headers).status_code == 404
+        assert client.get("/bars", headers=headers).status_code == 404
         assert client.get("/docs", headers=headers).status_code == 404
         assert client.get("/status", headers=headers).headers["Cache-Control"] == "no-store"
     assert len(accepted) == 1

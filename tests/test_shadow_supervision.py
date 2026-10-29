@@ -109,9 +109,13 @@ def test_local_sql_feed_outage_uses_the_expected_source_unavailable_path():
         )
     ) as client:
         end = time.monotonic() + 3
-        while not state.updates and time.monotonic() < end:
+        status = {}
+        # set_runtime lands before last_error, so wait for the status value itself.
+        while time.monotonic() < end:
+            status = client.get("/status", headers={"Authorization": "Bearer " + token}).json()
+            if state.updates and status.get("last_error") == "source_unavailable":
+                break
             time.sleep(0.02)
-        status = client.get("/status", headers={"Authorization": "Bearer " + token}).json()
         assert status["last_error"] == "source_unavailable"
         assert status["reasoning_worker"]["alive"] and not state.holds
         assert client.get("/healthz").status_code == 200
