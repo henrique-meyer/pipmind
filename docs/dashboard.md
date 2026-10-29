@@ -24,8 +24,8 @@ or additional Python dependency is required.
 | `PIPMIND_DASHBOARD_BACKEND_URL` | Fixed HTTPS origin of the existing internal shadow application |
 | `PIPMIND_DASHBOARD_SHADOW_TOKEN` | Existing backend status bearer credential; server-side only |
 | `PIPMIND_DASHBOARD_FEEDS_TOKEN` | Existing feed bearer credential; server-side only |
-| `PIPMIND_DASHBOARD_GATEWAY_URL` | Optional fixed HTTPS origin of the broker gateway. Books only |
-| `PIPMIND_DASHBOARD_GATEWAY_TOKEN` | Optional gateway bearer; server-side only. Required with the URL |
+| `PIPMIND_DASHBOARD_GATEWAY_URL` | Optional fixed HTTPS origin when the gateway ingress is directly reachable. When unset, book and candle reads use the shadow origin |
+| `PIPMIND_DASHBOARD_GATEWAY_TOKEN` | Required together with the URL. When unset, those reads use the shadow bearer |
 | `PIPMIND_OBSERVATION_READS` | Backend-only `true` opt-in for the SQL observation reader |
 
 Generate a strong unique owner password and a separate random signing secret
@@ -53,11 +53,11 @@ Authenticated browser GETs use only these same-origin paths:
 | `/app/api/status` | `/status` | Shadow bearer |
 | `/app/api/coverage` | `/feeds/coverage` | Feed bearer |
 | `/app/api/observation` | `/feeds/observation` | Feed bearer |
-| `/app/api/books` | Gateway `GET /books` | Gateway bearer, separate origin |
-| `/app/api/instruments` | Gateway `GET /instruments` | Gateway bearer, separate origin |
-| `/app/api/bars` | Gateway `GET /bars` | Gateway bearer, separate origin |
+| `/app/api/books` | `GET /books` | Direct gateway bearer, or the shadow bearer on the shadow origin |
+| `/app/api/instruments` | `GET /instruments` | Direct gateway bearer, or the shadow bearer on the shadow origin |
+| `/app/api/bars` | `GET /bars` | Direct gateway bearer, or the shadow bearer on the shadow origin |
 
-`/app/api/books` is omitted from the shadow origin. It is contacted only when `PIPMIND_DASHBOARD_GATEWAY_URL` and `PIPMIND_DASHBOARD_GATEWAY_TOKEN` are both valid. Missing or invalid gateway settings leave the positions panel unavailable and do not disable the rest of the workspace. The browser projection keeps `dispatch_enabled` false and drops unknown fields. The panel has no place, modify, or cancel control. Stale retained snapshots and working orders are labeled stale and are not presented as a live book. Named stop and limit fields are shown; an integer broker order-type code is not guessed. Opening reasoning is linked in the browser by instrument inside the recent observation window, not by inventing a broker order id.
+The shadow container ingress targets the engine, so the hosted gateway is not a separate HTTPS origin. The engine accepts `GET /books`, `GET /instruments`, and `GET /bars` and forwards them to its loopback read-only gateway. A configured gateway URL and token still select a directly reachable gateway instead. Invalid gateway settings are ignored and the shadow hop is used. The browser projection keeps `dispatch_enabled` false and drops unknown fields. The panel has no place, modify, or cancel control. Stale retained snapshots and working orders are labeled stale and are not presented as a live book. Named stop and limit fields are shown; an integer broker order-type code is not guessed. Opening reasoning is linked in the browser by instrument inside the recent observation window, not by inventing a broker order id.
 
 No URL, upstream path, browser cookie or user-supplied header is forwarded.
 Unknown names are rejected. Query strings are rejected except `/app/api/bars`,

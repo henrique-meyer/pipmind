@@ -17,6 +17,7 @@ from pipmind.contracts import ContractError, stamp, utc
 from pipmind.feeds.common import FeedError
 from pipmind.shadow.common import ShadowError, bounded_json, digest, encoded, now
 from pipmind.shadow.engine import ShadowEngine
+from pipmind.shadow.gateway_read import READS, mount, owner_read_target
 from pipmind.shadow.model import FoundryModel
 from pipmind.shadow.worker import ReasoningWorker
 
@@ -292,9 +293,16 @@ def create_app(
     clock_interval=900,
     worker_timeout=120,
     qualification_enabled=False,
+    owner_reads=None,
 ):
     if not isinstance(token, str) or len(token) < 32:
         raise ShadowError("shadow_token_minimum_32_characters")
+    # Ingress targets this process. Owner book/candle GETs hop to loopback only.
+    reads = (
+        owner_read_target(*owner_reads)
+        if isinstance(owner_reads, tuple) and len(owner_reads) == 2
+        else None
+    )
     if not 60 <= clock_interval <= 86400:
         raise ShadowError("invalid_clock_interval")
     if not 0.01 <= worker_timeout <= 600:
@@ -511,9 +519,11 @@ def create_app(
     async def auth(request, call_next):
         # Mounted feed routes enforce their own bearer/HMAC policy.
         mounted = feed_app is not None and request.url.path.startswith("/feeds/")
+        owner_read = reads is not None and request.method == "GET" and request.url.path in READS
         if (
             request.url.path != "/healthz"
             and not mounted
+            and not owner_read
             and not hmac.compare_digest(
                 request.headers.get("authorization", "").encode(), ("Bearer " + token).encode()
             )
@@ -638,6 +648,8 @@ def create_app(
 
     if feed_app:
         app.mount("/feeds", feed_app)
+    if reads:
+        mount(app, reads[0], token, reads[1])
     return app
 
 
@@ -669,16 +681,20 @@ def from_env():
             completion_clock=now,
         )
     gateway = None
+    owner_reads = None
     if os.environ.get("PIPMIND_SHADOW_GATEWAY_URL"):
+        gateway_url = os.environ["PIPMIND_SHADOW_GATEWAY_URL"]
+        gateway_token = os.environ["PIPMIND_GATEWAY_TOKEN"]
         gateway = GatewayConsumer(
             store,
-            os.environ["PIPMIND_SHADOW_GATEWAY_URL"],
-            os.environ["PIPMIND_GATEWAY_TOKEN"],
+            gateway_url,
+            gateway_token,
             os.environ["PIPMIND_SHADOW_GATEWAY_SOURCE_ID"],
             handoff_interval=int(os.environ.get("PIPMIND_SHADOW_GATEWAY_INTERVAL", "0")),
             completion_clock=now,
             relay_store=feed_app.state.store if feed_app else None,
         )
+        owner_reads = (gateway_url, gateway_token)
     return create_app(
         store,
         model,
@@ -686,6 +702,7 @@ def from_env():
         consumer=consumer,
         gateway=gateway,
         feed_app=feed_app,
+        owner_reads=owner_reads,
         price_interval=int(os.environ.get("PIPMIND_SHADOW_PRICE_INTERVAL", "60")),
         clock_interval=int(os.environ.get("PIPMIND_SHADOW_CLOCK_INTERVAL", "900")),
         qualification_enabled=os.environ.get("PIPMIND_SHADOW_QUALIFICATION_ENABLED") == "true",

@@ -319,12 +319,17 @@ def _candle_projection(result, instrument, timeframe):
     }
 
 
+def broker_endpoint(config, path):
+    """Direct gateway origin when both settings exist; otherwise the shadow ingress hop."""
+    if config.gateway and config.gateway_token:
+        return config.gateway + path, config.gateway_token
+    return config.backend + path, config.shadow_token
+
+
 def fetch_read(config, name):
     """Only fixed GET paths; no proxies, redirect following, or request-derived headers."""
     if name in {"books", "instruments"}:
-        if not config.gateway or not config.gateway_token:
-            raise ValueError("dashboard_upstream_response")
-        target, token = config.gateway + PATHS[name], config.gateway_token
+        target, token = broker_endpoint(config, PATHS[name])
     else:
         token = config.shadow_token if name == "status" else config.feeds_token
         target = config.backend + PATHS[name]
@@ -372,16 +377,13 @@ def fetch_read(config, name):
 
 
 def fetch_bars(config, instrument, timeframe):
-    """Gateway candle read. The upstream query is built from validated values only."""
-    if not config.gateway or not config.gateway_token:
-        raise ValueError("dashboard_upstream_response")
-    target = (
-        config.gateway + "/bars?" + urlencode({"instrument": instrument, "timeframe": timeframe})
-    )
+    """Candle read. The upstream query is built from validated values only."""
+    origin, token = broker_endpoint(config, "")
+    target = origin + "/bars?" + urlencode({"instrument": instrument, "timeframe": timeframe})
     request = Request(
         target,
         headers={
-            "Authorization": "Bearer " + config.gateway_token,
+            "Authorization": "Bearer " + token,
             "Accept": "application/json",
         },
         method="GET",
