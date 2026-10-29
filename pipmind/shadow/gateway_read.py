@@ -3,15 +3,21 @@
 import hmac
 import json
 import re
+import threading
 from urllib.parse import urlencode, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 from fastapi import Request as WebRequest
 from fastapi.responses import JSONResponse
 
 READS = {"/books", "/instruments", "/bars"}
 MAX_BODY = 524288
+MAX_QUERY = 80
+MAX_AUTHORIZATION = 7 + 4096
+READ_SLOTS = 4
 TIMEFRAMES = {"15m", "1h", "2h", "4h", "1d"}
+_TOKEN = re.compile(r"[\x21-\x7e]{32,4096}")
+_SECRET_KEY = re.compile(r"password|secret|token|authorization|credential|api_key|private", re.I)
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -56,17 +62,40 @@ def loopback_base(url):
 
 
 def owner_read_target(url, token):
+    """Loopback origin plus a header-safe bearer. Anything else stays unmounted."""
     base = loopback_base(url)
-    if base and isinstance(token, str) and len(token) >= 32 and " " not in token:
+    if base and isinstance(token, str) and _TOKEN.fullmatch(token):
         return base, token
     return None
 
 
 def _authorized(supplied, shadow_token, gateway_token):
+    if not isinstance(supplied, str) or len(supplied) > MAX_AUTHORIZATION:
+        return False
     raw = supplied.encode()
     shadow = hmac.compare_digest(raw, f"Bearer {shadow_token}".encode())
     gateway = hmac.compare_digest(raw, f"Bearer {gateway_token}".encode())
-    return shadow or gateway
+    # Evaluate both comparisons. A matching shadow bearer must not skip the other.
+    return bool(shadow) | bool(gateway)
+
+
+def _reject_nonfinite(_value):
+    raise ValueError("nonfinite")
+
+
+def _scrub(value, depth=0):
+    """Drop secret-named fields. Depth is capped so a hostile document cannot recurse forever."""
+    if depth > 8:
+        return None
+    if isinstance(value, dict):
+        return {
+            key: _scrub(item, depth + 1)
+            for key, item in value.items()
+            if not (isinstance(key, str) and _SECRET_KEY.search(key))
+        }
+    if isinstance(value, list):
+        return [_scrub(item, depth + 1) for item in value]
+    return value
 
 
 def _target(base, path, query):
@@ -84,37 +113,56 @@ def _target(base, path, query):
     return base + path
 
 
-def fetch(base, gateway_token, path, query):
+def fetch(base, gateway_token, path, query, *, raw_query="", limiter=None):
     """GET one owner read. The caller supplies the gateway bearer, never a client header."""
+    if len(raw_query) > MAX_QUERY:
+        return None
+    if loopback_base(base) != base:
+        return False
     target = _target(base, path, query)
     if target is None:
         return None
-    request = Request(
-        target,
-        data=None,
-        headers={"Authorization": "Bearer " + gateway_token, "Accept": "application/json"},
-        method="GET",
-    )
-    try:
-        with build_opener(_NoRedirect()).open(request, timeout=7) as response:
-            if response.status != 200 or response.headers.get_content_type() != "application/json":
-                return False
-            raw = response.read(MAX_BODY + 1)
-    except Exception:
-        return False
-    if len(raw) > MAX_BODY:
+    if limiter is not None and not limiter.acquire(blocking=False):
         return False
     try:
-        body = json.loads(raw)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(body, dict):
-        return False
-    body["dispatch_enabled"] = False
-    return body
+        request = Request(
+            target,
+            data=None,
+            headers={"Authorization": "Bearer " + gateway_token, "Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            # Empty proxies: never honor HTTP_PROXY for this bearer, and never follow redirects.
+            with build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=7) as response:
+                if (
+                    response.status != 200
+                    or response.headers.get_content_type() != "application/json"
+                ):
+                    return False
+                raw = response.read(MAX_BODY + 1)
+        except Exception:
+            return False
+        if len(raw) > MAX_BODY:
+            return False
+        try:
+            body = json.loads(raw, parse_constant=_reject_nonfinite)
+        except (json.JSONDecodeError, ValueError):
+            return False
+        if not isinstance(body, dict):
+            return False
+        body = _scrub(body)
+        if not isinstance(body, dict):
+            return False
+        body["dispatch_enabled"] = False
+        return body
+    finally:
+        if limiter is not None:
+            limiter.release()
 
 
 def mount(app, base, shadow_token, gateway_token):
+    limiter = threading.BoundedSemaphore(READ_SLOTS)
+
     @app.get("/books")
     @app.get("/instruments")
     @app.get("/bars")
@@ -123,7 +171,14 @@ def mount(app, base, shadow_token, gateway_token):
             return JSONResponse(
                 {"error": "unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"}
             )
-        body = fetch(base, gateway_token, request.url.path, request.query_params)
+        body = fetch(
+            base,
+            gateway_token,
+            request.url.path,
+            request.query_params,
+            raw_query=request.url.query,
+            limiter=limiter,
+        )
         if body is None:
             return JSONResponse(
                 {"error": "not_found"}, status_code=404, headers={"Cache-Control": "no-store"}

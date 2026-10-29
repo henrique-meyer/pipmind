@@ -148,7 +148,8 @@ class Config:
             gateway, gateway_token = None, None
             raw_gateway = os.environ.get(prefix + "GATEWAY_URL", "")
             raw_gateway_token = os.environ.get(prefix + "GATEWAY_TOKEN", "")
-            # Optional. Invalid gateway settings disable the book read only.
+            # Optional direct origin. Invalid or partial settings are ignored;
+            # book and candle reads then use the shadow origin and shadow bearer.
             if raw_gateway or raw_gateway_token:
                 try:
                     if re.fullmatch(r"[\x21-\x7e]{32,4096}", raw_gateway_token):

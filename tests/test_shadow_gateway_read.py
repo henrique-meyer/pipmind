@@ -4,10 +4,12 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
+from urllib.request import ProxyHandler
 
 from fastapi.testclient import TestClient
+from starlette.datastructures import QueryParams
 
-from pipmind.shadow.gateway_read import loopback_base
+from pipmind.shadow.gateway_read import MAX_BODY, fetch, loopback_base, owner_read_target
 from pipmind.shadow.service import create_app
 
 SHADOW = "s" * 32
@@ -32,6 +34,10 @@ def test_loopback_gate_refuses_public_and_credentialed_origins():
         "http://gateway.internal:8081",
     ):
         assert loopback_base(value) is None
+    assert owner_read_target("http://127.0.0.1:8081", GATEWAY) == ("http://127.0.0.1:8081", GATEWAY)
+    assert owner_read_target("http://127.0.0.1:8081", "g" * 31) is None
+    assert owner_read_target("http://127.0.0.1:8081", GATEWAY + "\r\nX: y") is None
+    assert owner_read_target("http://127.0.0.1:8081", "Bearer " + GATEWAY) is None
     app = _app(("http://169.254.169.254", GATEWAY))
     with TestClient(app) as client:
         assert (
@@ -154,3 +160,114 @@ def test_upstream_non_object_is_unavailable():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_secret_fields_nonfinite_and_oversize_do_not_cross():
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            if "timeframe=4h" in self.path:
+                body = b'{"dispatch_enabled":true,"close":NaN}'
+            elif "timeframe=1d" in self.path:
+                body = b'{"x":"' + (b"A" * (MAX_BODY + 8)) + b'"}'
+            else:
+                body = json.dumps(
+                    {
+                        "password": "do-not-leak",
+                        "api_key": "do-not-leak",
+                        "account": {"balance": 1, "secret": "do-not-leak"},
+                        "positions": [],
+                        "dispatch_enabled": True,
+                    }
+                ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        app = _app((f"http://127.0.0.1:{server.server_address[1]}", GATEWAY))
+        shadow = {"Authorization": "Bearer " + SHADOW}
+        with TestClient(app) as client:
+            huge = {"Authorization": "Bearer " + ("g" * 5000)}
+            assert client.get("/books", headers=huge).status_code == 401
+            book = client.get("/books", headers=shadow)
+            assert book.status_code == 200
+            assert book.json()["dispatch_enabled"] is False
+            assert book.json()["account"] == {"balance": 1}
+            assert book.json()["positions"] == []
+            assert "do-not-leak" not in book.text
+            assert "password" not in book.text and "api_key" not in book.text
+            nonfinite = client.get("/bars?instrument=EUR/USD&timeframe=4h", headers=shadow)
+            assert nonfinite.status_code == 502
+            assert nonfinite.json() == {"error": "gateway_read_unavailable"}
+            assert "NaN" not in nonfinite.text
+            oversized = client.get("/bars?instrument=EUR/USD&timeframe=1d", headers=shadow)
+            assert oversized.status_code == 502
+            assert "A" * 32 not in oversized.text
+            missed = client.get("/bars?" + ("x" * 81), headers=shadow)
+            assert missed.status_code == 404
+            assert client.post("/orders", headers=shadow, json={}).status_code == 404
+        assert all(path.startswith(("/books", "/bars")) for path in seen)
+        assert all("x" * 81 not in path for path in seen)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_fetch_stays_on_loopback_without_a_proxy(monkeypatch):
+    calls = []
+
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request)
+            raise OSError("offline")
+
+    def opener(*handlers):
+        assert any(
+            isinstance(handler, ProxyHandler) and handler.proxies == {} for handler in handlers
+        )
+        return Opener()
+
+    monkeypatch.setattr("pipmind.shadow.gateway_read.build_opener", opener)
+    blocked = fetch("http://169.254.169.254", GATEWAY, "/books", QueryParams(""), raw_query="")
+    assert blocked is False
+    assert calls == []
+    assert fetch("http://127.0.0.1:9", GATEWAY, "/books", QueryParams(""), raw_query="") is False
+    assert calls[0].full_url == "http://127.0.0.1:9/books"
+    assert calls[0].get_method() == "GET"
+    assert calls[0].headers["Authorization"] == "Bearer " + GATEWAY
+    long_query = "x" * 81
+    assert (
+        fetch(
+            "http://127.0.0.1:9",
+            GATEWAY,
+            "/books",
+            QueryParams(long_query),
+            raw_query=long_query,
+        )
+        is None
+    )
+    limiter = threading.BoundedSemaphore(1)
+    assert limiter.acquire(blocking=False)
+    assert (
+        fetch(
+            "http://127.0.0.1:9",
+            GATEWAY,
+            "/books",
+            QueryParams(""),
+            raw_query="",
+            limiter=limiter,
+        )
+        is False
+    )
+    assert len(calls) == 1

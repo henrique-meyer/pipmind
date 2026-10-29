@@ -304,6 +304,9 @@ def test_books_panel_is_read_only_and_private(client, monkeypatch):
     landing = client.get("/")
     assert "Positions and orders" not in landing.text
     assert "/app/api/books" not in landing.text
+    assert "/app/api/instruments" not in landing.text
+    assert "/app/api/bars" not in landing.text
+    assert "dashboard.js" not in landing.text
     assert client.get("/app/api/books?instrument=EUR/USD").status_code == 404
     assert client.post("/app/api/books").status_code == 405
     script = client.get("/app/resources/dashboard.js").text
